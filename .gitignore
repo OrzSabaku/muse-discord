@@ -1,0 +1,63 @@
+# Your filled-in config (the example stays tracked), the settings changed
+# from Discord, and the backups bin/settings.py migrate / fold keep
+config.yaml
+config.discord.yaml
+config.discord.yaml.lock
+config.yaml.bak-*
+
+# Made by setup: the rendered worker prompt, the virtual environment
+# bin/install.sh falls back to, and the hooks' "it ran" stamps
+worker-prompt.md
+.venv/
+.seen-*
+watchdog-hook.out.*
+
+# Runtime state and queues (created by the monitor)
+state.json
+reply_queue.json
+reply_outbox.json
+reply_outbox.processing.json
+reply_outbox.rejected.json
+reply.lock
+.*.tmp
+quarantine.json
+mention_ledger.json
+monitor.pid
+monitor.heartbeat
+watchdog_state.json
+watchdog.lock
+update_check.json
+update_request.json
+directory.json
+owner_dm_nonces.json
+proactive.json
+proactive.json.bad-*
+proactive_nonce.json
+owner_items.json
+item_nonces.json
+prompt_outdated.json
+nl_journal.json
+watches.json
+watches.json.bad-*
+watches.lock
+web_watches_due.json
+web_watch_results.json
+web_nonces.json
+telemetry.json
+telemetry_id
+telemetry.wakes
+telemetry.wakes.taking
+telemetry.send_now
+
+# Logs (the previous run's log is kept as <name>.log.1)
+*.log
+*.log.1
+
+# Downloaded and generated media
+media/
+generated/
+
+__pycache__/
+
+# Cloudflare's wrangler CLI (telemetry/worker)
+.wrangler/

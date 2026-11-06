@@ -1,0 +1,11 @@
+# Runtime dependencies for muse-discord.
+# Python 3.10+ required.
+websockets>=12.0
+PyYAML>=6.0
+
+# Optional, used by the monitor when present on PATH (not Python deps):
+#   ffmpeg + ffprobe  - video frame extraction, oversize attachment
+#                       compression
+#   pdftotext (poppler) - PDF attachment text extraction
+#   curl              - more reliable media downloads on some networks
+# python-docx, if installed, enables DOCX attachment text extraction.
