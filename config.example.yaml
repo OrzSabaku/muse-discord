@@ -1,0 +1,151 @@
+# muse-discord settings.
+#
+# Setup (bin/connect-discord.py) copies this file to config.yaml with
+# your Discord user id filled in; everything else already has a careful
+# default, so change only what you want different. Saved edits apply
+# without a restart.
+#
+#   Check your edits:          python3 bin/settings.py validate
+#   What does the bot do here: python3 bin/settings.py show --explain
+#
+# Changes made from Discord with /settings are saved in
+# config.discord.yaml next to this file, never in it. Editing a
+# setting here later wins over the Discord change.
+#
+# Servers, channels, people and roles are Discord ids, in quotes. To
+# copy one, turn on Developer Mode in Discord (Settings > Advanced),
+# then right-click the server, channel or person and pick Copy ID.
+
+version: 1
+
+# --- Set during setup ---------------------------------------------
+owners: []                # your Discord user id, in quotes:
+                          #   owners: ["123456789012345678"]
+persona: persona.md       # the file that gives the bot its personality
+token_from: ~/.config/muse-discord/bot_token
+                          # where the bot's token is kept: a file, or
+                          # env:NAME for an environment variable. Never
+                          # put the token itself in this file.
+
+# --- The bot itself -----------------------------------------------
+presence:
+  status: ""              # a line shown under the bot's name; "" = none
+updates:
+  notify: on              # DM you when a new version is out: on or off
+telemetry:
+  usage_stats: on         # anonymous daily usage counts to the maintainer
+                          # (no names, ids or messages): on or off.
+                          # `bin/telemetry.py show` prints a report.
+memory:
+  save_dms: on            # what you tell it in your DM goes into your
+                          # Muse's memory (~/MEMORY.md): on or off.
+
+# --- Everywhere: DMs and every server, unless set more narrowly ----
+everywhere:
+  who:
+    allow: everyone       # everyone, or a list of user ids and
+                          # roles: ["<user id>", "role:<role id>"]
+    ignore: []            # people or roles it never answers (wins
+                          # over allow)
+    bots: when-addressed  # other bots and Muses: when-addressed or ignore
+    bot_exchange_limit: none
+                          # most replies in a row to bots in one channel
+                          # before a person speaks: 1-50, or none
+  style:
+    length: normal        # brief, normal, or detailed
+    notes: ""             # house rules for your Muse, such as
+                          # "No swearing." (up to 500 characters)
+  abilities:
+    owner_commands: on    # owners may ask it to pin, post, react,
+                          # or start threads: on or off
+    reminders: everyone   # who can set reminders and watches ("ping
+                          # me in 30 minutes"): everyone, owners, or a
+                          # list of user ids / "role:<id>" (owners
+                          # always can). Web watches ("tell me when
+                          # the tickets go on sale"), which your Muse
+                          # checks on the web, are for owners only.
+  privacy:
+    memory: public-only   # how much of what your Muse knows about you a
+                          # reply may use: everything, public-only, or
+                          # nothing. public-only = your name, interests,
+                          # public projects and opinions; never your job,
+                          # location, money, health, relationships or
+                          # schedule. Your own DMs always use everything.
+    never_share: []       # words or phrases; a reply containing one is
+                          # held until an owner says Send or Discard
+    suspicious: hold-for-review
+                          # likely prompt-injection: hold-for-review (you
+                          # decide) or ignore (dropped)
+  limits:
+    per_day: none         # replies per day: a number, or none. A cap
+                          # counts the place it is set: here, one
+                          # total for all DMs and servers; under a
+                          # server, that server only.
+    per_person_per_day: none
+                          # replies per day to any one person. Owners are
+                          # never limited.
+  media:                  # images and video, when your Muse can make
+                          # them: on by default, for owners only
+    enabled: on
+    who: owners           # owners, everyone, or a list like allow
+    per_day: none         # generated replies per day: a number, or none
+  proactive:              # reaching out on its own, unprompted, now and
+    enabled: off          # then: off by default. The Friends style turns
+                          # it on for a server; under dms: below, on means
+                          # check-ins with you and with people who DMed
+                          # it first. Anyone can say "stop messaging me".
+    frequency: rarely     # rarely (1-2 times a day), sometimes (4-6), or
+                          # often (about hourly); most times it says nothing
+    per_person_per_day: 1 # unprompted messages to one person a day
+    per_person_per_week: 3
+    per_channel_per_day: 1
+    quiet_hours: "22:00-09:00"
+                          # nothing unprompted in these hours; off = none
+    timezone: UTC         # for quiet hours: a name like Europe/Paris
+
+# --- Direct messages ----------------------------------------------
+dms:
+  who:
+    dms_from: owners      # whose DMs it answers: owners, shared-servers
+                          # (people in a server with the bot), anyone,
+                          # or a list of user ids: you plus those
+                          # people, like ["200000000000000002"]
+    replies: conversational
+                          # off = never answer DMs. Every DM counts as
+                          # addressed, so the other values act the same.
+
+# --- All servers, including ones it joins later -------------------
+all_servers:
+  who:
+    replies: conversational
+                          # when-addressed: answers an @mention or a
+                          #   reply to the bot.
+                          # conversational: also answers the person it
+                          #   just replied to when they keep talking
+                          #   within ~2 minutes without @mentioning it.
+                          # off: stays quiet.
+
+# --- One server at a time (example: remove the # marks to use) ----
+# servers:
+#   "200000000000000001":         # the server's id
+#     name: Muse Lounge           # a label for you; the bot ignores it
+#     style:
+#       notes: "Friendly community. Playful is fine."
+#     limits:
+#       per_day: 200
+#     media:
+#       who: everyone             # anyone here may ask for images
+#     channels:                   # a channel or a whole category
+#       "300000000000000002":
+#         name: "#announcements"
+#         replies: off
+#       "300000000000000003":     # a category: its channels follow it
+#         name: "Staff"
+#         replies: off
+#       "300000000000000004":
+#         name: "#muse-chat"
+#         notes: "Longer answers are welcome here."
+
+# Advanced engine settings (polling, timing, the reply size ceiling)
+# are listed in PROTOCOL.md under "Engine settings". Most installs
+# never need them.
