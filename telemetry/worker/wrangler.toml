@@ -1,0 +1,19 @@
+# muse-discord usage stats Worker. See README.md for the steps.
+name = "muse-telemetry"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# No request logs or traces: they would hold IP addresses and headers.
+[observability]
+enabled = false
+
+[[d1_databases]]
+binding = "DB"
+database_name = "muse-telemetry"
+# Paste the database_id that `npx wrangler d1 create muse-telemetry`
+# prints:
+database_id = "bce642bc-f6ae-4ee5-affc-988db1ccc3ff"
+
+# Daily: forget rate-limit counts older than yesterday.
+[triggers]
+crons = ["17 4 * * *"]
