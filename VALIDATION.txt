@@ -1,0 +1,5 @@
+Upstream: cszach/muse-discord
+Commit: 7bd0706621b791a5adc72a94d06725ed993f406f
+Local additions: bin/personal-profile.py, tests/test_personal_profile.py, START_HERE_JA.md, VALIDATION.txt
+Validation: profile tests 3 passed; upstream ownerdm 78, config 3, settings 39 passed.
+Not tested: live Discord / Muse hooks / connected services.
