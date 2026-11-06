@@ -64,7 +64,6 @@ node --test telemetry/worker/test/worker.test.js
 
 詳しくは [オフラインテスト](tests/README.md) と [E2E](e2e/README.md) を参照してください。
 導入テストでは専用の `persona.md` フィクスチャを使います。
-E2Eは `e2e/fixtures/test.png` が不足しているため、一部の既存テストが失敗します。
 Discord・Museのフック・接続済みサービスでの動作は未確認です。
 
 ライセンスは [MIT](LICENSE) です。
