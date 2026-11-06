@@ -13,6 +13,8 @@ MuseのVMに配置し、受信フックを登録して動かします。
 | --- | --- |
 | 本人DM用に導入する | [日本語の導入手順](docs/START_HERE_JA.md) |
 | 依存関係・Bot接続・フックを設定する | [セットアップ](docs/SETUP.md) |
+| 単発CLIで未読取得・既読管理・返信する | [CLIガイド](docs/CLI.md) |
+| MCPから返信・メディア取得を使う | [MCPガイド](docs/MCP.md) |
 | 設定を変更する | [設定ガイド](docs/SETTINGS.md) |
 | 問題を調べる | [トラブルシューティング](docs/TROUBLESHOOTING.md) |
 | 手動で更新する | [更新手順](docs/UPDATING.md) |
@@ -26,6 +28,7 @@ MuseのVMに配置し、受信フックを登録して動かします。
 docs/                   導入・運用・仕様の文書
 prompts/                ワーカーとWeb監視用のプロンプト原本
 bin/                    導入・診断・設定などのコマンド
+discord_tools/          CLI・MCP共通の未読管理・返信・メディア取得
 hooks/                  Museの受信・監視フック
 plugins/                拡張機能
 tests/                  オフラインテスト

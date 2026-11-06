@@ -332,6 +332,11 @@ memory, so the Muse knows it in its other chats:
 
 ### Owner commands
 
+The JSON CLI operations and local SQLite read positions are documented in
+[CLI.md](CLI.md). Read positions never acknowledge monitor queue items.
+[MCP.md](MCP.md) describes the stdio adapter and bounded media downloads;
+the adapter delegates every call to the same guarded CLI.
+
 `bin/discord-api.py` is the worker's only other way to touch Discord,
 and it is bound to the owner's own run and words:
 
@@ -347,7 +352,7 @@ and it is bound to the owner's own run and words:
   `channels` holds `<#id>` mentions (the only way to name a thread) and
   `#names` matched among the command's own server's channels (from an
   owner's DM: the one server with a channel of that name, else none);
-  `post_channels`, for `post` only, a channel of the command's server
+  `post_channels`, for `post` and `send-message`, a channel of the command's server
   whose whole name follows "in", "to" or "into" ("post this in
   announcements"; case, `-`, `_` and spaces alike; at least 3
   characters, never a common word, never a thread). Nothing from
@@ -360,7 +365,7 @@ and it is bound to the owner's own run and words:
 | subcommand | without an owner nonce | with `--for <item> --nonce <its owner_command_nonce>` |
 | --- | --- | --- |
 | `resolve-channel`, `list-threads` | Refused, before any API call | Allowed (an open owner DM's `owner_dm_nonce` too: a settings request names places) |
-| `read`, `post`, `thread`, `react`, `pin`, `unpin`, `edit`, `delete-own` | Refused, before any API call | Only in the command's own channel or its `channels` (for `post` also its `post_channels`), compared as ids; never a DM but its own (an owner's DM: Owner DMs); `edit` and `delete-own` on the bot's own messages only; a `thread` file only from `generated/` |
+| `fetch-attachment`, `get-emoji`, `get-avatar`, `get-messages`, `list-unread`, `mark-read`, `send-message`, `reply-message`, `read`, `post`, `thread`, `react`, `pin`, `unpin`, `edit`, `delete-own` | Refused, before any API call | Only in the command's own channel or its `channels` (for `post` and `send-message` also its `post_channels`), compared as ids; never a DM but its own (an owner's DM: Owner DMs); `edit` and `delete-own` on the bot's own messages only; a `thread` file only from `generated/` |
 
 - `--for` must name an item in `owner_items.json` and `--nonce` must be
   its nonce; it is never printed. A run woken by someone else never
