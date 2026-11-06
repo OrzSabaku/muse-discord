@@ -1,0 +1,130 @@
+name: Release
+
+# Pushing a tag like v1.2.0 publishes a GitHub Release whose notes are
+# that version's CHANGELOG.md entry. See RELEASING.md.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        env:
+          TAG: ${{ github.ref_name }}
+          NOTES: ${{ runner.temp }}/release-notes.md
+        run: |
+          python3 - <<'EOF'
+          import os
+          import re
+          import sys
+
+          tag = os.environ["TAG"]
+
+
+          def fail(msg):
+              print(f"::error::{msg}")
+              sys.exit(1)
+
+
+          ident = r"[0-9A-Za-z-]+"
+          num = r"(?:0|[1-9][0-9]*)"
+          if not re.fullmatch(rf"v{num}\.{num}\.{num}(?:-{ident}(?:\.{ident})*)?", tag):
+              fail(f"{tag} is not a semver tag (vX.Y.Z, or vX.Y.Z-rc.N for a pre-release)")
+          base = tag.split("-", 1)[0]
+          prerelease = tag != base
+
+          with open("CHANGELOG.md", encoding="utf-8") as f:
+              lines = f.read().splitlines()
+
+
+          def find(version):
+              heading = re.compile(rf"## {re.escape(version)} \(\d{{4}}-\d{{2}}-\d{{2}}\): (.+)")
+              for i, line in enumerate(lines):
+                  m = heading.fullmatch(line.rstrip())
+                  if m:
+                      return i, m.group(1).strip()
+              return None
+
+
+          # A pre-release may have its own entry, or use the upcoming release's.
+          hit = find(tag) or (find(base) if prerelease else None)
+          if not hit:
+              want = f"## {tag} (YYYY-MM-DD): Short title"
+              if prerelease:
+                  want += f" (or the same for {base})"
+              fail(f"CHANGELOG.md has no entry for {tag}. Add a heading '{want}' and tag again.")
+          start, title = hit
+
+          # The entry runs from its heading to the next "## " heading.
+          body, fence = [], False
+          for line in lines[start + 1:]:
+              if line.lstrip().startswith("```"):
+                  fence = not fence
+              if not fence and line.startswith("## "):
+                  break
+              body.append(line)
+
+          # CHANGELOG.md is hard-wrapped, but GitHub renders every newline in
+          # release notes as a line break, so rejoin wrapped paragraphs and
+          # list items. Code blocks, headings and tables are left alone.
+          block_start = re.compile(r"(?:[-*+]|\d+[.)]|#+|>)(?:\s|$)|```|\||<")
+          notes, fence = [], False
+          for line in body:
+              text = line.strip()
+              if text.startswith("```"):
+                  fence = not fence
+                  notes.append(line)
+                  continue
+              prev = notes[-1] if notes else ""
+              if (
+                  not fence
+                  and text
+                  and prev.strip()
+                  and not block_start.match(text)
+                  and not re.match(r"\s*(?:```|#|\|)", prev)
+                  and not prev.endswith(("  ", "\\"))
+              ):
+                  notes[-1] = f"{prev.rstrip()} {text}"
+              else:
+                  notes.append(line.rstrip())
+          notes = "\n".join(notes).strip()
+          if not notes:
+              fail(f"The CHANGELOG.md entry for {tag} has no text under its heading.")
+
+          with open(os.environ["NOTES"], "w", encoding="utf-8") as f:
+              f.write(notes + "\n")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+              f.write(f"title={tag}: {title}\n")
+              f.write(f"prerelease={'true' if prerelease else 'false'}\n")
+          print(f"{tag}: {title} (prerelease: {prerelease})\n\n{notes}")
+          EOF
+
+      - name: Create or update the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          TITLE: ${{ steps.notes.outputs.title }}
+          PRERELEASE: ${{ steps.notes.outputs.prerelease }}
+          NOTES: ${{ runner.temp }}/release-notes.md
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::Release $TAG already exists; updating its title and notes."
+            gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES" \
+              --prerelease="$PRERELEASE"
+          else
+            gh release create "$TAG" --verify-tag --title "$TITLE" \
+              --notes-file "$NOTES" --prerelease="$PRERELEASE"
+          fi
