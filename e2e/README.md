@@ -10,7 +10,7 @@ transcript and checks it.
   (`checks.py`) judge the transcript. Deterministic; a failed check
   fails the PR's `E2E tier 1` check.
 - **Tier 2** (only with the `e2e-full` label): Claude Code, headless,
-  plays the real reply worker from `worker-prompt.template.md`
+  plays the real reply worker from `prompts/worker-prompt.template.md`
   (`claude_worker.py`), and a separate Claude run judges each
   transcript against the scenario's rubric (`judge.py`). Advisory: it
   never blocks a PR. It spends the owner's Claude subscription usage,
@@ -390,7 +390,7 @@ picks the model for both (default: the CLI's).
 install: it hands each open queue item to exactly one run, with the
 hook's payload and nonces (each item's `reply_nonce`; owner DMs and
 owner commands wake alone with theirs), and runs `claude -p` with the
-PR's `worker-prompt.template.md` (rendered by
+PR's `prompts/worker-prompt.template.md` (rendered by
 `bin/render-worker-prompt.py`, no media tools) and the test persona in
 `fixtures/persona.md`. The run has only Bash and Read, in `dontAsk`
 mode, behind a hook that allows exactly the outbox append, the

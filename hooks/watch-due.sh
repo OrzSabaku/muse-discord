@@ -9,7 +9,7 @@
 # page one person points the checker at never shares a run with anyone
 # else's checks and nonces. Other requesters' checks go to the next
 # runs, a poll apart. The checker's whole prompt is
-# the fixed watch-checker-prompt.template.md rendered by
+# the fixed prompts/watch-checker-prompt.template.md rendered by
 # bin/render-checker-prompt.py, with the checks embedded as a delimited
 # data block. The checker may only search and read the web and report
 # each check with bin/watch-report.py; it never sees the Discord queue

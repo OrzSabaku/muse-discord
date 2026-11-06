@@ -5,7 +5,7 @@ command.
     python3 bin/render-worker-prompt.py --media images,video
     python3 bin/render-worker-prompt.py --media none --out -
 
-Renders worker-prompt.template.md for this install and writes it to
+Renders prompts/worker-prompt.template.md for this install and writes it to
 worker-prompt.md in the package dir (not tracked by git; re-render it
 after every update), or to --out (- for stdout). It:
 
@@ -29,7 +29,7 @@ import shlex
 import sys
 
 PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEMPLATE = "worker-prompt.template.md"
+TEMPLATE = "prompts/worker-prompt.template.md"
 OUTPUT = "worker-prompt.md"
 
 PERSONA_SEAM = """\

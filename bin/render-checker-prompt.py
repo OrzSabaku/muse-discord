@@ -4,7 +4,7 @@
     python3 bin/render-checker-prompt.py --due web_watches_due.json
     printf '%s' "$entries" | python3 bin/render-checker-prompt.py --due -
 
-Renders watch-checker-prompt.template.md (the fixed checker prompt;
+Renders prompts/watch-checker-prompt.template.md (the fixed checker prompt;
 hooks/watch-due.sh runs this on every wake) to stdout, or to --out:
 
 - drops the installer notes above the template's first `---` line;
@@ -29,7 +29,7 @@ import shlex
 import sys
 
 PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TEMPLATE = "watch-checker-prompt.template.md"
+TEMPLATE = "prompts/watch-checker-prompt.template.md"
 DATA_LINE = "<<DUE CHECKS>>"
 END_MARKER = "<<END MARKER>>"
 FIELDS = ("id", "nonce", "what", "expires")

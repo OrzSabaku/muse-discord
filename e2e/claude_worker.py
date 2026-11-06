@@ -7,13 +7,13 @@ hand each open item to exactly one worker run, re-hand it only after
 its lease runs out; owner DMs wake alone, with their owner_dm_nonce,
 and so do the owners' server items, a command with its
 owner_command_nonce)
-and what the worker session does (follow worker-prompt.template.md),
+and what the worker session does (follow prompts/worker-prompt.template.md),
 with `claude -p` as the agent:
 
     python3 e2e/claude_worker.py --pkg <pkg_dir> [--log FILE]
 
 Runs until SIGTERM. Each wake renders the PR's own
-worker-prompt.template.md with bin/render-worker-prompt.py, as docs/SETUP.md
+prompts/worker-prompt.template.md with bin/render-worker-prompt.py, as docs/SETUP.md
 step 5 does (persona from the wake payload, no media tools, default
 judgment), appends the same payload the wake hook builds (the items
 plus the persona text), and runs the CLI in the package dir with a
@@ -273,7 +273,7 @@ def build_payload(items, persona, caps=None):
 
 
 # ---------------------------------------------------------------------------
-# The prompt (worker-prompt.template.md, rendered as docs/SETUP.md step 5 does)
+# The prompt (prompts/worker-prompt.template.md, rendered as docs/SETUP.md step 5 does)
 # ---------------------------------------------------------------------------
 
 def render_prompt(template, pkg):
@@ -602,7 +602,7 @@ class Worker:
         ids = [i["message_id"] for i in items]
         try:
             with open(os.path.join(self.pkg,
-                                   "worker-prompt.template.md")) as f:
+                                   "prompts/worker-prompt.template.md")) as f:
                 template = f.read()
         except OSError as e:
             self.log("wake %d: cannot read the worker template: %s" % (n, e))

@@ -758,7 +758,7 @@ def note_fired(data, fid, now=None):
 # ---------------------------------------------------------------------------
 # The monitor issues each due check with a fresh one-time nonce and lists
 # the live ones in web_watches_due.json; hooks/watch-due.sh wakes one
-# checker session (watch-checker-prompt.template.md) with them as data;
+# checker session (prompts/watch-checker-prompt.template.md) with them as data;
 # the checker reports each with bin/watch-report.py into
 # web_watch_results.json, which the monitor drains (web_apply). A met
 # result fires like a reminder (kind "watch-met"); not-met and unknown

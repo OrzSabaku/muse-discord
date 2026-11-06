@@ -11,8 +11,8 @@ on:
       - "!**.md"
       - "!**.png"
       - "!LICENSE"
-      - "worker-prompt.template.md"
-      - "watch-checker-prompt.template.md"
+      - "prompts/worker-prompt.template.md"
+      - "prompts/watch-checker-prompt.template.md"
       - "docs/UPDATING.md"
       - "persona.md"
   pull_request:
@@ -22,8 +22,8 @@ on:
       - "!**.md"
       - "!**.png"
       - "!LICENSE"
-      - "worker-prompt.template.md"
-      - "watch-checker-prompt.template.md"
+      - "prompts/worker-prompt.template.md"
+      - "prompts/watch-checker-prompt.template.md"
       - "docs/UPDATING.md"
       - "persona.md"
 

@@ -715,7 +715,7 @@ to resume.
 
 ## Worker obligations
 
-The worker prompt (`worker-prompt.template.md`) is the full version.
+The worker prompt (`prompts/worker-prompt.template.md`) is the full version.
 
 1. Answer every item you were handed: a reply, or a `silent` item when
    none is warranted, with `item` set to its `message_id`. Never edit
@@ -996,7 +996,7 @@ checker --bin/watch-report.py--> web_watch_results.json --> monitor
   `key`), it wakes ONE checker session for those of ONE `group` and
   leases them, so a page one person points the checker at never shares
   a run with anyone else's checks. The wake payload is the whole
-  prompt: `watch-checker-prompt.template.md` rendered by
+  prompt: `prompts/watch-checker-prompt.template.md` rendered by
   `bin/render-checker-prompt.py`, with the checks as one JSON object
   per line (`{id, nonce, what, expires}`, ASCII only) between `BEGIN
   DATA <token>` and `END DATA <token>` lines, the token random per

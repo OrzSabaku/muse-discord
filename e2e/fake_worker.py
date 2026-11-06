@@ -7,7 +7,7 @@ Polls <pkg>/reply_queue.json (and item_nonces.json, for each item's
 reply_nonce, playing the wake hook) and answers every queue item exactly
 once with one outbox item, written through <pkg>/bin/outbox-append.py like
 a real worker (docs/PROTOCOL.md): one append call per item, as
-worker-prompt.template.md has the real worker do. The reply threads
+prompts/worker-prompt.template.md has the real worker do. The reply threads
 under the item's LAST burst fragment (the trigger when there are none)
 and says `ack <n>`, n = the number of messages in the item (trigger +
 fragments), unless the item's text (any fragment) carries a directive:

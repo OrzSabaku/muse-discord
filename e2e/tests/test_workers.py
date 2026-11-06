@@ -49,8 +49,10 @@ def make_pkg(prefix):
     shutil.copy(os.path.join(REPO, "bin", "outbox-append.py"),
                 os.path.join(pkg, "bin"))
     for f in ("muse_settings.py", "settings_nl.py", "muse_watches.py",
-              "worker-prompt.template.md"):
-        shutil.copy(os.path.join(REPO, f), pkg)
+              "prompts/worker-prompt.template.md"):
+        target = os.path.join(pkg, f)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copy(os.path.join(REPO, f), target)
     shutil.copytree(os.path.join(REPO, "plugins"),
                     os.path.join(pkg, "plugins"))
     with open(os.path.join(pkg, "config.yaml"), "w") as f:

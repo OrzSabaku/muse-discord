@@ -103,8 +103,10 @@ def make_pkg():
     pkg = os.path.join(root, "pkg")
     os.makedirs(pkg)
     for name in ("muse_settings.py", "config.example.yaml", "persona.md",
-                 "worker-prompt.template.md"):
-        shutil.copy2(os.path.join(MUT_DIR, name), pkg)
+                 "prompts/worker-prompt.template.md"):
+        target = os.path.join(pkg, name)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copy2(os.path.join(MUT_DIR, name), target)
     for d in ("bin", "plugins"):
         shutil.copytree(os.path.join(MUT_DIR, d), os.path.join(pkg, d))
     home = os.path.join(root, "home")
@@ -317,7 +319,7 @@ class RenderWorkerPrompt(unittest.TestCase):
         # The e2e worker renders with the same code.
         sys.path.insert(0, os.path.join(MUT_DIR, "e2e"))
         import claude_worker
-        with open(os.path.join(pkg, "worker-prompt.template.md")) as f:
+        with open(os.path.join(pkg, "prompts/worker-prompt.template.md")) as f:
             rendered, warnings = claude_worker.render_prompt(f.read(), pkg)
         self.assertEqual(warnings, [])
         self.assertEqual(rendered, text)
