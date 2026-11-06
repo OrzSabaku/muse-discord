@@ -6,7 +6,7 @@
 # tag such as v1.2.0) in the package dir.
 # Zero tokens otherwise: this script only reads that one file. It never
 # runs git or pulls, and it holds no secrets; the woken Muse does the
-# update to that exact release by following UPDATING.md and deletes the
+# update to that exact release by following docs/UPDATING.md and deletes the
 # file when it is done (or stops early).
 #
 # Each request is handed out once: a lease in hook state, keyed by the
@@ -15,7 +15,7 @@
 #
 # Like hooks/mention-watch.sh, this targets Muse's hook runtime (it
 # sources $HATCH_HOOK_RUNTIME for the silent/wake/log/hook_state
-# helpers). Register it with the wake prompt in SETUP.md (step 5),
+# helpers). Register it with the wake prompt in docs/SETUP.md (step 5),
 # delivered to the owner's main chat.
 set -euo pipefail
 # shellcheck source=/dev/null
@@ -56,5 +56,5 @@ fi
 hook_state_set "$(jq -cn --arg k "$key" --argjson now "$now" \
     '{handed: {($k): $now}}')"
 payload=$(jq -cn --argjson r "$req" --arg dir "$PKG_DIR" \
-    '{request: $r, package_dir: $dir, guide: ($dir + "/UPDATING.md")}')
+    '{request: $r, package_dir: $dir, guide: ($dir + "/docs/UPDATING.md")}')
 wake "muse-discord update requested" "$payload"

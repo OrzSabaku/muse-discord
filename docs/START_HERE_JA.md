@@ -10,17 +10,17 @@ cszach/muse-discord のコミット 7bd0706621b791a5adc72a94d06725ed993f406f を
 
 このZIPをMuseへ添付し、次の依頼を送ってください（このファイルを読めない場合は展開を依頼）。
 
-> 添付ZIPを私のVMの ~/muse-discord-personal に展開し、START_HERE_JA.md を読んで、本人のDM専用でセットアップしてください。SETUP.md は技術的な参照として使い、下記の変更点を優先してください。インストールと接続を行ったあと、起動前に bin/personal-profile.py を実行してください。Discord Botの作成と認証が必要な段階では、その操作だけ案内してください。私のパスワードやBotトークンを会話に貼らせないでください。
+> 添付ZIPを私のVMの ~/muse-discord-personal に展開し、docs/START_HERE_JA.md を読んで、本人のDM専用でセットアップしてください。docs/SETUP.md は技術的な参照として使い、下記の変更点を優先してください。インストールと接続を行ったあと、起動前に bin/personal-profile.py を実行してください。Discord Botの作成と認証が必要な段階では、その操作だけ案内してください。私のパスワードやBotトークンを会話に貼らせないでください。
 
 ## Muse側の作業順序
 
-1. SETUP.md の依存関係を確認し `bash bin/install.sh` を実行。Python依存と受信フック用のjqを用意する。仮想環境を作った場合は以後そのPythonを使用する。
+1. docs/SETUP.md の依存関係を確認し `bash bin/install.sh` を実行。Python依存と受信フック用のjqを用意する。仮想環境を作った場合は以後そのPythonを使用する。
 2. 利用者に https://discord.com/developers/applications でBotを作成してもらう。Botトークンは機密情報として扱う。通常の会話へ貼らせず、Museで利用できる正規の安全な入力方法を使う。接続スクリプトが要求する実トークンを安全に渡せない場合は、そこで接続を止めて、利用者の端末から権限600のtoken-fileを配置する方法へ切り替える。認証保護の回避はしない。
 3. `python3 bin/connect-discord.py --name "Muse" --token-file TOKEN_FILE_PATH` でBot接続と所有者確認を行う。これはトークンをファイルから読み、検証・保存し、入力ファイルを削除する上流スクリプト。所有者が利用者本人であることを確認する。Discord側の招待とIntent設定はスクリプトの案内に従う。招待先は本人だけのサーバーを推奨。
 4. **起動前に** `python3 bin/personal-profile.py` を実行。既存設定をバックアップし、検証済みの本人DM用設定に置換する。複数所有者の場合は `--owner 本人のDiscordユーザーID` を指定。Discord側の設定上書きファイルが存在する場合は安全のため停止するので、モニターを止め、内容を確認して別名で退避してから実行する。
 5. `python3 bin/settings.py validate` で実際に読み込まれる設定を検証する。
 6. `python3 bin/render-worker-prompt.py --media none` で専用ワーカー用指示を生成する。人格は新しく創作せず、Muse本人として扱う。
-7. SETUP.md Step 5 の受信・監視フックをMuseの実際のフック機構で登録する。mention-watch.sh は5秒ごと、専用ワーカー会話に渡す。watchdog-hook.sh は10分ごとにメイン会話へ。追加機能用フックの詳細もSETUP.md参照。**フックを登録できない環境では受信処理だけ動かしても返答しない。成功と報告しないこと。** Muse本体の外部操作承認は正規の画面で行う。
+7. docs/SETUP.md Step 5 の受信・監視フックをMuseの実際のフック機構で登録する。mention-watch.sh は5秒ごと、専用ワーカー会話に渡す。watchdog-hook.sh は10分ごとにメイン会話へ。追加機能用フックの詳細もdocs/SETUP.md参照。**フックを登録できない環境では受信処理だけ動かしても返答しない。成功と報告しないこと。** Muse本体の外部操作承認は正規の画面で行う。
 8. `bash watchdog.sh` でモニターを起動し、`python3 bin/doctor.py --no-dm` で診断する。今回はサーバー応答を無効にしているため、上流手順の「サーバーでメンションして応答を確認」は使わず、利用者本人からBotへDMを送って確認する。診断のサーバー応答関連の指摘と本当の障害を区別する。
 
 ## 本人DM用設定

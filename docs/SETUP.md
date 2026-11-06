@@ -121,8 +121,8 @@ all at once, with the package dir's absolute path for `<pkg>`:
 | Script | Every | Deliver to | Wake prompt | Without it |
 | --- | --- | --- | --- | --- |
 | `hooks/mention-watch.sh` | 5 s | a dedicated worker chat, not the main one | `You are muse-discord's reply worker. Read <pkg>/worker-prompt.md and follow it exactly; the wake payload below is this run's work.` | Nobody gets an answer, and a crashed bot waits up to 10 minutes for a restart. |
-| `hooks/watchdog-hook.sh` | 10 min | the owner's main chat | `muse-discord's watchdog raised an alert (payload). Fix it with <pkg>/TROUBLESHOOTING.md, and tell the owner in a sentence or two only if they must do something.` | A stuck bot is never restarted, alerts reach nobody, and new releases are never noticed. |
-| `hooks/update-watch.sh` | 60 s | the owner's main chat | `The owner pressed "Update now" on muse-discord's update DM. Update <pkg> to the release in the payload by following <pkg>/UPDATING.md with the owner in this chat. When done, or if you stop early, delete <pkg>/update_request.json and report the version running, or what waits on the owner.` | The bot's **Update now** button does nothing. |
+| `hooks/watchdog-hook.sh` | 10 min | the owner's main chat | `muse-discord's watchdog raised an alert (payload). Fix it with <pkg>/docs/TROUBLESHOOTING.md, and tell the owner in a sentence or two only if they must do something.` | A stuck bot is never restarted, alerts reach nobody, and new releases are never noticed. |
+| `hooks/update-watch.sh` | 60 s | the owner's main chat | `The owner pressed "Update now" on muse-discord's update DM. Update <pkg> to the release in the payload by following <pkg>/docs/UPDATING.md with the owner in this chat. When done, or if you stop early, delete <pkg>/update_request.json and report the version running, or what waits on the owner.` | The bot's **Update now** button does nothing. |
 | `hooks/watch-due.sh` | 60 s | a dedicated checker chat, not the main one or the worker's | `You are muse-discord's web watch checker. The wake payload below is your whole task: follow it exactly.` | Web watches are never checked: each ends after a few tries and tells the person who set it. |
 
 If the runtime can limit a chat's tools, give `hooks/watch-due.sh`'s
@@ -132,13 +132,13 @@ chat only web search and fetch and one command, by exact prefix:
 
 The scripts find the package from their own location (set
 `MUSE_DISCORD_DIR` if the runtime copies them). A runtime without hooks
-runs a poller per row (PROTOCOL.md is the contract), or cron for the
+runs a poller per row (docs/PROTOCOL.md is the contract), or cron for the
 watchdog.
 
 Save this memory note in your main chat: "muse-discord is installed at
 `<pkg>`; run its scripts with `<python3, or <pkg>/.venv/bin/python3>`.
-To change its settings, read `<pkg>/SETTINGS.md` first. To update it,
-follow `<pkg>/UPDATING.md`. To check it, run `<pkg>/bin/doctor.py
+To change its settings, read `<pkg>/docs/SETTINGS.md` first. To update it,
+follow `<pkg>/docs/UPDATING.md`. To check it, run `<pkg>/bin/doctor.py
 --no-dm`."
 
 ## Step 6: Start it and prove it (you, then owner)
@@ -176,4 +176,4 @@ On `OK`, send:
 > errors. Never messages, names, IDs or your IP address.
 
 That's the end of setup. Later, settings changes asked of you follow
-SETTINGS.md, and problems TROUBLESHOOTING.md.
+docs/SETTINGS.md, and problems docs/TROUBLESHOOTING.md.

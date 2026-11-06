@@ -33,7 +33,7 @@
 #     "OK (already alerted)".
 #   - "UPDATE: ..." printed ONCE per new release, a vX.Y.Z tag (checked
 #     at most daily; updates.notify in config.yaml turns it off). Never an
-#     alert, and the watchdog never applies updates: see UPDATING.md.
+#     alert, and the watchdog never applies updates: see docs/UPDATING.md.
 #   - State lives in watchdog_state.json and update_check.json; log in
 #     watchdog.log.
 #
@@ -290,7 +290,7 @@ if alive "[m]onitor.py"; then
     echo "OK monitor alive"
     GW_OFF="$(grep -o -m1 'GATEWAY DISABLED ([^)]*)' "$DIR/monitor.log" 2>/dev/null)"
     if [ -n "$GW_OFF" ]; then
-      DEGRADED_SIG="monitor degraded: $GW_OFF in monitor.log; realtime ingest is off, so replies wait for the REST poll. See TROUBLESHOOTING.md, then restart the monitor."
+      DEGRADED_SIG="monitor degraded: $GW_OFF in monitor.log; realtime ingest is off, so replies wait for the REST poll. See docs/TROUBLESHOOTING.md, then restart the monitor."
     fi
   fi
 fi
@@ -404,11 +404,11 @@ fi
 # `git ls-remote` (not the GitHub API, whose unauthenticated rate limit
 # is per IP and shared on hosted VMs); only the newest release's tag is
 # fetched. Never merges: applying an update is the owner's call, and
-# their Muse does it by following UPDATING.md. Skipped quietly for
+# their Muse does it by following docs/UPDATING.md. Skipped quietly for
 # installs that are not a git clone with an origin.
 # Each check also records the version in update_check.json for the
 # monitor, which DMs the owners once per new version with [Update now]
-# / [Later] buttons (PROTOCOL.md, "Update notices"): latest (the new
+# / [Later] buttons (docs/PROTOCOL.md, "Update notices"): latest (the new
 # release's tag, "" when nothing is new), installed, entries (headings
 # of that release's CHANGELOG entries newer than installed, newest
 # first) and action_needed (true when one of them lists something to
@@ -542,7 +542,7 @@ if [ "$(setting updates_notify true)" = "true" ] \
         upd_set_args=("$latest" "$installed")
         if [ "$latest" != "$announced" ]; then
           log "update available: $latest (installed: $installed)"
-          echo "UPDATE: muse-discord $latest is out (installed: $installed). Ask your Muse to update it by following UPDATING.md."
+          echo "UPDATE: muse-discord $latest is out (installed: $installed). Ask your Muse to update it by following docs/UPDATING.md."
           announced="$latest"
         fi
       else

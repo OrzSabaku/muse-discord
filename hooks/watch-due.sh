@@ -13,7 +13,7 @@
 # bin/render-checker-prompt.py, with the checks embedded as a delimited
 # data block. The checker may only search and read the web and report
 # each check with bin/watch-report.py; it never sees the Discord queue
-# and never writes to Discord (PROTOCOL.md, Web watches).
+# and never writes to Discord (docs/PROTOCOL.md, Web watches).
 #
 # Leases: each check (its key, "<id>:<issued>") is handed out once, in
 # hook state; a wake carries only checks no live lease covers, so no
@@ -23,7 +23,7 @@
 #
 # Like hooks/mention-watch.sh, this targets Muse's hook runtime (it
 # sources $HATCH_HOOK_RUNTIME for the silent/wake/log/hook_state
-# helpers). Register it as SETUP.md step 5's table says: every 60 s, in
+# helpers). Register it as docs/SETUP.md step 5's table says: every 60 s, in
 # a chat of its own (never the owner's main chat or the reply worker's).
 set -euo pipefail
 # shellcheck source=/dev/null

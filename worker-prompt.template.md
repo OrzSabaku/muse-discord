@@ -2,8 +2,8 @@
 
 The reply worker's prompt: the session `hooks/mention-watch.sh` wakes
 when the queue has work. `bin/render-worker-prompt.py` renders it into
-worker-prompt.md (SETUP.md, step 5; again after every update), filling
-in the seams and the paths. PROTOCOL.md is the file contract; this is
+worker-prompt.md (docs/SETUP.md, step 5; again after every update), filling
+in the seams and the paths. docs/PROTOCOL.md is the file contract; this is
 the behaviour on top of it. Edit inside a `=== SEAM: ... ===` only
 when the owner asks.
 

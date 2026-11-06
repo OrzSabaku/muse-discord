@@ -147,7 +147,7 @@ class ConnectDiscord(unittest.TestCase):
                                        "bot_token")
 
     def connect(self, paste, *args):
-        """Run it the SETUP.md way: the paste in a file in the private
+        """Run it the docs/SETUP.md way: the paste in a file in the private
         incoming dir, named by --token-file."""
         incoming = os.path.join(self.home, ".config", "muse-discord",
                                 "incoming")

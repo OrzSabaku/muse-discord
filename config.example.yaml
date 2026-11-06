@@ -147,5 +147,5 @@ all_servers:
 #         notes: "Longer answers are welcome here."
 
 # Advanced engine settings (polling, timing, the reply size ceiling)
-# are listed in PROTOCOL.md under "Engine settings". Most installs
+# are listed in docs/PROTOCOL.md under "Engine settings". Most installs
 # never need them.

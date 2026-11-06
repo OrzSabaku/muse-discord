@@ -1,7 +1,7 @@
 """Update DM suite (offline): versions are release tags (vX.Y.Z).
 Watchdog version fields (a local bare "upstream" with tags), the owner
 DM with buttons, the button clicks, hooks/update-watch.sh, and the
-UPDATING.md commands.
+docs/UPDATING.md commands.
 
 Usage: [MUT_DIR=<tree>] python3 tests/updatedm/test_updatedm.py"""
 import contextlib
@@ -546,10 +546,10 @@ class Watchdog(unittest.TestCase):
             os.path.join(self.inst, "update_check.json")))
 
     def test_updating_md_commands(self):
-        """The UPDATING.md commands: find the newest release by hand,
+        """The docs/UPDATING.md commands: find the newest release by hand,
         fetch it, merge it (fast-forward; merge commit with local
         commits)."""
-        with open(os.path.join(MUT_DIR, "UPDATING.md")) as f:
+        with open(os.path.join(MUT_DIR, "docs/UPDATING.md")) as f:
             doc = f.read()
         blocks = re.findall(r"```bash\n(.*?)```", doc, re.S)
         find = [b for b in blocks if "ls-remote" in b]
@@ -630,7 +630,7 @@ class Hook(unittest.TestCase):
                                               "requested_at": 1000,
                                               "by": H.OWNER})
         self.assertEqual(payload["package_dir"], self.pkg)
-        self.assertTrue(payload["guide"].endswith("/UPDATING.md"))
+        self.assertTrue(payload["guide"].endswith("/docs/UPDATING.md"))
         with open(self.state) as f:
             self.assertEqual(list(json.load(f)["handed"]), [f"{V1}:1000"])
         for _ in range(3):

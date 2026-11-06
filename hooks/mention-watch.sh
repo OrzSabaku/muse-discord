@@ -11,7 +11,7 @@
 # - Capabilities: owner DMs (and fires in them), a heartbeat slot, and
 #   an owner's server item holding a command or web watch nonce each
 #   wake alone, and only that wake gets their nonces; every item's
-#   reply_nonce goes only to the wake holding its lease (PROTOCOL.md).
+#   reply_nonce goes only to the wake holding its lease (docs/PROTOCOL.md).
 # - The payload carries the items and the persona text, so the worker's
 #   happy path is one append per item.
 # - Monitor liveness: when the monitor process is gone (the VM was
@@ -19,8 +19,8 @@
 #   with a backoff in hook state (at once, then after 1, 2 and 5
 #   minutes, then every 10) and never after a token rejection: the
 #   scheduled watchdog run owns that, and everything else.
-# It targets Muse's hook runtime ($HATCH_HOOK_RUNTIME; SETUP.md, step 5).
-# Other runtimes can poll reply_queue.json themselves (PROTOCOL.md).
+# It targets Muse's hook runtime ($HATCH_HOOK_RUNTIME; docs/SETUP.md, step 5).
+# Other runtimes can poll reply_queue.json themselves (docs/PROTOCOL.md).
 set -euo pipefail
 # shellcheck source=/dev/null
 source "$HATCH_HOOK_RUNTIME"
@@ -344,7 +344,7 @@ if [ "$nowner" -eq 0 ]; then
     fi
 fi
 # A wake of owner DMs only carries each item's owner_dm_nonce (the
-# capability every outbox item for an owner DM must echo; PROTOCOL.md).
+# capability every outbox item for an owner DM must echo; docs/PROTOCOL.md).
 # The monitor keeps the nonces out of the queue file, in a private file
 # only this hook reads, so a worker woken for anything else never sees
 # one.

@@ -128,7 +128,7 @@ python3 bin/settings.py validate
 ```
 
 A config that fails `validate` keeps the bot from starting.
-`config.example.yaml` shows the layout; PROTOCOL.md, "Settings", has
+`config.example.yaml` shows the layout; docs/PROTOCOL.md, "Settings", has
 the details.
 
 ## 6. Reminders and watches

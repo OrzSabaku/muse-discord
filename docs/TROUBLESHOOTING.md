@@ -18,7 +18,7 @@ restarts a dead monitor), then `kill "$(cat monitor.pid)"` and `pkill
 - **`TOKEN REJECTED` / "Discord rejected the token"**: the token was
   reset in the Developer Portal. Ask the owner for a fresh one (Bot
   page, **Reset Token**, **Copy**) and run `bin/connect-discord.py
-  --token-file` as in SETUP.md step 3. The next watchdog run starts
+  --token-file` as in docs/SETUP.md step 3. The next watchdog run starts
   the bot (the wake hook never retries a rejected token).
 - **`GATEWAY DISABLED (code 4014)` / "Message Content is off"**: the
   bot can't see replies, follow-ups or replies to itself. Run
@@ -34,7 +34,7 @@ restarts a dead monitor), then `kill "$(cat monitor.pid)"` and `pkill
 - **It can't post where it was mentioned**: give its role Send
   Messages in that channel.
 - **A hook "has never run" or "last ran N minutes ago"**: register it
-  again as SETUP.md step 5's table says (each hook touches a
+  again as docs/SETUP.md step 5's table says (each hook touches a
   `.seen-<name>` file in the package dir when it runs).
 - **The queue fills but nobody answers**: the wake hook isn't waking a
   worker, or its wake prompt doesn't point at this package's
@@ -43,7 +43,7 @@ restarts a dead monitor), then `kill "$(cat monitor.pid)"` and `pkill
 - **`Skipping duplicate reply` in monitor.log**: two workers drafted
   the same message (two registered wake hooks, or a hook plus a
   poller). Only one reply goes out; keep one waker.
-- **`WORKER PROMPT OUT OF DATE`**: render it again (UPDATING.md step
+- **`WORKER PROMPT OUT OF DATE`**: render it again (docs/UPDATING.md step
   4, "Worker prompt").
 - **Couldn't DM the owner**: they block DMs from server members. In
   Discord: right-click the server icon, **Privacy Settings**, switch on

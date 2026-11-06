@@ -131,11 +131,11 @@ def check(d, st, args):
                   f"accounts.", f"chmod 600 {tf}")
 
     # An outdated worker prompt: every reply refused (the monitor marks
-    # it, PROTOCOL.md, Replies stay with their run).
+    # it, docs/PROTOCOL.md, Replies stay with their run).
     if os.path.exists(d.path("prompt_outdated.json")):
         d.add("problem", "The worker prompt is out of date, so the bot "
               "can't send replies (they carry no reply_nonce).",
-              "follow UPDATING.md: it re-renders the prompt (python3 "
+              "follow docs/UPDATING.md: it re-renders the prompt (python3 "
               "bin/render-worker-prompt.py with the options used before).")
 
     # The monitor.
@@ -177,7 +177,7 @@ def check(d, st, args):
     elif "GATEWAY DISABLED" in log:
         d.add("problem", "The bot's realtime connection is off, so replies "
               "are slow.", "see GATEWAY DISABLED in monitor.log, and "
-              "TROUBLESHOOTING.md.")
+              "docs/TROUBLESHOOTING.md.")
     else:
         ready = [m.start() for m in re.finditer(
             r"Gateway READY|Gateway session resumed", log)]
@@ -229,18 +229,18 @@ def check(d, st, args):
             d.add("note", f"The {what} isn't running, so web watches are "
                   f"never checked (each ends after a few tries and tells "
                   f"whoever set it). Register it if you want them "
-                  f"(SETUP.md, step 5).")
+                  f"(docs/SETUP.md, step 5).")
         elif age is None and stamp == "watchdog-hook":
             d.add("note", f"The {what} hasn't run yet; it runs every 10 "
                   f"minutes. If this note is still here in 15 minutes, "
-                  f"register it (SETUP.md, step 5).")
+                  f"register it (docs/SETUP.md, step 5).")
         elif age is None:
             d.add("problem", f"The {what} has never run.",
-                  "register it as SETUP.md step 5 says.")
+                  "register it as docs/SETUP.md step 5 says.")
         elif age > stale:
             d.add("problem", f"The {what} last ran {int(age // 60)} "
                   f"minutes ago; it should run every {every} seconds.",
-                  "check that it is still registered (SETUP.md, step 5).")
+                  "check that it is still registered (docs/SETUP.md, step 5).")
         else:
             d.add("ok", f"The {what} is running.")
 
@@ -322,7 +322,7 @@ def wait_mention(d, st, secs):
             if status in ("skipped", "quarantined", "enqueue_failed"):
                 what, fix = REASONS.get(e.get("code"), (
                     f"It didn't answer ({e.get('reason') or status}).",
-                    "see TROUBLESHOOTING.md."))
+                    "see docs/TROUBLESHOOTING.md."))
                 d.add("problem", what, fix)
                 return
             seen_status = status
@@ -330,7 +330,7 @@ def wait_mention(d, st, secs):
     if seen_status:
         d.add("problem", "The bot saw the mention but hasn't answered yet.",
               "check that the wake hook is registered with the worker "
-              "prompt (SETUP.md, step 5).")
+              "prompt (docs/SETUP.md, step 5).")
     else:
         d.add("problem", "No mention from the owner reached the bot.",
               "make sure they typed @ and picked the bot from the list, in "

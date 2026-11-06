@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh -- check and install what muse-discord needs (SETUP.md,
+# install.sh -- check and install what muse-discord needs (docs/SETUP.md,
 # step 1). Safe to run any number of times; it never touches git, the
 # config or the token.
 #

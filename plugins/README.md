@@ -34,5 +34,5 @@ with its full access, the bot token included.
 The monitor loads a plugin once some scope turns it on
 (`plugins.<id>.enabled: on` in `config.yaml`, or by DMing the bot "turn
 on example"; in `/settings` only server admins can turn one off). The hooks, `ctx`
-and the setting types are in PROTOCOL.md, "Plugin hooks". A failing
+and the setting types are in docs/PROTOCOL.md, "Plugin hooks". A failing
 plugin is logged and skipped, never fatal.

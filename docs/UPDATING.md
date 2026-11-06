@@ -4,10 +4,10 @@ You, the owner's Muse, follow this guide with the owner. The goal: the
 chosen release running, with nothing of theirs lost without their
 say-so. Commands run in the package dir. Never print the bot token.
 
-An update never repeats SETUP.md: `config.yaml`, `persona.md` and the
+An update never repeats docs/SETUP.md: `config.yaml`, `persona.md` and the
 token stay as they are, and the owner does nothing in Discord. Run
 `bin/connect-discord.py` again only when the token was rejected
-(TROUBLESHOOTING.md).
+(docs/TROUBLESHOOTING.md).
 
 ## What belongs to the owner
 
@@ -138,14 +138,14 @@ offers only releases, skipping any HEAD already contains.
   <none|images|video|images,video>`. If the owner had asked for
   changes inside a seam, apply them to `worker-prompt.md` again. A wake
   hook that still carries the whole prompt inline (from before the
-  renderer) gets the short wake prompt from SETUP.md step 5 instead.
-- **Hooks**: every hook in SETUP.md step 5's table must be
+  renderer) gets the short wake prompt from docs/SETUP.md step 5 instead.
+- **Hooks**: every hook in docs/SETUP.md step 5's table must be
   registered: register any that is missing, as the table says, and
   remove an old scheduler entry for `watchdog.sh` once
   `hooks/watchdog-hook.sh` runs. If the runtime registered a copy of a
   script that changed, update the copy.
 - **Memory note**: if your memory has no note about this install,
-  save the one from SETUP.md step 5.
+  save the one from docs/SETUP.md step 5.
 
 ### Converting the settings layout
 

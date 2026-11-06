@@ -3,7 +3,7 @@
 answer in #general when I @ you").
 
 The worker never writes config. It attaches a `settings` action to its
-one outbox item for an owner's DM (PROTOCOL.md, "Settings requests"),
+one outbox item for an owner's DM (docs/PROTOCOL.md, "Settings requests"),
 and the monitor decides everything here: whether the item may change
 settings at all (from its own records of the message, never from what
 the worker wrote), what the changes mean, whether they need the owner's

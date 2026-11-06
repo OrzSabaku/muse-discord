@@ -770,7 +770,7 @@ class Proactive:
                       flush=True)
             elif self.blocked():
                 print("Heartbeat skipped: a bad proactive.json is set aside "
-                      "(PROTOCOL.md, proactive.json).", flush=True)
+                      "(docs/PROTOCOL.md, proactive.json).", flush=True)
             elif self.enabled_anywhere() \
                     and self.sent_total(now) < self.total_cap():
                 # (Quiet hours are per target: a person's own time zone.)

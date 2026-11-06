@@ -42,7 +42,7 @@ Added:
 
 The update DM shows owners each release's title and whether it has an
 **Action needed** list, so write both for owners. Leave the list out
-when there is nothing to do; UPDATING.md walks a Muse through it.
+when there is nothing to do; docs/UPDATING.md walks a Muse through it.
 
 Keep existing installs working:
 

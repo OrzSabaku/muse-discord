@@ -6,7 +6,7 @@
 Polls <pkg>/reply_queue.json (and item_nonces.json, for each item's
 reply_nonce, playing the wake hook) and answers every queue item exactly
 once with one outbox item, written through <pkg>/bin/outbox-append.py like
-a real worker (PROTOCOL.md): one append call per item, as
+a real worker (docs/PROTOCOL.md): one append call per item, as
 worker-prompt.template.md has the real worker do. The reply threads
 under the item's LAST burst fragment (the trigger when there are none)
 and says `ack <n>`, n = the number of messages in the item (trigger +
@@ -22,7 +22,7 @@ fragments), unless the item's text (any fragment) carries a directive:
   [[say:<text>]] the reply goes on with " <text>" after `ack <n>` (the
                  never_share scenario plants a listed phrase this way)
   [[remind:<seconds> <note>]]
-                 the reply carries a schedule action (PROTOCOL.md,
+                 the reply carries a schedule action (docs/PROTOCOL.md,
                  Reminders and watches) asking for a reminder that
                  many seconds after the message
   [[watch:<word>]]

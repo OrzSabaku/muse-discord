@@ -18,7 +18,7 @@ monitor.py does the I/O (who can read which channel, the queue, the
 sends) and calls in here; bin/watches.py (the owner's CLI) uses the
 Store. Standard library only.
 
-Security properties (PROTOCOL.md, Reminders and watches):
+Security properties (docs/PROTOCOL.md, Reminders and watches):
 - The requester is always the author of the queue item the action
   answers, from the monitor's own record of it, never a field the
   worker writes; the place is that item's channel. A reminder can only
@@ -51,7 +51,7 @@ VERSION = 1
 KINDS = ("remind", "watch")       # an `add`'s kind (a web watch is a
                                   # watch with "check": "web")
 
-# Limits (PROTOCOL.md, Reminders and watches).
+# Limits (docs/PROTOCOL.md, Reminders and watches).
 REMIND_MIN_SECS = 60                    # at least a minute away
 REMIND_MAX_SECS = 366 * 86400           # at most a year away
 AFTER_MAX = 100 * REMIND_MAX_SECS       # a sane number (decide refuses

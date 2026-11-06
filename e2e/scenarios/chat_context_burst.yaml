@@ -3,7 +3,7 @@
 # that chat in three quick fragments, which the monitor folds into one
 # queue item whose history carries the chat. The real worker must give
 # ONE coherent answer to the whole question, under the last fragment
-# (PROTOCOL.md worker obligation 6), using the chat (B said the line
+# (docs/PROTOCOL.md worker obligation 6), using the chat (B said the line
 # was about 40 minutes, and to go before noon). no_sut_reply_to on the
 # first two fragments catches the burst not being coalesced, or the
 # worker replying under the wrong fragment.

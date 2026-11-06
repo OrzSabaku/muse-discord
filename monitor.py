@@ -4,7 +4,7 @@ muse-discord monitor: the engine of the muse-discord connector.
 
 Watches Discord for messages that address the bot (mentions, replies to
 the bot, and DMs per policy), coalesces bursts, and appends work items to
-reply_queue.json. A separate worker (an agent session; see PROTOCOL.md)
+reply_queue.json. A separate worker (an agent session; see docs/PROTOCOL.md)
 drafts replies into reply_outbox.json, and this process sends them.
 Gateway websocket ingest provides realtime delivery; a periodic REST poll
 repairs gaps. A reconciliation sweep plus a mention ledger make silent
@@ -79,7 +79,7 @@ LEDGER_FILE = os.path.join(BASE_DIR, "mention_ledger.json")
 HEARTBEAT_FILE = os.path.join(BASE_DIR, "monitor.heartbeat")
 # The monitor and the worker both edit the queue and the outbox. Every
 # read-modify-write of either file happens under an exclusive flock on
-# this file (see shared_lock and PROTOCOL.md), so neither side can write
+# this file (see shared_lock and docs/PROTOCOL.md), so neither side can write
 # back a stale copy over the other's changes.
 LOCK_FILE = os.path.join(BASE_DIR, "reply.lock")
 # Outbox items the monitor has taken and is sending. If it dies mid-send
@@ -169,7 +169,7 @@ def _import_telemetry():
 TM = _import_telemetry()
 
 
-# Reaching out on its own, unprompted (proactive.py; PROTOCOL.md,
+# Reaching out on its own, unprompted (proactive.py; docs/PROTOCOL.md,
 # "Unprompted messages"). Off by default; when proactive.py cannot be
 # loaded the bot only replies.
 PROACTIVE_FILE = os.path.join(BASE_DIR, "proactive.json")
@@ -2131,14 +2131,14 @@ def on_guild_event(state, ev):
 # ---------------------------------------------------------------------------
 # Update notices and interactions. Versions are releases: semver tags
 # vX.Y.Z. watchdog.sh records a new release in update_check.json
-# (latest, installed, entries, action_needed; see PROTOCOL.md). The
+# (latest, installed, entries, action_needed; see docs/PROTOCOL.md). The
 # monitor DMs each owner about it once, with [Update now] / [Later]
 # buttons. A click arrives as a gateway INTERACTION_CREATE and is
 # answered on its own thread, never behind the main loop's REST work:
 # Discord fails an interaction that is not acknowledged within 3 seconds.
 # "Update now" writes update_request.json, which hooks/update-watch.sh
 # turns into a wake of the owner's Muse in its main chat (it follows
-# UPDATING.md to that exact release). "Later" only declines: a version is
+# docs/UPDATING.md to that exact release). "Later" only declines: a version is
 # offered once, and a newer one is offered again.
 # ---------------------------------------------------------------------------
 UPDATE_CHECK_FILE = os.path.join(BASE_DIR, "update_check.json")
@@ -4032,7 +4032,7 @@ def register_commands(gateway_status=None):
         err = f"{type(e).__name__}: {e}"
         if err != reg["last_error"]:
             hint = (" (the bot's invite may lack the applications.commands "
-                    "scope; see SETUP.md)"
+                    "scope; see docs/SETUP.md)"
                     if getattr(e, "code", None) == 403 else "")
             print(f"/settings command registration failed ({err}){hint}; "
                   f"retrying in {COMMAND_RETRY_SECS}s.", flush=True)
@@ -6296,7 +6296,7 @@ def _refuse(rejects, item, why, note=""):
 
 def bind_started(state, item, settled, remaining, rejects):
     """The one binding step for outbox items that answer an item the
-    monitor started, run before owner_dm_gate (PROTOCOL.md, "Fires: the
+    monitor started, run before owner_dm_gate (docs/PROTOCOL.md, "Fires: the
     monitor starts a queue item"): a reminder or watch fire (watch_bind: its
     requester, its place) or a heartbeat slot (proactive.py: its
     targets, nonce and caps; sent there, never by the path below).
@@ -6398,7 +6398,7 @@ def note_reply_nonce(state, refusal):
         return
     if not os.path.exists(STALE_PROMPT_FILE):
         print("WORKER PROMPT OUT OF DATE: outbox items carry no "
-              "reply_nonce; re-render the worker prompt (UPDATING.md).",
+              "reply_nonce; re-render the worker prompt (docs/UPDATING.md).",
               flush=True)
         try:
             atomic_write(STALE_PROMPT_FILE, {"since": now,
@@ -6814,7 +6814,7 @@ def process_outbox(state):
 
 
 # ---------------------------------------------------------------------------
-# Reminders and watches (muse_watches.py; PROTOCOL.md, "Reminders and
+# Reminders and watches (muse_watches.py; docs/PROTOCOL.md, "Reminders and
 # watches"). The worker asks for one with a `schedule` action on its
 # reply to a queue item; the requester is that item's author and the
 # place its channel, from item_meta, never from the outbox

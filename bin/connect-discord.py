@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """connect-discord.py -- connect a new Discord app to this install.
 
-SETUP.md step 3. The Muse writes the token the owner pasted in chat to
+docs/SETUP.md step 3. The Muse writes the token the owner pasted in chat to
 a file in ~/.config/muse-discord/incoming/ (made mode 700 by
 bin/install.sh) with its file-writing tool, never a shell command, and
 names that file:
@@ -610,7 +610,7 @@ def main(argv=None):
     if args.wait is not None:
         return wait(args, rep)
     if not (args.token_file or args.saved) and sys.stdin.isatty():
-        print("Use --token-file PATH (see SETUP.md step 3).",
+        print("Use --token-file PATH (see docs/SETUP.md step 3).",
               file=sys.stderr)
         return 2
     return connect(args, rep)

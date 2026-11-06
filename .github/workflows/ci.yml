@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       # Docs-only changes skip the tests. These .md files are inputs to
-      # the code (rendered prompts, UPDATING.md's commands, the shipped
+      # the code (rendered prompts, docs/UPDATING.md's commands, the shipped
       # persona's hash), so they still run them.
       - "**"
       - "!**.md"
@@ -13,7 +13,7 @@ on:
       - "!LICENSE"
       - "worker-prompt.template.md"
       - "watch-checker-prompt.template.md"
-      - "UPDATING.md"
+      - "docs/UPDATING.md"
       - "persona.md"
   pull_request:
     paths:
@@ -24,7 +24,7 @@ on:
       - "!LICENSE"
       - "worker-prompt.template.md"
       - "watch-checker-prompt.template.md"
-      - "UPDATING.md"
+      - "docs/UPDATING.md"
       - "persona.md"
 
 permissions:
@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Oldest supported (SETUP.md promises 3.10+) and newest.
+        # Oldest supported (docs/SETUP.md promises 3.10+) and newest.
         python: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@v4

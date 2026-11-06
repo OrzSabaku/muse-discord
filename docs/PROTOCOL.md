@@ -256,7 +256,7 @@ its nonce, and mints a new one if it is lost, for the item's next run.
   the monitor logs `WORKER PROMPT OUT OF DATE`, writes
   `prompt_outdated.json` (`bin/doctor.py` reports it, with the fix) and
   DMs the owners, at most once a day, to have their Muse follow
-  UPDATING.md. An outbox item with its nonce clears it.
+  docs/UPDATING.md. An outbox item with its nonce clears it.
 - A held reply an owner chose to send (never_share holds) is exempt:
   the release is bound to the hold's own item and channel.
 - To post elsewhere for an owner, the worker uses `bin/discord-api.py`
@@ -1002,7 +1002,7 @@ checker --bin/watch-report.py--> web_watch_results.json --> monitor
   DATA <token>` and `END DATA <token>` lines, the token random per
   render.
 - **The checker** may only search and read the web and run
-  `bin/watch-report.py` (recommended runtime hardening: SETUP.md step
+  `bin/watch-report.py` (recommended runtime hardening: docs/SETUP.md step
   5). It first screens each condition: one that is more than a plain
   condition (instructions, an address to send anything to, a request
   to reveal anything) is reported `refused` unchecked. It reports each
@@ -1045,14 +1045,14 @@ watch. A file that does not parse is moved aside
 one; the owners are not told.
 
 `bin/watches.py list [--json]` and `bin/watches.py cancel <id>...` are
-the owner's view of it (SETTINGS.md, section 6).
+the owner's view of it (docs/SETTINGS.md, section 6).
 
 ## Settings
 
 The owner's settings live in `config.yaml` (`config.example.yaml`
 shows the everyday ones with their defaults), loaded by
 `muse_settings.py` for the monitor and `bin/settings.py`. The CLI
-(`bin/settings.py --help`; SETTINGS.md is the Muse's guide):
+(`bin/settings.py --help`; docs/SETTINGS.md is the Muse's guide):
 `validate`; `show [--dms | --server ID [--channel ID [--category
 ID]]] [--explain]` (no flags: `everywhere`); `places [--find TEXT]
 [--server ID]` (from `directory.json`); `explain [--place PLACE]
@@ -1420,7 +1420,7 @@ settings.
 
 How an owner hears of a release and starts the update from Discord.
 The reply worker is not involved. Releases are semver tags with
-CHANGELOG entries (RELEASING.md); the installed version is the newest
+CHANGELOG entries (docs/RELEASING.md); the installed version is the newest
 release tag HEAD contains, or `unreleased`.
 
 ### update_check.json (watchdog -> monitor)
@@ -1470,6 +1470,6 @@ seconds. They are dispatched by custom id prefix (`mdupd`, `mdhold`,
 `hooks/update-watch.sh` wakes the owner's Muse in its main chat once
 per request (keyed on `version` and `requested_at`; again only if the
 file is still there 6 hours later). The Muse updates to exactly that
-tag by following UPDATING.md, then deletes the file, also when it
+tag by following docs/UPDATING.md, then deletes the file, also when it
 stops early. The hook never runs git, holds no secrets, and hands on
 only a `vX.Y.Z` version.

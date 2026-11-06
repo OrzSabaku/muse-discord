@@ -17,7 +17,7 @@ appending through this tool cannot.
 Nothing is appended if any item has an obvious mistake (the monitor
 would set it aside unsent); the errors are printed so the worker can fix
 them and run it again. An item with a `settings` action (a settings
-request from an owner's DM; PROTOCOL.md) gets the monitor's own shape
+request from an owner's DM; docs/PROTOCOL.md) gets the monitor's own shape
 checks (settings_nl.shape_problems), and so does an item with a
 `schedule` action (reminders and watches: muse_watches.shape_problems);
 a `proactive` opt-out / opt-in is "opt-out" or "opt-in" on an item with

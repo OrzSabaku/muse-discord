@@ -13,7 +13,7 @@ with `claude -p` as the agent:
     python3 e2e/claude_worker.py --pkg <pkg_dir> [--log FILE]
 
 Runs until SIGTERM. Each wake renders the PR's own
-worker-prompt.template.md with bin/render-worker-prompt.py, as SETUP.md
+worker-prompt.template.md with bin/render-worker-prompt.py, as docs/SETUP.md
 step 5 does (persona from the wake payload, no media tools, default
 judgment), appends the same payload the wake hook builds (the items
 plus the persona text), and runs the CLI in the package dir with a
@@ -84,7 +84,7 @@ PAYLOAD_FIELDS = (
 SCRUB_ENV = ("E2E_DRIVER_A_TOKEN", "E2E_DRIVER_B_TOKEN")
 
 # The installed prompt is rendered by the same code a Muse install uses
-# (bin/render-worker-prompt.py, SETUP.md step 5): persona from the wake
+# (bin/render-worker-prompt.py, docs/SETUP.md step 5): persona from the wake
 # payload, no media tools, default judgment. The package's own copy
 # when it has one (the PR's code), else this checkout's.
 RENDERER = "render-worker-prompt.py"
@@ -273,7 +273,7 @@ def build_payload(items, persona, caps=None):
 
 
 # ---------------------------------------------------------------------------
-# The prompt (worker-prompt.template.md, rendered as SETUP.md step 5 does)
+# The prompt (worker-prompt.template.md, rendered as docs/SETUP.md step 5 does)
 # ---------------------------------------------------------------------------
 
 def render_prompt(template, pkg):

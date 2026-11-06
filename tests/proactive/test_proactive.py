@@ -1,4 +1,4 @@
-"""Reaching out on its own (proactive.py; PROTOCOL.md, "Unprompted
+"""Reaching out on its own (proactive.py; docs/PROTOCOL.md, "Unprompted
 messages"): off by default, the Friends preset turns it on, heartbeats
 at jittered times within their frequency, and an unprompted message goes
 only to one of its heartbeat slot's targets, with the slot's nonce,

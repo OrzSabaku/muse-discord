@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # muse-discord watchdog hook: the scheduled watchdog run, as a Muse hook.
 # Register it to run every 10 minutes, delivered to the owner's MAIN
-# chat (SETUP.md, step 5). Each run:
+# chat (docs/SETUP.md, step 5). Each run:
 #   1. starts watchdog.sh fully detached (double fork, new session), its
 #      output going to a file of its own that is renamed to
 #      watchdog-hook.out.<time>.<pid> only once the run has finished. A
@@ -80,5 +80,5 @@ if [ -z "$alerts" ]; then
 fi
 payload=$(jq -cn --arg a "$alerts" --arg dir "$PKG_DIR" \
     '{alerts: ($a | split("\n")), package_dir: $dir,
-      guide: ($dir + "/TROUBLESHOOTING.md")}')
+      guide: ($dir + "/docs/TROUBLESHOOTING.md")}')
 wake "muse-discord needs attention" "$payload"
