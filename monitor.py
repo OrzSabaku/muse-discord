@@ -2669,6 +2669,13 @@ def publish_directory():
 _STASH = {}
 _STASH_LOCK = threading.Lock()
 STASH_MAX = 500
+# Per-user UI sessions (settings_ui's edit drafts): keyed by
+# (user_id, key), readable and writable any number of times until the
+# ttl lapses or the entry is dropped. Unlike the stash, nothing here is
+# a credential: a draft is only ever staged changes the user made.
+_SESSIONS = {}
+_SESSIONS_LOCK = threading.Lock()
+SESSIONS_MAX = 200
 
 
 # Pending admin-change digests: guild id -> {"first": t, "changes": []}.
@@ -2758,6 +2765,29 @@ class SettingsCtx:
                 _STASH.pop(next(iter(_STASH)))
             _STASH[tok] = (str(user_id), payload, now + ttl)
         return tok
+
+    def session_peek(self, user_id, key):
+        """The payload session_put kept for (user_id, key), or None
+        (never kept, dropped, or expired). Not consumed."""
+        with _SESSIONS_LOCK:
+            e = _SESSIONS.get((str(user_id), str(key)))
+            if e is None or e[1] < time.time():
+                _SESSIONS.pop((str(user_id), str(key)), None)
+                return None
+            return e[0]
+
+    def session_put(self, user_id, key, payload, ttl=900):
+        now = time.time()
+        with _SESSIONS_LOCK:
+            for k in [k for k, v in _SESSIONS.items() if v[1] < now]:
+                del _SESSIONS[k]
+            while len(_SESSIONS) >= SESSIONS_MAX:
+                _SESSIONS.pop(next(iter(_SESSIONS)))
+            _SESSIONS[(str(user_id), str(key))] = (payload, now + ttl)
+
+    def session_drop(self, user_id, key):
+        with _SESSIONS_LOCK:
+            _SESSIONS.pop((str(user_id), str(key)), None)
 
     def stash_take(self, user_id, token):
         """The payload stash_put kept, once; None when it is gone

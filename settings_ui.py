@@ -19,6 +19,18 @@ What each person gets:
   change, and a reminder that anything else is one DM away
   (settings_nl.py: an owner can change any setting by DMing the bot in
   plain words).
+- The owner's Edit button opens the edit pages (basic, then "More
+  settings"): every Discord-editable setting that place has, detailed
+  ones included (who it answers and ignores, other bots, the daily
+  caps, what it remembers, reminders, reaching out on its own).
+  Nothing on an edit page applies at once: picks stage into a draft
+  (a Ctx session, 15 minutes), the pages list what would change, and
+  Save applies the whole draft as one undo group through the same
+  assess / confirm path as any other write; Cancel throws it away.
+  Two settings stay off the pages by the engine's own rules
+  (abilities.external_apps, privacy.never_share: not
+  discord_editable), and owner commands likewise (the owner toggles
+  them by DM or in config).
 - A server admin (Manage Server) gets "Quiet the bot" for their server:
   quieter only (muse_settings' admin rule), and Undo of admins' changes.
 - Anyone else gets a polite refusal.
@@ -33,14 +45,28 @@ custom_id grammar ("mdset:3:" + colon-separated parts, <= 100 chars):
     place := x (everywhere) | d (DMs) | s<gid> | c<gid>.<cid>
     k     := a short code (CORE_CODES) | ~<plugin>.<key>
 
-    pg:<place>:<page>        page: h home (admins: their panel), y why
+    pg:<place>:<page>        page: h home (admins: their panel), y why,
+                             e edit (basic), d edit (more settings)
     wh:<place>               Where select: a place token (here, its
                              server, everywhere)
     set:<place>:<k>          a setting's select: r ln med df pp (see
-                             PLACE_CONTROLS; "=" follows the server)
+                             PLACE_CONTROLS; "=" follows the server);
+                             on an edit page the pick is staged, and
+                             the detail codes (see EDIT_CODES) count
     pre:<place>              style select (a server): apply a preset
+                             (staged instead while a draft is open)
     val:<place>:<k>:<v>      a button with an absolute value ("=": what
                              the place would follow without its own)
+    ed:<place>               owner: open the edit pages (starts a draft)
+    sv:<place> | cx:<place>  owner: save the draft as one change /
+                             throw the draft away
+    tg:<place>:<k>:<v>       owner, edit pages: stage an absolute value
+                             ("=" stages "inherit", "everyone" a
+                             people value)
+    pk:<place>:<k>           owner, edit pages: a people picker staging
+                             who.allow / who.ignore / abilities.reminders
+    mod:<place>:n            owner, edit pages: the style-notes form
+                             (sub:<place>:n stages what it submits)
     ppl:<place>:ig           admins: add to the ignore list
     rm:<place>:ig            admins: take their additions off it
     pz:<place> | rs:<place>  pause / resume
@@ -120,9 +146,11 @@ ROLES_ELSEWHERE = ("Roles only count in their own server, so the roles "
                    "you picked were left out.")
 FIXED_NOTE = "-# Fixed. {who} must send again; refused messages stay " \
              "unanswered."
-FOOTER_SERVER = ("-# Anything else? DM me what you'd like changed, e.g. "
+FOOTER_SERVER = ("-# Detailed settings are under “Edit settings”. "
+                 "Anything else? DM me what you'd like changed, e.g. "
                  "“only reply in #help” or “let Sam make images”.")
-FOOTER_DM = ("-# Anything else? Just tell me here, e.g. “only reply in "
+FOOTER_DM = ("-# Detailed settings are under “Edit settings”. "
+             "Anything else? Just tell me here, e.g. “only reply in "
              "#help” or “let @Sam DM you”.")
 
 
@@ -147,6 +175,9 @@ class Ctx(Protocol):
     def stash_put(self, user_id, payload, ttl=STASH_TTL) -> str: ...
     def stash_take(self, user_id, token): ...  # None: gone; raises
     #                                           PermissionError: not yours
+    def session_peek(self, user_id, key): ...  # the edit draft or None
+    def session_put(self, user_id, key, payload, ttl=STASH_TTL): ...
+    def session_drop(self, user_id, key): ...
     def notify_owners_admin_change(self, guild_id, user_id, key, old,
                                    new) -> None: ...
     def log(self, msg: str) -> None: ...
@@ -164,13 +195,15 @@ CORE_CODES = {
     "privacy.suspicious": "su", "limits.per_day": "pd",
     "limits.per_person_per_day": "pp", "presence.status": "ps",
     "presence.kind": "pk", "updates.notify": "un",
+    "proactive.enabled": "pe", "proactive.frequency": "pf",
+    "media.per_day": "mp",
 }
 CODE_KEYS = {v: k for k, v in CORE_CODES.items()}
 _PLUGIN_CODE = re.compile(r"~([A-Za-z0-9_\-]{1,40})\.([A-Za-z0-9_\-]{1,40})")
 _PLACE = re.compile(r"x|d|s(\d{1,25})|c(\d{1,25})\.(\d{1,25})")
 _ID = re.compile(r"\d{1,25}")
 _PART = re.compile(r"[^:]{1,100}")
-PAGES = ("h", "y")
+PAGES = ("h", "y", "e", "d", "f")
 
 
 def kcode(key):
@@ -1315,15 +1348,59 @@ def page_home(R, place):
         inner.append(td(f"**Style for all of {R.gname(gid)}**\n"
                         f"-# Applies to the whole server."))
         inner.append(row(style_select(R, gid)))
+    draft = draft_changes(R, place)
+    if draft:
+        inner.append(td(f"-# You have {len(draft)} unsaved "
+                        f"{'change' if len(draft) == 1 else 'changes'} "
+                        f"here — Edit settings to save or drop them."))
     inner += last_change_slot(R, place)
     paused = paused_at(R, place) is not None
     buttons = pause_buttons(R, place)
+    buttons.append(btn(f"Continue editing ({len(draft)})" if draft
+                       else "Edit settings", cid("ed", ptok(place)),
+                       PRIMARY))
     if place.kind != "defaults":
         buttons.append(btn("Why no reply?",
                            cid("pg", ptok(place), "y")))
     comps = [container(inner, GREY if paused else BLURPLE),
              row(*buttons), td(FOOTER_DM if not R.guild_id
                                else FOOTER_SERVER)]
+    return finish(R, comps)
+
+
+def page_edit(R, place, page="e"):
+    """An edit page: every control stages into the draft; Save applies
+    it as one change, Cancel throws it away. "e" is the basic page
+    (the home page's controls + notes + the server's style); "d" and
+    "f" are the detail pages (DETAIL_PAGES)."""
+    inner = [td("\n".join(head_lines(R, place))), draft_block(R, place),
+             sep()]
+    if page in DETAIL_PAGES:
+        ctrls = [DETAIL_CONTROLS[c](R, place)
+                 for c in DETAIL_PAGES[page].get(place.kind, ())]
+    else:
+        ctrls = [(t, [row(s)]) for t, s in controls_for(R, place)]
+        ctrls.append(ctl_notes(R, place))
+        if place.kind in ("channel", "server"):
+            gid = place.guild_id
+            ctrls.append((f"Style for all of {R.gname(gid)}\n"
+                          f"-# Applies to the whole server.",
+                          [row(style_select(R, gid))]))
+    for title, rows in ctrls:
+        head, _, note = title.partition("\n")
+        inner.append(td(f"**{head}**" + (f"\n{note}" if note else "")))
+        inner.extend(rows)
+    inner.append(plugins_line(R, place))
+    n = len(draft_changes(R, place) or [])
+    nav = [btn(EDIT_PAGE_LABELS[p], cid("pg", ptok(place), p))
+           for p in edit_pages(R, place) if p != page]
+    nav.append(btn("Back", cid("pg", ptok(place), "h")))
+    comps = [container(inner, AMBER),
+             row(btn(f"Save ({n})" if n else "Save",
+                     cid("sv", ptok(place)), SUCCESS),
+                 btn("Cancel", cid("cx", ptok(place)))),
+             row(*nav),
+             td("-# Nothing here applies until you press Save.")]
     return finish(R, comps)
 
 
@@ -1904,6 +1981,8 @@ def render(R, place, page):
         return page_why(R, place)
     if R.admin:
         return page_quiet(R, R.admin_gid)
+    if page in ("e", "d", "f"):
+        return page_edit(R, place, page)
     return page_home(R, place)
 
 
@@ -1916,15 +1995,29 @@ def show(R, place, page, banner=None):
 def shown(R, fallback):
     """(place, page) the clicked message showed, from its own controls:
     the Why page has a Back (pg:<place>:h); the home page a Why button
-    (pg:<place>:y). (fallback, "h") when it can't tell."""
+    (pg:<place>:y); an edit page has Save (sv) and a toggle to the
+    other edit page (pg:<place>:d on basic, pg:<place>:e on more).
+    (fallback, "h") when it can't tell."""
     found = {}
+    edit = None
     for c in _all((R.ix.get("message") or {}).get("components")):
         parts = str(c.get("custom_id") or "").split(":")
+        if len(parts) == 4 and parts[:3] == [PREFIX, VERSION, "sv"]:
+            p = R.place(parts[3])
+            if p is not None:
+                edit = p
         if len(parts) == 5 and parts[:3] == [PREFIX, VERSION, "pg"] \
                 and parts[4] in PAGES:
             p = R.place(parts[3])
             if p is not None:
                 found.setdefault(parts[4], p)
+    if edit is not None:
+        # An edit page links to every other edit page the place has,
+        # so the current one is the candidate missing from the links.
+        for cand in edit_pages(R, edit):
+            if cand not in found:
+                return edit, cand
+        return edit, "e"
     if "h" in found:
         return found["h"], "y"
     if "y" in found:
@@ -1956,14 +2049,27 @@ def written_place(res, fallback):
 
 
 def do_changes(R, origin, changes, confirmed=False, named=(), notes=(),
-               headline=None):
+               headline=None, stash_extra=None, drop_draft=None):
     """Apply changes (one group) and show the origin page with a banner,
     or a confirm card, or the error in the banner. headline: the
-    banner's words instead of each change (listed small below it)."""
+    banner's words instead of each change (listed small below it).
+    stash_extra: extra fields for the confirm card's stash payload.
+    drop_draft: a place token whose edit draft this write settles; the
+    draft is dropped once the write lands (a confirm card keeps it
+    until Apply, through the stash payload)."""
     place, page = origin
+
+    def _drop():
+        if drop_draft:
+            try:
+                R.ctx.session_drop(R.uid, DRAFT_PREFIX + drop_draft)
+            except Exception:
+                pass
+
     if changes and not confirmed and R.owner:
         changes = [c for c in changes if not ui_noop(R, c)]
         if not changes:
+            _drop()
             return show(R, place, page,
                         [td("**No change:** it's already like that.")])
     if not changes:
@@ -1981,13 +2087,16 @@ def do_changes(R, origin, changes, confirmed=False, named=(), notes=(),
                 planned = ms.plan_changes(R.st, changes)
             except ms.SettingsError as e:
                 return show(R, place, page, banner_error(plain_error(e)))
-            tok = R.ctx.stash_put(R.uid, {
+            payload = {
                 "kind": "apply",
                 "changes": [dict(c.to_dict(), revert=c.revert)
                             for c in changes],
                 "named": list(named), "notes": list(notes),
                 "headline": headline,
-                "origin": [ptok(place), page]}, STASH_TTL)
+                "origin": [ptok(place), page]}
+            if stash_extra:
+                payload.update(stash_extra)
+            tok = R.ctx.stash_put(R.uid, payload, STASH_TTL)
             return message(R, page_confirm(
                 R, origin, [say_change(R, p.change.place, p.key, p.old,
                                        p.new, p.path)
@@ -2005,6 +2114,7 @@ def do_changes(R, origin, changes, confirmed=False, named=(), notes=(),
         if R.admin:
             return notice(ADMIN_ONLY_QUIETER)
         return show(R, place, page, banner_error(plain_error(e)))
+    _drop()
     R.reload()
     if not res.changed:
         return show(R, place, page,
@@ -2201,6 +2311,228 @@ def parse_ids(text):
 
 
 # ---------------------------------------------------------------------------
+# Edit pages: stage into a draft, then Save applies it as one change.
+# A draft is a Ctx session (15 minutes) holding serialized Changes for
+# one place; every edit-page control folds into it instead of writing.
+# ---------------------------------------------------------------------------
+DRAFT_PREFIX = "draft:"
+
+# The detail codes each kind of place offers on the two "more
+# settings" edit pages: "d" is people & replies, "f" is limits &
+# features (the basic edit page "e" reuses PLACE_CONTROLS + notes).
+# Split in two because one page of pickers would break Discord's
+# 40-component limit.
+DETAIL_PAGES = {
+    "d": {"channel": (),
+          "server": ("al", "ig", "b", "bx", "rw"),
+          "dms": ("al", "ig", "b", "rw"),
+          "defaults": ("al", "ig", "b", "bx", "rw")},
+    "f": {"channel": ("pe",),
+          "server": ("pd", "m", "su", "pe", "mp"),
+          "dms": ("pd", "m", "su", "pe"),
+          "defaults": ("pd", "m", "su", "pe", "pf", "un", "p1", "p7")},
+}
+DETAIL_CODES = {kind: tuple(dict.fromkeys(
+    DETAIL_PAGES["d"][kind] + DETAIL_PAGES["f"][kind]))
+    for kind in DETAIL_PAGES["d"]}
+EDIT_PAGE_LABELS = {"e": "Basic settings", "d": "People & replies",
+                    "f": "Limits & features"}
+
+
+def edit_pages(R, place):
+    """The edit pages place has: always the basic page, plus each
+    detail page that has a control for this kind of place."""
+    out = ["e"]
+    for p in ("d", "f"):
+        if DETAIL_PAGES[p].get(place.kind):
+            out.append(p)
+    return out
+
+
+def draft_changes(R, place):
+    """The draft's staged changes for place (Change objects), [] for
+    an open-but-empty draft, None when there is no draft."""
+    try:
+        payload = R.ctx.session_peek(R.uid, DRAFT_PREFIX + ptok(place))
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or payload.get("kind") != "draft":
+        return None
+    out = []
+    for d in payload.get("changes") or []:
+        try:
+            out.append(ms.Change.from_dict(d, R.ctx))
+        except ms.SettingsError:
+            pass
+    return out
+
+
+def draft_store(R, place, changes):
+    if changes:
+        R.ctx.session_put(R.uid, DRAFT_PREFIX + ptok(place), {
+            "kind": "draft",
+            "changes": [c.to_dict() for c in changes]}, STASH_TTL)
+    else:
+        R.ctx.session_drop(R.uid, DRAFT_PREFIX + ptok(place))
+
+
+def stage(R, place, page, changes, banner=None):
+    """Fold changes into place's draft (a later pick for the same
+    setting replaces the earlier one) and re-show the edit page."""
+    cur = draft_changes(R, place) or []
+    ids = {(ms.format_place(c.place), c.key) for c in changes}
+    cur = [c for c in cur if (ms.format_place(c.place), c.key) not in ids]
+    draft_store(R, place, cur + list(changes))
+    return show(R, place, page, banner)
+
+
+def draft_block(R, place):
+    """The "waiting to be saved" summary on an edit page."""
+    changes = draft_changes(R, place)
+    if changes is None:
+        return td("-# Editing. Nothing below applies until you press "
+                  "Save.")
+    if not changes:
+        return td("-# No changes yet. Change anything below and it "
+                  "waits here until you press Save.")
+    try:
+        planned = ms.plan_changes(R.st, changes)
+        lines = [say_change(R, p.change.place, p.key, p.old, p.new,
+                            p.path) for p in planned if not p.noop]
+    except ms.SettingsError:
+        lines = []
+    if not lines:
+        return td("**Waiting to be saved**\n-# Every change matches "
+                  "how it already is; saving changes nothing.")
+    body = "\n".join(f"- {clip(x, 300)}" for x in lines[:10])
+    if len(lines) > 10:
+        body += f"\n-# …and {len(lines) - 10} more"
+    return td(f"**Waiting to be saved ({len(lines)})**\n{body}")
+
+
+def inherit_opt(R, place, key):
+    """The "=" option of a detail select: stop setting it here and
+    follow the value the place would inherit."""
+    v = Val(R, place, key)
+    if place.kind == "channel":
+        o = follow_option(R, place, key, ui_value(R, key, v.inherited))
+        if not v.set:
+            o["default"] = True
+        return o
+    label = "Reset to the built-in value" if place.kind == "defaults" \
+        else "Use the setting above"
+    return opt(label, "=", f"Currently: {ui_value(R, key, v.inherited)}",
+               default=not v.set)
+
+
+def ctl_choice(R, place, code, key, choices, title):
+    v = Val(R, place, key)
+    opts = [inherit_opt(R, place, key)]
+    for val_, label, d in choices:
+        opts.append(opt(label, val_, d,
+                        default=v.set and v.here == val_))
+    return title, [row(sel(cid("set", ptok(place), code), opts,
+                           title.partition("\n")[0] + "…"))]
+
+
+def ctl_number(R, place, code, key, title, choices, none_label="No limit",
+               none_ok=True):
+    v = Val(R, place, key)
+    opts = [inherit_opt(R, place, key)]
+    if none_ok:
+        opts.append(opt(none_label, "none",
+                        default=v.set and v.here is None))
+    nums = list(choices)
+    if v.set and isinstance(v.here, int) and v.here not in nums:
+        nums = sorted(nums + [v.here])
+    for n in nums:
+        opts.append(opt(f"{n:,}", str(n), default=v.set and v.here == n))
+    return title, [row(sel(cid("set", ptok(place), code), opts,
+                           title.partition("\n")[0] + "…"))]
+
+
+def ctl_people(R, place, code, key, title, everyone=False, owners=False,
+               min_values=0):
+    btns = []
+    if everyone:
+        btns.append(btn("Everyone", cid("tg", ptok(place), code,
+                                        "everyone")))
+    if owners:
+        btns.append(btn(only_you(R), cid("tg", ptok(place), code,
+                                         "owners")))
+    btns.append(btn("Use the setting above",
+                    cid("tg", ptok(place), code, "=")))
+    rows = [row(picker(MENTIONABLE_SELECT, cid("pk", ptok(place), code),
+                       "Pick people or roles…", min_values, 25)),
+            row(*btns)]
+    return f"{title}\n-# Now: {ui_value(R, key, value(R, place, key))}", \
+        rows
+
+
+def ctl_notes(R, place):
+    cur = value(R, place, "style.notes")
+    note = f"\n-# Now: {clip(str(cur), 120)}" if cur else "\n-# None set"
+    return "Notes for how I reply" + note, [
+        row(btn("Edit notes…", cid("mod", ptok(place), "n")))]
+
+
+DETAIL_CONTROLS = {
+    "al": lambda R, p: ctl_people(R, p, "al", "who.allow",
+                                  "Who I answer", everyone=True,
+                                  min_values=1),
+    "ig": lambda R, p: ctl_people(R, p, "ig", "who.ignore",
+                                  "Who I ignore"),
+    "rw": lambda R, p: ctl_people(R, p, "rw", "abilities.reminders",
+                                  "Who can set reminders & watches",
+                                  everyone=True, owners=True),
+    "b": lambda R, p: ctl_choice(R, p, "b", "who.bots", (
+        ("ignore", "Ignore other bots", "Never answer another bot"),
+        ("when-addressed", "Answer when they address me",
+         "Bots can talk to me when they @mention me or reply to me")),
+        "Other bots"),
+    "bx": lambda R, p: ctl_number(R, p, "bx", "who.bot_exchange_limit",
+                                  "Replies in a row with one bot",
+                                  (1, 2, 3, 5, 10),
+                                  none_label="No limit"),
+    "pd": lambda R, p: ctl_number(R, p, "pd", "limits.per_day",
+                                  "Replies a day here", CAP_CHOICES),
+    "m": lambda R, p: ctl_choice(R, p, "m", "privacy.memory", (
+        ("everything", "Everything about you", "Private facts too; "
+         "only sensible in small, trusted servers"),
+        ("public-only", "Public facts only", "Things said in public "
+         "channels, never DMs or private facts"),
+        ("nothing", "Nothing", "I use nothing I remember about people "
+         "here")), "What I remember about people"),
+    "su": lambda R, p: ctl_choice(R, p, "su", "privacy.suspicious", (
+        ("hold-for-review", "Hold for review", "Messages that look "
+         "like prompt injection wait for an owner's OK"),
+        ("ignore", "Just ignore them", "Such messages get no reply")),
+        "Messages that look like attacks"),
+    "pe": lambda R, p: ctl_choice(R, p, "pe", "proactive.enabled", (
+        ("on", "On", "I may reach out on my own: check-ins, nudges"),
+        ("off", "Off", "I only ever answer")), "Reaching out on my own"),
+    "pf": lambda R, p: ctl_choice(R, p, "pf", "proactive.frequency", (
+        ("rarely", "Rarely", "Up to 2 a day"),
+        ("sometimes", "Sometimes", "Up to 5 a day"),
+        ("often", "Often", "Up to 10 a day")),
+        "How often I reach out (everywhere)"),
+    "un": lambda R, p: ctl_choice(R, p, "un", "updates.notify", (
+        ("on", "On", "Owners hear about muse-discord updates"),
+        ("off", "Off", "No update notices")), "Update notices"),
+    "mp": lambda R, p: ctl_number(R, p, "mp", "media.per_day",
+                                  "Images & video a day", (5, 10, 20, 50)),
+    "p1": lambda R, p: ctl_number(R, p, "p1",
+                                  "proactive.per_person_per_day",
+                                  "Check-ins per person a day",
+                                  (0, 1, 2, 3, 5), none_ok=False),
+    "p7": lambda R, p: ctl_number(R, p, "p7",
+                                  "proactive.per_person_per_week",
+                                  "Check-ins per person a week",
+                                  (0, 1, 3, 5, 10, 20), none_ok=False),
+}
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 def handle(interaction, ctx):
@@ -2392,22 +2724,57 @@ def set_changes(R, place, code, v):
             return [ms.Change(place, "limits.per_person_per_day",
                               int(v))] if ok else None
         return None
+    # The detail controls (edit pages). "=" is the inherit fallthrough
+    # at the end; a people key's list values come through pk instead.
+    if code in ("b", "m", "su", "pe", "pf", "un", "rw"):
+        key = kdecode(code)
+        vals = {"b": ("ignore", "when-addressed"),
+                "m": ("everything", "public-only", "nothing"),
+                "su": ("hold-for-review", "ignore"),
+                "pe": ("on", "off"), "un": ("on", "off"),
+                "pf": ("rarely", "sometimes", "often"),
+                "rw": ("owners", "everyone")}[code]
+        if v in vals:
+            return [ms.Change(place, key, v)]
+    if code in ("bx", "pd", "mp", "p1", "p7"):
+        key = kdecode(code)
+        spec = R.st.spec(key)
+        if v == "none":
+            return [ms.Change(place, key, "none")] \
+                if spec is not None and spec.none else None
+        if _ID.fullmatch(v):
+            ok, _n = ms.normalize(spec, v)
+            return [ms.Change(place, key, int(v))] if ok else None
+        return None
+    if v == "=" and code != "df":
+        key = kdecode(code)
+        if key is not None:
+            return [ms.Change(place, key, "inherit")]
     return None
 
 
 def v_set(R, place, args, values):
-    """One of the page's settings selects."""
+    """One of the page's settings selects. On an edit page the pick is
+    staged into the draft; on the home page it applies at once (the
+    detail codes exist only on edit pages)."""
     if not R.owner:
         return refusal(R)
-    if len(args) != 1 or len(values) != 1 \
-            or args[0] not in PLACE_CONTROLS.get(place.kind, ()):
+    if len(args) != 1 or len(values) != 1:
         return notice(OUT_OF_DATE)
-    changes = set_changes(R, place, args[0], values[0])
+    code = args[0]
+    origin = shown(R, place)
+    editing = origin[1] in ("e", "d", "f")
+    basic = code in PLACE_CONTROLS.get(place.kind, ())
+    detail = code in DETAIL_CODES.get(place.kind, ())
+    if not basic and not (detail and editing):
+        return notice(OUT_OF_DATE)
+    changes = set_changes(R, place, code, values[0])
     if changes is None:
         return notice(OUT_OF_DATE)
-    origin = shown(R, place)
     if isinstance(changes, str):
         return show(R, *origin, [td(f"**No change:** {changes}")])
+    if editing:
+        return stage(R, place, origin[1], changes)
     return do_changes(R, origin, changes)
 
 
@@ -2463,9 +2830,104 @@ def v_pre(R, place, args, values):
             R.banner = [td(f"**No change:** {R.gname(place.guild_id)} "
                            f"already has the {title} style.")]
         return show(R, *shown(R, place))
+    _p, _page = shown(R, place)
+    if _page in ("e", "d", "f"):
+        return stage(R, place, _page, changes)
     return do_changes(R, shown(R, place), changes, notes=notes,
                       headline=f"{R.gname(place.guild_id)} now has the "
                                f"{title} style.")
+
+
+def v_ed(R, place, args, values):
+    """Open the edit pages for place, starting a draft if none is
+    open (an existing draft is kept: this is also "continue")."""
+    if not R.owner:
+        return refusal(R)
+    if args:
+        return notice(OUT_OF_DATE)
+    if draft_changes(R, place) is None:
+        try:
+            R.ctx.session_put(R.uid, DRAFT_PREFIX + ptok(place),
+                              {"kind": "draft", "changes": []}, STASH_TTL)
+        except Exception:
+            pass
+    return show(R, place, "e")
+
+
+def v_sv(R, place, args, values):
+    """Save: apply the whole draft as one change (the assess / confirm
+    path may still ask first; the draft then stays open until Apply,
+    and Cancel on the card leaves it untouched)."""
+    if not R.owner:
+        return refusal(R)
+    if args:
+        return notice(OUT_OF_DATE)
+    changes = draft_changes(R, place)
+    if not changes:
+        return show(R, place, "e",
+                    [td("**No changes to save.** Pick a setting first, "
+                        "then Save.")])
+    return do_changes(R, (place, "h"), changes,
+                      stash_extra={"draft": ptok(place)},
+                      drop_draft=ptok(place))
+
+
+def v_cx(R, place, args, values):
+    """Cancel: throw the draft away and go back to the home page."""
+    if not R.owner:
+        return refusal(R)
+    if args:
+        return notice(OUT_OF_DATE)
+    try:
+        R.ctx.session_drop(R.uid, DRAFT_PREFIX + ptok(place))
+    except Exception:
+        pass
+    return show(R, place, "h",
+                [td("**Discarded.** The unsaved changes were thrown "
+                    "away; nothing was changed.")])
+
+
+def v_tg(R, place, args, values):
+    """A detail control's button on an edit page: stage an absolute
+    people value ("everyone" / "owners") or "inherit" ("=")."""
+    if not R.owner:
+        return refusal(R)
+    if len(args) != 2:
+        return notice(OUT_OF_DATE)
+    key = _key(R, args[0])
+    origin = shown(R, place)
+    if key is None or origin[1] not in ("e", "d", "f") \
+            or args[0] not in DETAIL_CODES.get(place.kind, ()):
+        return notice(OUT_OF_DATE)
+    v = args[1]
+    if v == "=":
+        change = ms.Change(place, key, "inherit")
+    elif v == "everyone" and key in ("who.allow", "abilities.reminders"):
+        change = ms.Change(place, key, "everyone")
+    elif v == "owners" and key == "abilities.reminders":
+        change = ms.Change(place, key, "owners")
+    else:
+        return notice(OUT_OF_DATE)
+    return stage(R, place, origin[1], [change])
+
+
+def v_pk(R, place, args, values):
+    """A people picker on an edit page: stage the picked users and
+    roles as the setting's new list."""
+    if not R.owner:
+        return refusal(R)
+    if len(args) != 1:
+        return notice(OUT_OF_DATE)
+    key = _key(R, args[0])
+    origin = shown(R, place)
+    if key not in ("who.allow", "who.ignore", "abilities.reminders") \
+            or origin[1] not in ("e", "d", "f") \
+            or args[0] not in DETAIL_CODES.get(place.kind, ()):
+        return notice(OUT_OF_DATE)
+    picked, dropped = people_from(R, values, place)
+    banner = [td(ROLES_ELSEWHERE)] if dropped else None
+    return stage(R, place, origin[1],
+                 [list_change(R, place, key, picked)], banner)
 
 
 def v_ppl(R, place, args, values):
@@ -2503,6 +2965,14 @@ def v_rm(R, place, args, values):
 def v_mod(R, place, args, values):
     if not R.owner:
         return refusal(R)
+    if args == ["n"]:
+        cur = value(R, place, "style.notes")
+        return modal(cid("sub", ptok(place), "n"), "Notes for how I reply",
+                     [labelled("Notes", text_input(
+                         "notes", 2, ms.NOTES_MAX, cur or None,
+                         "How I should sound here…"), "Staged like "
+                         "everything else: the edit page's Save applies "
+                         "it.")])
     if args != ["wy"] or place.kind != "dms":
         return notice(OUT_OF_DATE)
     return modal(cid("sub", "d", "wy"), "Check a person", [
@@ -2515,7 +2985,16 @@ def v_mod(R, place, args, values):
 def v_sub(R, place, args, values):
     if not R.owner:
         return refusal(R)
-    if R.ix.get("type") != 5 or args != ["wy"] or place.kind != "dms":
+    if R.ix.get("type") != 5:
+        return notice(OUT_OF_DATE)
+    if args == ["n"]:
+        text = ""
+        for c in _all(R.data.get("components") or []):
+            if c.get("custom_id") == "notes":
+                text = str(c.get("value") or "")
+        return stage(R, place, "e",
+                     [ms.Change(place, "style.notes", text)])
+    if args != ["wy"] or place.kind != "dms":
         return notice(OUT_OF_DATE)
     comps = []
     for c in _all(R.data.get("components") or []):
@@ -2564,7 +3043,8 @@ def v_ok(R, place, args, values):
     return do_changes(R, (oplace, opage), changes, confirmed=True,
                       named=payload.get("named") or (),
                       notes=payload.get("notes") or (),
-                      headline=payload.get("headline"))
+                      headline=payload.get("headline"),
+                      drop_draft=payload.get("draft"))
 
 
 def v_un(R, place, args, values):
@@ -2633,5 +3113,6 @@ def v_wy(R, place, args, values):
 
 
 VERBS = {"pg": v_pg, "wh": v_wh, "set": v_set, "val": v_val, "pre": v_pre,
+         "ed": v_ed, "sv": v_sv, "cx": v_cx, "tg": v_tg, "pk": v_pk,
          "ppl": v_ppl, "rm": v_rm, "mod": v_mod, "sub": v_sub, "ok": v_ok,
          "un": v_un, "pz": v_pz, "rs": v_rs, "fx": v_fx, "wy": v_wy}
