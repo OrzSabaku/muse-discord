@@ -24,7 +24,7 @@ class MCP(unittest.IsolatedAsyncioTestCase):
             invoke.return_value = {'messages': [], 'untrusted': True}
             async with Client(create_server()) as client:
                 tools = await client.list_tools()
-                self.assertEqual(len(tools.tools), 8)
+                self.assertEqual(len(tools.tools), 10)
                 response = await client.call_tool('list_unread', {
                     'for_id': 'owner-item', 'nonce': 'nonce', 'channel_id': 'channel', 'limit': 20})
                 self.assertFalse(response.is_error)
