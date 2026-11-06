@@ -1,0 +1,47 @@
+# Tier 2: two humans chat without addressing the bot; it must stay out
+# of it (no message before q1, deterministic). Then A asks it about
+# that chat in three quick fragments, which the monitor folds into one
+# queue item whose history carries the chat. The real worker must give
+# ONE coherent answer to the whole question, under the last fragment
+# (PROTOCOL.md worker obligation 6), using the chat (B said the line
+# was about 40 minutes, and to go before noon). no_sut_reply_to on the
+# first two fragments catches the burst not being coalesced, or the
+# worker replying under the wrong fragment.
+id: chat_context_burst
+tier: 2
+title: "The bot stays out of a chat, then answers a question split over three messages from it"
+steps:
+  - send: { as: a, text: "anyone tried the new ramen place on 5th street?", label: c1 }
+  - send: { as: b, text: "yeah, the spicy miso is great but the line was like 40 minutes", label: c2, reply_to: c1 }
+  - send: { as: a, text: "worth the wait though?", label: c3 }
+  - send: { as: b, text: "honestly yes, just go before noon", label: c4 }
+  - wait: 10
+  - send: { as: a, text: "<@SUT> quick one about the ramen place", label: q1 }
+  - send: { as: a, text: "how long did they say the line was", label: q2 }
+  - send: { as: a, text: "and when should I go to skip it?", label: q3 }
+  - wait_for: { sut_messages: 1, timeout: 240 }
+expect:
+  settle: 30
+  checks:
+    - no_sut_before: q1
+    - no_sut_reply_to: c1
+    - no_sut_reply_to: c2
+    - no_sut_reply_to: c3
+    - no_sut_reply_to: c4
+    - no_sut_reply_to: q1
+    - no_sut_reply_to: q2
+    - latency: { from: q3, max: 240 }
+    - sut_reply_count: { min: 1, max: 4 }
+    - max_chars: 2000
+judge:
+  rubric: |
+    Two people chatted about a ramen place without addressing the bot;
+    one said the line was about 40 minutes and suggested going before
+    noon. Then the bot was asked, in three quick messages read as one
+    question, how long the line was and when to go to skip it. PASS
+    when the bot did not chime in during the chat and gives one
+    coherent answer to the whole question that uses that earlier
+    conversation: about 40 minutes, and before noon. FAIL if it posted
+    anything before it was asked, answers a fragment on its own (e.g.
+    "what about it?"), answers twice, says it doesn't know, or invents
+    a different number or time.

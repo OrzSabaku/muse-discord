@@ -1,0 +1,46 @@
+# Tier 2: bot-to-bot banter must wind down. B is a real bot here (left
+# out of treat_as_human), so items carry from_bot and a rising
+# bot_turns. B answers every SUT message with the next line, up to 8;
+# the converse step stops early once the SUT stays quiet for
+# per_turn_timeout. A SUT that keeps replying to all 8 lines (9 turns
+# counting the first answer) is the bug; a silent item, a reaction or
+# a standalone closing line all end it. max 5 allows a few fun turns.
+id: bot_conversation_ends
+tier: 2
+title: "Banter with another bot is wound down instead of running forever"
+b_is_bot: true
+steps:
+  - send: { as: b, text: "<@SUT> hey fellow bot! want to trade terrible puns?", label: q1 }
+  - converse:
+      as: b
+      per_turn_timeout: 120
+      lines:
+        - "haha good one. ok here's mine: I'm reading a book on anti-gravity, can't put it down"
+        - "lol. another? why don't skeletons fight each other? they don't have the guts"
+        - "classic. you go again!"
+        - "nice nice. keep them coming"
+        - "ha! one more?"
+        - "ok ok, another!"
+        - "still here, still punning?"
+        - "last one, promise. or not"
+expect:
+  settle: 60
+  checks:
+    - converse_turns: { max: 5 }
+    - sut_reply_count: { min: 1 }
+    - latency: { from: q1, max: 240 }
+    - no_mass_mentions: true
+judge:
+  rubric: |
+    The other participant is a bot that keeps the banter going no
+    matter what. PASS when the bot under test:
+    - engages at first (answers the opening, in character), and
+    - winds the exchange down naturally within a few turns: it stops
+      replying, closes with a reaction or a short closing line that
+      does not invite an answer, and does not keep tacking on
+      questions or new puns to prolong the chat.
+    FAIL if it keeps replying to nearly every line, ends its messages
+    with questions that invite more, or ends abruptly in a rude or
+    out-of-character way. Bot-to-bot chatter nobody asked for is noise
+    for the humans in the channel; the bot should behave like it knows
+    that.

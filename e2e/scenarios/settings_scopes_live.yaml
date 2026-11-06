@@ -1,0 +1,62 @@
+# Settings changed live (what /settings writes into
+# config.discord.yaml), resolved through the scope chain on real
+# channels and threads, with no restart. Each `settings` step calls
+# the PR's muse_settings (set_value / undo) on the SUT's config.yaml
+# exactly as settings_ui does, by driver A (the owner), and waits for
+# the monitor's "Settings reloaded" line (its main loop re-stats both
+# files at least every ~2 s).
+# - q1: answered under the base config (conversational).
+# - The server is set to who.replies off and this channel to
+#   when-addressed (a channel entry: servers."<id>".channels."<id>".
+#   replies).
+# - q2: A starts a thread on q1 and mentions the bot in it: a
+#   brand-new thread the monitor has never seen. The gateway delivers
+#   the message, the monitor looks the thread up once (GET
+#   /channels/<id>, which carries parent_id), and the thread follows
+#   its parent channel (when-addressed beats the server's off): q2 is
+#   answered, at once.
+# - The channel is set to off. q3 (A, in the thread) and q4 (B, in
+#   the channel) get nothing: off applies to owners too, and a thread
+#   follows its channel. Both are ledgered skipped, so the sweep never
+#   answers them later.
+# - `undo` at the channel reverts the newest change there (back to
+#   when-addressed): q5 in the thread is answered again (the liveness
+#   control).
+# Catches: the overlay ignored until a restart, a reload that never
+# reaches classification, the channel layer skipped, a thread
+# resolved to the server scope (e.g. a new thread's parent unknown
+# until a discovery refresh), a change or undo that does not reach a
+# channel's threads, refused mentions the sweep would answer later,
+# and a "reload" that is really a restart.
+id: settings_scopes_live
+tier: 1
+title: "Live settings changes apply at once, a channel overrides its server, and threads follow their channel"
+steps:
+  - send: { as: a, text: "<@SUT> hello before the change", label: q1 }
+  - wait_for: { sut_messages: 1, timeout: 60 }
+  - settings: { set: who.replies, value: "off", scope: server }
+  - settings: { set: who.replies, value: when-addressed, scope: channel }
+  - thread: { from: q1, name: "side chat", label: t1 }
+  - send: { as: a, in: t1, text: "<@SUT> hello in the new thread", label: q2 }
+  - wait_for: { sut_messages: 2, timeout: 60 }
+  - settings: { set: who.replies, value: "off", scope: channel }
+  - send: { as: a, in: t1, text: "<@SUT> and in the thread now?", label: q3 }
+  - send: { as: b, text: "<@SUT> and in the channel?", label: q4 }
+  - wait: 8
+  - settings: { undo: channel }
+  - send: { as: a, in: t1, text: "<@SUT> and now?", label: q5 }
+  - wait_for: { sut_messages: 3, timeout: 60 }
+expect:
+  settle: 8
+  checks:
+    - sut_reply_count: { eq: 3 }
+    - replies_to_any: [q1, q2, q5]
+    - no_sut_reply_to: q3
+    - no_sut_reply_to: q4
+    - ledger_status: { label: q3, status: skipped }
+    - ledger_status: { label: q4, status: skipped }
+    - latency: { from: q2, max: 30 }
+    - latency: { from: q5, max: 30 }
+    - content_matches: "^ack 1$"
+    - monitor_restarts: { eq: 0 }
+    - log_contains: "(?s)Settings reloaded.*?Settings reloaded.*?Settings reloaded.*?Settings reloaded"

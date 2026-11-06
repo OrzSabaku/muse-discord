@@ -1,0 +1,21 @@
+# REST polling is the full fallback when the gateway is down. With the
+# gateway off a mention is seen only by the poll (rest_poll_seconds
+# 10 in tests) and its burst waits the full coalesce window (5 s, no
+# typing events to flush it early), then the worker (the monitor
+# picks a draft up within ~0.25 s) and the send: ~20 s worst case.
+# max 40 leaves margin but still fails a monitor that only answers on
+# the sweep (every 6 polls, 240 s grace) or never. The next scenario
+# starts on a monitor with the gateway on again.
+id: gateway_down_poll
+tier: 1
+title: "With the gateway down, a mention is still answered via REST polling"
+steps:
+  - action: gateway_off
+  - send: { as: a, text: "<@SUT> can you hear me without the gateway?", label: q1 }
+  - wait_for: { sut_messages: 1, timeout: 90 }
+expect:
+  settle: 8
+  checks:
+    - sut_reply_count: { eq: 1 }
+    - replies_to: q1
+    - latency: { from: q1, max: 40 }

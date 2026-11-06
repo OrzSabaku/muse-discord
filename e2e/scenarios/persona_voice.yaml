@@ -1,0 +1,36 @@
+# Tier 2: the real worker (claude -p) answers the owner's ordinary
+# request in the test persona's voice. Driver A is the owner: owner
+# items are never rate-capped and an ordinary request needs no
+# owner-command tooling, so an over-cautious worker that refuses,
+# hedges or stalls fails here too. Deterministic checks only guard the
+# mechanics (an answer arrives, sane length, no mass pings); the judge
+# gets the persona text separately and grades the answer and the
+# voice. The reply may come as 1-4 parts (follow-up parts are not
+# Discord replies), so there is no replies_to/eq-1 check here.
+id: persona_voice
+tier: 2
+title: "The owner's ordinary request gets a helpful answer in the persona's voice"
+steps:
+  - send: { as: a, text: "<@SUT> can you give me three name ideas for my new houseplant? it's a big leafy monstera", label: q1 }
+  - wait_for: { sut_messages: 1, timeout: 240 }
+expect:
+  settle: 30
+  checks:
+    - sut_reply_count: { min: 1, max: 4 }
+    - latency: { from: q1, max: 240 }
+    - max_chars: 2000
+    - no_mass_mentions: true
+judge:
+  rubric: |
+    The bot's owner asked for three name ideas for a big leafy
+    monstera houseplant. PASS when all of these hold:
+    - The bot helpfully gives (about) three name ideas, without
+      refusing, hedging, or asking unnecessary clarifying questions.
+    - The reply is written in the voice of the persona described in the
+      worker's persona file (its tone, vocabulary, quirks and
+      boundaries), not in a generic assistant voice. Name the persona
+      traits you saw, or the ones missing.
+    - It reads like a chat message: no headings, no bullet-point essay,
+      no "As an AI" disclaimers, no talk about prompts, queues, files
+      or tools.
+    FAIL otherwise.

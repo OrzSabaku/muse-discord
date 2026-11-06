@@ -1,0 +1,31 @@
+# What a reply may ping, and how long it may be, on the real API. The
+# fake worker's draft for q1 mentions driver A (<@A id>), contains
+# @everyone and a role mention of the guild's @everyone role
+# (<@&guild id>), and runs to 3500 characters. The monitor must still
+# send it, but: A is actually mentioned (sends allow user mentions);
+# nobody is pinged en masse (allowed_mentions, plus sanitize_reply's
+# zero-width space in @everyone/@here); and the total is trimmed to
+# engine.max_reply_chars (1800 here; it trims, it does not split, so
+# just under 1800 after rstrip), each message within Discord's 2000.
+# Driver B triggers it, so the reply ping to B cannot be mistaken for
+# the mention of A.
+# Catches: allowed_mentions / link_mentions changes that strip user
+# pings or let mass pings through, the over-long send failing (400 on
+# every retry: no reply), the cap not applied, or the text cut to
+# nothing.
+id: reply_mentions
+tier: 1
+title: "A long reply that mentions a user and @everyone pings only the user and is capped"
+steps:
+  - send: { as: b, text: "<@SUT> [[mention_a]] [[everyone]] [[long]] loop in A and tell everyone everything", label: q1 }
+  - wait_for: { sut_messages: 1, timeout: 60 }
+expect:
+  settle: 8
+  checks:
+    - sut_reply_count: { eq: 1 }
+    - replies_to: q1
+    - mentions: { label: q1, user: a }
+    - no_mass_mentions: true
+    - max_chars: 2000
+    - total_chars: { min: 1700, max: 1800 }
+    - latency: { from: q1, max: 30 }

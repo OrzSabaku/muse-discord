@@ -1,0 +1,24 @@
+# A reply whose target was deleted before it went out. The monitor
+# sends replies with fail_if_not_exists: false (reply_reference), so
+# Discord posts it as a plain message instead of answering 400 on
+# every retry until the reply is dropped (the old behavior: no reply
+# at all). [[slow]] holds the fake worker's draft back 8 s after the
+# item is queued (~2 s after q1); A deletes q1 at ~3 s, well before
+# the send. Expect exactly one SUT message, not a Discord reply (q1 is
+# the only other message, so "not a reply to q1" means no reference),
+# settled in the ledger as replied, never re-sent.
+id: reply_to_deleted
+tier: 1
+title: "A reply to a message deleted before the send still goes out, unthreaded"
+steps:
+  - send: { as: a, text: "<@SUT> [[slow]] answer me even if I delete this", label: q1 }
+  - wait: 3
+  - delete: q1
+  - wait_for: { sut_messages: 1, timeout: 60 }
+expect:
+  settle: 8
+  checks:
+    - sut_reply_count: { eq: 1 }
+    - no_sut_reply_to: q1
+    - content_matches: "^ack 1$"
+    - ledger_status: { label: q1, status: replied }

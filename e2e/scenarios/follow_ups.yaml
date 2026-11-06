@@ -1,0 +1,70 @@
+# Conversational follow-ups (who.replies: conversational, the test
+# server's setting) and replies to the bot, on real message payloads.
+# After the bot's reply to a person is sent, that person's next plain
+# message in the channel within 120 s (FOLLOW_UP_WINDOW_SECS) counts
+# as addressed; nobody else's does; addressing someone else closes the
+# window. In order:
+# - q1: A mentions the bot (a queue item with follow_up false); A's
+#   window opens with the reply.
+# - t1: A starts a thread on q1. Discord posts its own "started a
+#   thread" notice in the channel, by A, inside A's window: a system
+#   notice is never a follow-up.
+# - c1: B's plain message: not addressed (B has no window), and it
+#   does not close A's.
+# - c2: A's plain message: answered as a follow-up (follow_up true,
+#   the server card for an owner in public; logged "Queued <kind>
+#   (follow-up) from ...").
+# - q2: B's Discord reply to the bot's newest message, with no
+#   @mention: direct address. The runner sends driver replies with
+#   allowed_mentions.replied_user = false, so the SUT is not in its
+#   mentions and the mention path cannot answer it instead.
+# - c3: A's Discord reply to B's c1 (addresses someone else): not
+#   answered, and it closes A's window, so c4, A's next plain message
+#   (well inside 120 s), is not a follow-up either.
+# - q3: A's mention, the liveness control, 6 s after c4 so c4 could
+#   not fold into its burst.
+# Catches: the window never opening or opening without the follow_up
+# mark, a window keyed by channel instead of (channel, person),
+# another person's message closing it, a reply to someone else (or a
+# thread notice) answered as a follow-up, the window surviving a reply
+# to someone else, replies to the bot ignored, and double answers.
+id: follow_ups
+tier: 1
+title: "Follow-ups and replies to the bot are answered; others' messages, notices and closed windows are not"
+steps:
+  - send: { as: a, text: "<@SUT> recommend me a podcast", label: q1 }
+  - wait_for: { sut_messages: 1, timeout: 60 }
+  - thread: { from: q1, name: "podcasts", label: t1 }
+  - send: { as: b, text: "ooh I want one too", label: c1 }
+  - wait: 2
+  - send: { as: a, text: "something about history, ideally", label: c2 }
+  - wait_for: { sut_messages: 2, timeout: 60 }
+  - send: { as: b, text: "and what do you think about that?", reply_to: last_sut, label: q2 }
+  - wait_for: { sut_messages: 3, timeout: 60 }
+  - send: { as: a, text: "sure, I'll share mine with you", reply_to: c1, label: c3 }
+  - wait: 3
+  - send: { as: a, text: "where should we start?", label: c4 }
+  - wait: 6
+  - send: { as: a, text: "<@SUT> still there?", label: q3 }
+  - wait_for: { sut_messages: 4, timeout: 60 }
+expect:
+  settle: 8
+  checks:
+    - sut_reply_count: { eq: 4 }
+    - replies_to_any: [q1, c2, q2, q3]
+    - no_sut_reply_to: c1
+    - no_sut_reply_to: c3
+    - no_sut_reply_to: c4
+    - latency: { from: c2, max: 30 }
+    - latency: { from: q2, max: 30 }
+    - latency: { from: q3, max: 30 }
+    - content_matches: "^ack 1$"
+    - no_duplicate_replies: true
+    - queue_item: { label: q1, follow_up: false }
+    - queue_item:
+        label: c2
+        follow_up: true
+        settings: { where: server, speaker: owner, audience: public }
+    - queue_item: { label: q2, follow_up: false }
+    - ledger_status: { label: c2, status: replied }
+    - log_contains: "^Queued \\w+ \\(follow-up\\) from "

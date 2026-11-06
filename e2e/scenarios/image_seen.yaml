@@ -1,0 +1,25 @@
+# Tier 2: attachment -> media pipeline -> worker can see it. The
+# fixture e2e/fixtures/test.png is a 64x64 solid red square with one
+# horizontal blue stripe across the middle (rows 24-39). The monitor
+# downloads it into the item's media; the judge checks the reply
+# describes what is really there.
+id: image_seen
+tier: 2
+title: "The bot describes an attached image correctly"
+steps:
+  - send: { as: a, text: "<@SUT> what's in this picture? describe the colors and shapes", attach: test.png, label: q1 }
+  - wait_for: { sut_messages: 1, timeout: 240 }
+expect:
+  settle: 30
+  checks:
+    - sut_reply_count: { min: 1, max: 4 }
+    - latency: { from: q1, max: 240 }
+judge:
+  rubric: |
+    The attached image is a small square that is solid red except for
+    one horizontal blue stripe (band) across its middle; nothing else
+    is in it. PASS when the bot's description says it is red with a
+    blue horizontal stripe/band (wording may vary: "red square with a
+    blue line through the middle" is fine). FAIL if it gets the colors
+    wrong, invents other content (objects, text, people), or says it
+    cannot see the image.

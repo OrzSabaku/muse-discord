@@ -1,0 +1,40 @@
+# The core path, with bursts. A mentions the bot and adds two quick
+# follow-up fragments (well inside the 1.5 s human quiet gap and the
+# 5 s coalesce window); B mentions it at the same time. Bursts are
+# keyed by (channel, author), so this is two queue items and two
+# replies: A's three fragments fold into ONE item (the fake worker says
+# "ack 3") answered under the LAST fragment, and B's mention gets its
+# own "ack 1" under it, each at gateway speed (a reply normally lands
+# in ~3 s; 20 s leaves CI headroom and still fails a stalled
+# pipeline). Every fragment is settled by the one reply.
+# A types before each follow-up, as a person does: Discord sometimes
+# delays a driver's post by 2 s or more, past the 1.5 s quiet gap, and
+# typing is what holds a real person's burst open across such a pause.
+# Catches: a lost mention, a double send, a reply posted unthreaded,
+# one reply per fragment or a partial burst ("ack 1"/"ack 2"), the
+# reply under the first fragment, and two authors folded together.
+id: mention_burst
+tier: 1
+title: "A burst gets one reply under its last fragment; a second person's mention gets its own"
+steps:
+  - send: { as: a, text: "<@SUT> quick question", label: q1 }
+  - send: { as: a, text: "about the release", label: q2, typing: true }
+  - send: { as: a, text: "is it out yet?", label: q3, typing: true }
+  - send: { as: b, text: "<@SUT> question from B", label: qb }
+  - wait_for: { sut_messages: 2, timeout: 60 }
+expect:
+  settle: 8
+  checks:
+    - sut_reply_count: { eq: 2 }
+    - replies_to_any: [q3, qb]
+    - no_sut_reply_to: q1
+    - no_sut_reply_to: q2
+    - content_matches: { label: q3, pattern: "^ack 3$" }
+    - content_matches: { label: qb, pattern: "^ack 1$" }
+    - latency: { from: q3, max: 20 }
+    - latency: { from: qb, max: 20 }
+    - no_duplicate_replies: true
+    - ledger_status: { label: q1, status: replied }
+    - ledger_status: { label: q2, status: replied }
+    - ledger_status: { label: q3, status: replied }
+    - ledger_status: { label: qb, status: replied }

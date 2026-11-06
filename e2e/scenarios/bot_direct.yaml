@@ -1,0 +1,24 @@
+# The bot path (who.bots: when-addressed): B is left out of
+# testing.treat_as_human, so the monitor sees a real bot. A bot that
+# mentions the SUT gets an answer. B's follow-up comes 2 s later: a
+# human burst would already have flushed (1.5 s quiet), a bot's waits
+# 5 s (BOT_BURST_QUIET_SECS, multi-part bot replies have 2-4 s beats),
+# so the two fold into one item: "ack 2", under the follow-up.
+# Catches: bots ignored, from_bot handling broken, or bots timed like
+# humans (two replies, "ack 1" each).
+id: bot_direct
+tier: 1
+title: "Another bot that mentions the bot gets one reply, with bot burst timing"
+b_is_bot: true
+steps:
+  - send: { as: b, text: "<@SUT> hello from another bot", label: q1 }
+  - wait: 2
+  - send: { as: b, text: "one more thing", label: q2 }
+  - wait_for: { sut_messages: 1, timeout: 60 }
+expect:
+  settle: 8
+  checks:
+    - sut_reply_count: { eq: 1 }
+    - replies_to: q2
+    - content_matches: "^ack 2$"
+    - latency: { from: q2, max: 30 }

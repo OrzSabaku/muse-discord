@@ -1,0 +1,31 @@
+# Crash safety of the send path. process_outbox moves the outbox into
+# reply_outbox.processing.json under the lock, then sends with no lock
+# held, and only afterwards settles (_settle: ledger + replied_to) and
+# removes the processing file; save_state runs after it returns. So
+# the riskiest moment is while reply_outbox.processing.json exists:
+# a SIGKILL there either lands before the POST (the restarted monitor
+# must merge the file back and send it once), or after Discord already
+# created the message but before replied_to was saved (the restart
+# re-sends the same item, and only the per-part nonce with
+# enforce_nonce stops a duplicate). [[slow]] holds the draft back 8 s
+# so the runner is already watching for the processing file when it
+# appears; the file lives for one POST round trip (a few hundred ms),
+# so the runner must poll it fast (<= 50 ms) and kill immediately.
+# After the restart: exactly one reply, no duplicate, ledgered as
+# replied. The long settle leaves room for a late re-send.
+id: restart_mid_send
+tier: 1
+title: "Killing the monitor mid-send still yields exactly one reply"
+steps:
+  - send: { as: a, text: "<@SUT> [[slow]] reply after a crash", label: q1 }
+  - wait_for: { outbox_processing: true, timeout: 60 }
+  - action: kill_monitor
+  - action: start_monitor
+  - wait_for: { sut_messages: 1, timeout: 90 }
+expect:
+  settle: 20
+  checks:
+    - sut_reply_count: { eq: 1 }
+    - replies_to: q1
+    - no_duplicate_replies: true
+    - ledger_status: { label: q1, status: replied }

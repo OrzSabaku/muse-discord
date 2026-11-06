@@ -1,0 +1,80 @@
+# Base config for the e2e harness's system under test (the PR's
+# monitor.py), in the settings layout muse_settings.py reads. sut.py
+# fills the "{{...}}" placeholders (in keys too), deep-merges a
+# scenario's `config:` overrides on top (they may use {{GUILD_ID}},
+# {{A_ID}}, {{B_ID}} and {{CHANNEL_ID}} as well), and always forces
+# token_from, persona, presence off, updates.notify off and
+# engine.rest_poll_seconds (see sut.SUT). A list entry whose
+# placeholder has no value is dropped.
+#
+#   {{GUILD_ID}}  the test server       {{A_ID}}  driver A (owner)
+#   {{B_ID}}      driver B (left out of treat_as_human when a scenario
+#                 sets b_is_bot: true)
+#   {{CHANNEL_ID}} the scenario's own channel (scenario overrides
+#                 only, e.g. servers.<id>.channels.<id>.replies)
+#
+# Most values below are the built-in defaults, written out so a change
+# of default does not silently change what the scenarios test. One is
+# not: never_share lists a test phrase (stays_quiet plants it in a
+# reply), so that scenario needs no config restart.
+
+version: 1
+owners: ["{{A_ID}}"]
+persona: "{{PERSONA_FILE}}"
+token_from: "{{TOKEN_FILE}}"
+
+presence:
+  enabled: "off"
+  status: ""
+
+updates:
+  notify: "off"
+
+everywhere:
+  who:
+    allow: everyone
+    ignore: []
+    bots: when-addressed
+    bot_exchange_limit: none
+  privacy:
+    suspicious: hold-for-review
+    never_share: ["blue pelican"]
+  limits:
+    per_day: none
+    per_person_per_day: none
+  media:
+    enabled: "off"
+
+dms:
+  who:
+    replies: conversational
+    dms_from: owners
+
+servers:
+  "{{GUILD_ID}}":
+    name: e2e test server
+    who:
+      # conversational = @mention or a reply to the bot, plus the
+      # follow-up window (120 s after a reply to that person).
+      replies: conversational
+
+# Engine internals: timings tuned for fast tests.
+engine:
+  guild_ids: ["{{GUILD_ID}}"]
+  coalesce_seconds: 5
+  max_reply_chars: 1800
+  # The floor: REST-only (gateway_off) scenarios wait on this cadence.
+  rest_poll_seconds: 10
+  discovery_refresh_minutes: 30
+  sweep:
+    every_cycles: 6
+    grace_seconds: 240
+    max_age_hours: 6
+    max_recoveries: 2
+  backoff:
+    initial_seconds: 60
+    max_seconds: 900
+
+# Test-only monitor setting: the driver bots count as humans.
+testing:
+  treat_as_human: ["{{A_ID}}", "{{B_ID}}"]
