@@ -9,6 +9,7 @@ config.yaml.bak-*
 # bin/install.sh falls back to, and the hooks' "it ran" stamps
 worker-prompt.md
 .venv/
+.venv-mcp/
 .seen-*
 watchdog-hook.out.*
 

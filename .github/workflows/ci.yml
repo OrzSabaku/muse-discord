@@ -65,6 +65,12 @@ jobs:
           '
       - name: Offline e2e harness tests
         run: python3 -m unittest discover -s e2e/tests -t .
+      - name: Install optional MCP dependencies
+        if: matrix.python == '3.13'
+        run: pip install -r requirements-mcp.txt
+      - name: MCP stdio and image integration tests
+        if: matrix.python == '3.13'
+        run: python3 tests/discordtools/test_mcp.py
       - name: Usage stats Worker tests (Node, no packages)
         if: matrix.python == '3.13'   # not Python's: once is enough
         run: cd telemetry/worker && node --test
