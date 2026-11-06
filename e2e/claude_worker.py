@@ -84,7 +84,7 @@ PAYLOAD_FIELDS = (
 SCRUB_ENV = ("E2E_DRIVER_A_TOKEN", "E2E_DRIVER_B_TOKEN")
 
 # The installed prompt is rendered by the same code a Muse install uses
-# (bin/render-worker-prompt.py, docs/SETUP.md step 5): persona from the wake
+# (bin/render-worker-prompt.py, docs/SETUP.md): persona from the wake
 # payload, no media tools, default judgment. The package's own copy
 # when it has one (the PR's code), else this checkout's.
 RENDERER = "render-worker-prompt.py"
@@ -273,7 +273,7 @@ def build_payload(items, persona, caps=None):
 
 
 # ---------------------------------------------------------------------------
-# The prompt (prompts/worker-prompt.template.md, rendered as docs/SETUP.md step 5 does)
+# The prompt (prompts/worker-prompt.template.md, rendered as docs/SETUP.md does)
 # ---------------------------------------------------------------------------
 
 def render_prompt(template, pkg):

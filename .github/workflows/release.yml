@@ -1,7 +1,7 @@
 name: Release
 
 # Pushing a tag like v1.2.0 publishes a GitHub Release whose notes are
-# that version's CHANGELOG.md entry. See docs/RELEASING.md.
+# that version's CHANGELOG.md entry. See docs/PROTOCOL.md.
 on:
   push:
     tags: ["v*"]

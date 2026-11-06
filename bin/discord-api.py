@@ -53,7 +53,7 @@ honestly instead of improvising.
 
 JSON commands for unread/history, acknowledgments, split sends, replies,
 and media downloads use the same owner binding and channel guard. They
-are shared with bin/discord-mcp.py; see docs/CLI.md and docs/MCP.md.
+are shared with bin/discord-mcp.py; see docs/TOOLS.md.
 
 The bot token is resolved exactly like monitor.py's: token_from in the
 package config.yaml (../config.yaml relative to this file, or

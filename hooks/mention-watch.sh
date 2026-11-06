@@ -19,7 +19,7 @@
 #   with a backoff in hook state (at once, then after 1, 2 and 5
 #   minutes, then every 10) and never after a token rejection: the
 #   scheduled watchdog run owns that, and everything else.
-# It targets Muse's hook runtime ($HATCH_HOOK_RUNTIME; docs/SETUP.md, step 5).
+# It targets Muse's hook runtime ($HATCH_HOOK_RUNTIME; docs/SETUP.md).
 # Other runtimes can poll reply_queue.json themselves (docs/PROTOCOL.md).
 set -euo pipefail
 # shellcheck source=/dev/null

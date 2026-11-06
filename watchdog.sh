@@ -290,7 +290,7 @@ if alive "[m]onitor.py"; then
     echo "OK monitor alive"
     GW_OFF="$(grep -o -m1 'GATEWAY DISABLED ([^)]*)' "$DIR/monitor.log" 2>/dev/null)"
     if [ -n "$GW_OFF" ]; then
-      DEGRADED_SIG="monitor degraded: $GW_OFF in monitor.log; realtime ingest is off, so replies wait for the REST poll. See docs/TROUBLESHOOTING.md, then restart the monitor."
+      DEGRADED_SIG="monitor degraded: $GW_OFF in monitor.log; realtime ingest is off, so replies wait for the REST poll. See docs/UPDATING.md, then restart the monitor."
     fi
   fi
 fi

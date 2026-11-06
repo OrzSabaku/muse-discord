@@ -177,7 +177,7 @@ def check(d, st, args):
     elif "GATEWAY DISABLED" in log:
         d.add("problem", "The bot's realtime connection is off, so replies "
               "are slow.", "see GATEWAY DISABLED in monitor.log, and "
-              "docs/TROUBLESHOOTING.md.")
+              "docs/UPDATING.md.")
     else:
         ready = [m.start() for m in re.finditer(
             r"Gateway READY|Gateway session resumed", log)]
@@ -229,18 +229,18 @@ def check(d, st, args):
             d.add("note", f"The {what} isn't running, so web watches are "
                   f"never checked (each ends after a few tries and tells "
                   f"whoever set it). Register it if you want them "
-                  f"(docs/SETUP.md, step 5).")
+                  f"(docs/SETUP.md).")
         elif age is None and stamp == "watchdog-hook":
             d.add("note", f"The {what} hasn't run yet; it runs every 10 "
                   f"minutes. If this note is still here in 15 minutes, "
-                  f"register it (docs/SETUP.md, step 5).")
+                  f"register it (docs/SETUP.md).")
         elif age is None:
             d.add("problem", f"The {what} has never run.",
-                  "register it as docs/SETUP.md step 5 says.")
+                  "register it as docs/SETUP.md says.")
         elif age > stale:
             d.add("problem", f"The {what} last ran {int(age // 60)} "
                   f"minutes ago; it should run every {every} seconds.",
-                  "check that it is still registered (docs/SETUP.md, step 5).")
+                  "check that it is still registered (docs/SETUP.md).")
         else:
             d.add("ok", f"The {what} is running.")
 
@@ -322,7 +322,7 @@ def wait_mention(d, st, secs):
             if status in ("skipped", "quarantined", "enqueue_failed"):
                 what, fix = REASONS.get(e.get("code"), (
                     f"It didn't answer ({e.get('reason') or status}).",
-                    "see docs/TROUBLESHOOTING.md."))
+                    "see docs/UPDATING.md."))
                 d.add("problem", what, fix)
                 return
             seen_status = status
@@ -330,7 +330,7 @@ def wait_mention(d, st, secs):
     if seen_status:
         d.add("problem", "The bot saw the mention but hasn't answered yet.",
               "check that the wake hook is registered with the worker "
-              "prompt (docs/SETUP.md, step 5).")
+              "prompt (docs/SETUP.md).")
     else:
         d.add("problem", "No mention from the owner reached the bot.",
               "make sure they typed @ and picked the bot from the list, in "

@@ -1,179 +1,90 @@
-# SETUP.md: installing muse-discord
+# 導入・設定
 
-You, the owner's Muse, follow this guide. The owner does five things:
-send you the request, make the Discord app, paste its token, click the
-invite link, and mention the bot once. Everything else is yours. Never
-ask them for IDs, YAML, Developer Mode, intents or a terminal, or
-questions this guide doesn't. Send the quoted messages as written,
-filling in the `<...>` parts, one message per step.
+MuseのVMで、本人のDiscord DMだけに応答させる手順です。
+初回は「起動確認」まで順番に進め、設定変更は必要なときに参照してください。
 
-The bot's name is your own name, and by default it is simply you.
-Never print, repeat or log the bot token (step 3 says how it travels).
+## 1. 配置と依存関係
 
-## Step 1: Get the code (you)
+このリポジトリを配置し、以後はそのルートで実行します。
 
 ```bash
-git clone https://github.com/cszach/muse-discord ~/muse-discord
-cd ~/muse-discord && bash bin/install.sh
+git clone https://github.com/OrzSabaku/muse-discord ~/muse-discord
+cd ~/muse-discord
+bash bin/install.sh
 ```
 
-Commands run in that directory (the "package dir"). `install.sh`
-checks Python 3.10+ and jq, installs the packages (falling back to
-`pip --user`, then a `.venv`), and makes the private
-`~/.config/muse-discord/incoming/` for step 3. Fix what an `INSTALL
-FAILED` line says and rerun it. If it made a `.venv`, run the package's
-scripts with `.venv/bin/python3` wherever these guides say `python3`.
+Python 3.10以上とjqが必要です。`.venv` が作られた場合は、以後の `python3` を `.venv/bin/python3` に置き換えます。
+既に `config.yaml` がある場合は再導入せず、[更新・復旧](UPDATING.md) を参照してください。
 
-Already installed (`config.yaml` exists)? Don't onboard again: run
-`python3 bin/doctor.py --no-dm` and fix what it reports.
+## 2. Botの接続
 
-## Step 2: The Discord app (owner)
-
-If your name contains "discord", Discord refuses it: use
-"<your name> Bot" in the message instead. Send:
-
-> Let's make your bot's Discord account. It takes about 3 minutes, on a
-> computer.
->
-> 1. Open https://discord.com/developers/applications and sign in.
-> 2. Click **New Application** (it may say **Create App**), type
->    **<your name>**, tick the box, and click **Create**.
-> 3. In the left menu click **Installation**. Under **Install Link**
->    choose **None**, then click **Save Changes**.
-> 4. Click **Bot** in the left menu, then **Reset Token**, then **Yes, do it!**
->    (Discord may ask for your password or 2FA code). Click **Copy** and
->    paste it here. It's the bot's password; I'll lock it away.
-
-Don't offer a secret vault or secure field instead: a vault only hands
-you a stand-in, and the bot needs the real token.
-
-## Step 3: Connect (you)
-
-Write the paste, exactly as it came, to
-`~/.config/muse-discord/incoming/token` with your file-writing tool.
-Never put the token in a shell command (not as an argument, not in a
-heredoc): commands show in the process list. Then run:
+1. [Discord Developer Portal](https://discord.com/developers/applications) でBotを作成する。
+2. 実トークンを権限600のファイルへ安全に配置する。会話・コマンド引数・ログへ貼らない。
+3. 次のコマンドを実行し、表示された所有者が本人か確認する。招待・Intent設定は出力の案内に従う。
 
 ```bash
-python3 bin/connect-discord.py --name "<your name>" \
-    --token-file ~/.config/muse-discord/incoming/token
-```
-
-It reads and deletes that file, checks the paste, reads the app and
-owner from Discord, turns on the Message Content intent itself, saves
-the token (mode 600), writes `config.yaml` (an existing valid one is
-kept, or backed up before the owner is added), writes your default
-persona to `persona.md`, and prints the invite link. Exit status:
-
-- **0**: done. Go on.
-- **2**: wrong paste or a reset token; nothing was saved. Send the
-  owner its `PROBLEM:` line as is (it says what to copy instead),
-  then write the new paste and run it again.
-- **3**: Discord was unreachable; nothing was saved. Wait a minute,
-  write the paste to the file again (it is gone) and run it again.
-- **4**: saved, but the owner has a portal step. Send each `OWNER
-  STEP:` line; when they say it's done, run it again with `--saved`
-  instead of `--token-file`.
-- **6**: `config.yaml` is invalid or could not be written. Run
-  `python3 bin/settings.py validate` and fix what it names. Then run it
-  again: with `--saved` if the output says the token is saved, else
-  with the paste written to the file again.
-
-A `NOTE:` about a Discord team or about owners already in
-`config.yaml` means the owner it set may not be them: ask "Is your
-Discord username @<name in the note>?" and fix `owners` if not.
-
-Then send (with the `INVITE:` link):
-
-> Got it, and it's stored safely.
->
-> Now add the bot to your server: click this link, pick your server, and
-> click **Authorize**: <invite link>
->
-> (No server yet? In Discord, click **+** at the bottom of the server
-> list, then **Create My Own**, then come back to the link.)
-
-## Step 4: Wait for the invite (you)
-
-```bash
+python3 bin/connect-discord.py --name "Muse" --token-file TOKEN_FILE_PATH
 python3 bin/connect-discord.py --wait 900
 ```
 
-It says which server the bot joined and how many channels it can read
-and post in. A `PROBLEM:` line (it sees no channel there): send it to
-the owner. Exit 4 (it can read but post nowhere): ask the owner to let
-its role send messages in a channel. Exit 5 (timeout): remind them of
-the link once.
+トークン入力ファイルは読み取り後に削除されます。Portal側の追加操作を案内されたら、対応後に `--saved` で再確認します。
+パスワード・2FA・アプリ本体の承認は正規画面で行います。実トークンを安全に渡せない場合は接続を止めます。
 
-## Step 5: The worker and the hooks (you)
+## 3. 本人DM用の設定
 
-Render the worker prompt, saying what you can generate (`none`,
-`images`, `video`, or `images,video`):
+**起動前に実行します。** 既存設定はバックアップされます。
 
 ```bash
-python3 bin/render-worker-prompt.py --media <what you can make>
+python3 bin/personal-profile.py
+python3 bin/settings.py validate
+python3 bin/render-worker-prompt.py --media none
 ```
 
-It writes `worker-prompt.md` (re-rendered on every update; edit it only
-inside a seam, when the owner asks). Then register these four hooks,
-all at once, with the package dir's absolute path for `<pkg>`:
+- 所有者を1人に固定し、その人のDMだけを許可する。複数所有者の場合は `--owner USER_ID` を指定する。
+- サーバー応答、他のBot、Discord操作コマンド、生成メディア、自発メッセージ、利用統計、更新通知、外部アプリは無効。
+- 本人DMの記憶保存は有効。既存の `~/MEMORY.md` に追記し、ファイルがなければ作成しない。
+- `config.discord.yaml` があると適用を拒否する。モニター停止後に内容を確認・退避してから進める。
 
-| Script | Every | Deliver to | Wake prompt | Without it |
-| --- | --- | --- | --- | --- |
-| `hooks/mention-watch.sh` | 5 s | a dedicated worker chat, not the main one | `You are muse-discord's reply worker. Read <pkg>/worker-prompt.md and follow it exactly; the wake payload below is this run's work.` | Nobody gets an answer, and a crashed bot waits up to 10 minutes for a restart. |
-| `hooks/watchdog-hook.sh` | 10 min | the owner's main chat | `muse-discord's watchdog raised an alert (payload). Fix it with <pkg>/docs/TROUBLESHOOTING.md, and tell the owner in a sentence or two only if they must do something.` | A stuck bot is never restarted, alerts reach nobody, and new releases are never noticed. |
-| `hooks/update-watch.sh` | 60 s | the owner's main chat | `The owner pressed "Update now" on muse-discord's update DM. Update <pkg> to the release in the payload by following <pkg>/docs/UPDATING.md with the owner in this chat. When done, or if you stop early, delete <pkg>/update_request.json and report the version running, or what waits on the owner.` | The bot's **Update now** button does nothing. |
-| `hooks/watch-due.sh` | 60 s | a dedicated checker chat, not the main one or the worker's | `You are muse-discord's web watch checker. The wake payload below is your whole task: follow it exactly.` | Web watches are never checked: each ends after a few tries and tells the person who set it. |
+これは初期設定です。後から設定を変更すれば動作も変わります。OSの隔離を提供する機能ではありません。
 
-If the runtime can limit a chat's tools, give `hooks/watch-due.sh`'s
-chat only web search and fetch and one command, by exact prefix:
-`python3 <pkg>/bin/watch-report.py ` (with a `.venv`:
-`<pkg>/.venv/bin/python3 <pkg>/bin/watch-report.py `).
+## 4. Museのフック登録
 
-The scripts find the package from their own location (set
-`MUSE_DISCORD_DIR` if the runtime copies them). A runtime without hooks
-runs a poller per row (docs/PROTOCOL.md is the contract), or cron for the
-watchdog.
+`<pkg>` を配置先の絶対パスに置き換え、Museの実際のフック機構へ登録します。
 
-Save this memory note in your main chat: "muse-discord is installed at
-`<pkg>`; run its scripts with `<python3, or <pkg>/.venv/bin/python3>`.
-To change its settings, read `<pkg>/docs/SETTINGS.md` first. To update it,
-follow `<pkg>/docs/UPDATING.md`. To check it, run `<pkg>/bin/doctor.py
---no-dm`."
+| スクリプト | 間隔 | 起動先・指示 |
+| --- | --- | --- |
+| `hooks/mention-watch.sh` | 5秒 | 専用ワーカー会話で `<pkg>/worker-prompt.md` を読み、wakeの項目だけを処理する |
+| `hooks/watchdog-hook.sh` | 10分 | 本体会話で異常を確認し、`<pkg>/docs/UPDATING.md` に従い復旧する |
+| `hooks/update-watch.sh` | 60秒 | 更新通知を使う場合。本体会話で指定版へ更新し、終了・中断時に `update_request.json` を削除する |
+| `hooks/watch-due.sh` | 60秒 | Web監視を使う場合。別の専用チェッカー会話でwakeの指示だけを処理する |
 
-## Step 6: Start it and prove it (you, then owner)
+スクリプトを別の場所へコピーする環境では `MUSE_DISCORD_DIR` を指定します。
+チェッカーのツールを制限できる場合は、検索・取得と `bin/watch-report.py` だけを許可します。
+フックを登録できない環境では、モニターだけを動かしても返答しません。
+
+## 5. 起動確認
 
 ```bash
-bash watchdog.sh          # starts the monitor and presence
-python3 bin/doctor.py     # checks everything, then DMs the owner
+bash watchdog.sh
+python3 bin/doctor.py --no-dm
 ```
 
-`doctor.py` prints `OK`, `NOTE` or `PROBLEM` lines, each problem with
-its fix. Fix them and rerun until it ends with "All good." Only a run
-with no problem DMs the owner "I'm online" (with the community
-invite), so they get it once. Then send:
+本人のDMへの応答、別アカウントとサーバーへの無応答、再起動後の応答を確認します。
+時間のかかる依頼は、追加依頼との順序・重複も確認してください。診断のサーバー応答関連の指摘は本人DM用設定と区別します。
+Museの記憶・接続済みサービス・承認画面の動作も導入先で確認します。機密内容をDMへ返すとDiscord側にも保存されます。
 
-> Last step: in any channel of your server, type **@<your name> hello**,
-> pick the bot from the list that pops up, and send it.
+## 設定変更
+
+設定の見本は [config.example.yaml](../config.example.yaml)。ファイル編集後は `bin/settings.py validate` で確認します。
+Discordの `/settings` や本人DMでの設定変更は `config.discord.yaml` に保存され、同じ箇所のファイル変更が優先します。
 
 ```bash
-python3 bin/doctor.py --wait-mention 600
+python3 bin/settings.py show --dms --explain
+python3 bin/settings.py places
+python3 bin/settings.py set style.length brief --place dms --by muse.ai
+python3 bin/settings.py undo --place dms --by muse.ai
 ```
 
-On a `PROBLEM`, send the owner its fix in plain words and run it again.
-On `OK`, send:
-
-> It works! <your name> is in your server now. It answers when someone
-> @mentions it or replies to it, keeps chatting for a couple of minutes
-> with whoever it just answered, answers DMs only from you, and never
-> shares private things about you. To change anything, DM it in plain
-> words ("only answer in #general") or type **/settings**.
->
-> One more thing: in about a day I may ask to let <your name> send
-> anonymous usage counts to muse-telemetry.clono.workers.dev. Please
-> allow it: it's how the muse-discord team spots bugs and decides what
-> to improve. It's only numbers, like replies sent, reply speed and
-> errors. Never messages, names, IDs or your IP address.
-
-That's the end of setup. Later, settings changes asked of you follow
-docs/SETTINGS.md, and problems docs/TROUBLESHOOTING.md.
+変更先は `defaults`・`dms`・`server:ID`・`channel:SERVER_ID:CHANNEL_ID` です。
+終了コード3の変更は未適用です。警告を確認し、その変更への明示的な承認後だけ `--yes` で再実行します。
+外部アプリの段階はファイルからのみ変更できます。[外部アプリ設定](EXTERNAL_APPS.md) を参照してください。

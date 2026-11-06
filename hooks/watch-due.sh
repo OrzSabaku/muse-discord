@@ -23,7 +23,7 @@
 #
 # Like hooks/mention-watch.sh, this targets Muse's hook runtime (it
 # sources $HATCH_HOOK_RUNTIME for the silent/wake/log/hook_state
-# helpers). Register it as docs/SETUP.md step 5's table says: every 60 s, in
+# helpers). Register it as docs/SETUP.md's table says: every 60 s, in
 # a chat of its own (never the owner's main chat or the reply worker's).
 set -euo pipefail
 # shellcheck source=/dev/null

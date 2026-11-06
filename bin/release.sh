@@ -5,7 +5,7 @@
 # CHANGELOG.md has a "## vX.Y.Z (YYYY-MM-DD): Title" entry and that the
 # tag is new; then creates an annotated tag and pushes it. The push runs
 # .github/workflows/release.yml, which publishes the GitHub Release.
-# See docs/RELEASING.md.
+# See docs/PROTOCOL.md.
 set -euo pipefail
 
 die() { echo "release: $*" >&2; exit 1; }
