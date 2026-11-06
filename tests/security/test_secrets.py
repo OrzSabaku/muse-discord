@@ -113,8 +113,8 @@ class Disguises(unittest.TestCase):
     """secret_scan.find: the simple disguises, and nothing more."""
 
     def test_disguised_token_and_nonce(self):
-        sys.path.insert(0, tb.MUT_DIR)
-        import secret_scan as S
+        sys.path.insert(0, os.path.join(tb.MUT_DIR, "src"))
+        from muse_discord import secret_scan as S
         nonce = "9f" * 16
         raw = TOKEN.encode()
         for text in (

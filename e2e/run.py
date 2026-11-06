@@ -581,7 +581,7 @@ class Runner:
         """The SUT's own muse_settings.py (the PR's code, in pkg),
         imported once."""
         if self._ms is None:
-            path = os.path.join(self.sut.pkg_dir, "muse_settings.py")
+            path = os.path.join(self.sut.pkg_dir, "src/muse_discord/muse_settings.py")
             if not os.path.isfile(path):
                 raise ValueError("settings step: the tree under test has "
                                  "no muse_settings.py")

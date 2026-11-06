@@ -150,7 +150,7 @@ def check(d, st, args):
                   "watchdog.sh.")
         else:
             d.add("problem", "The bot is not running.",
-                  "run bash watchdog.sh, then this check again. If it "
+                  "run bash bin/watchdog.sh, then this check again. If it "
                   "still fails, read the first lines of monitor.log.")
         return token
     d.add("ok", f"The bot is running (process {pid}).")
@@ -159,7 +159,7 @@ def check(d, st, args):
         if age > HEARTBEAT_STALE_SECS:
             d.add("problem", f"The bot looks stuck (no heartbeat for "
                   f"{int(age // 60)} minutes).",
-                  "run bash watchdog.sh; it restarts a stuck bot.")
+                  "run bash bin/watchdog.sh; it restarts a stuck bot.")
     except OSError:
         pass
     # The latest run's log only (monitor.log is rotated on each start).
@@ -173,7 +173,7 @@ def check(d, st, args):
               "ask the owner: Developer Portal, the app, Bot, Privileged "
               "Gateway Intents, switch on Message Content Intent, click "
               "Save Changes. Then restart the bot (kill the monitor.pid "
-              "process, then bash watchdog.sh).")
+              "process, then bash bin/watchdog.sh).")
     elif "GATEWAY DISABLED" in log:
         d.add("problem", "The bot's realtime connection is off, so replies "
               "are slow.", "see GATEWAY DISABLED in monitor.log, and "

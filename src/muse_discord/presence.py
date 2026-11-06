@@ -41,7 +41,9 @@ import sys
 
 import websockets
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from muse_discord.paths import project_root
+BASE_DIR = str(project_root(__file__))
 GATEWAY = "wss://gateway.discord.gg/?v=10&encoding=json"
 GATEWAY_QUERY = "/?v=10&encoding=json"
 # Close codes reconnecting cannot fix (same contract as monitor.py):
@@ -70,8 +72,7 @@ def open_settings():
         print("PyYAML is required: pip install -r requirements.txt",
               file=sys.stderr)
         sys.exit(1)
-    sys.path.insert(0, BASE_DIR)
-    import muse_settings
+    from muse_discord import muse_settings
     path = os.environ.get("MUSE_DISCORD_CONFIG") or os.path.join(
         BASE_DIR, "config.yaml")
     if len(sys.argv) > 2 and sys.argv[1] == "--config":

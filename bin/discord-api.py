@@ -78,10 +78,10 @@ GENERATED_DIR = os.path.join(PACKAGE_DIR, "generated")
 OWNER_DM_NONCES_FILE = os.path.join(PACKAGE_DIR, "owner_dm_nonces.json")
 OWNER_ITEMS_FILE = os.path.join(PACKAGE_DIR, "owner_items.json")
 DM_TYPES = (1, 3)   # DM, group DM
-sys.path.insert(0, PACKAGE_DIR)
-import secret_scan as SCAN  # noqa: E402
-from discord_tools.tools import MessageTools, PartialSendError  # noqa: E402
-from discord_tools.media import MediaTools  # noqa: E402
+sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
+from muse_discord import secret_scan as SCAN  # noqa: E402
+from muse_discord.discord_tools.tools import MessageTools, PartialSendError  # noqa: E402
+from muse_discord.discord_tools.media import MediaTools  # noqa: E402
 # --for / --nonce from the command line (main), for guard_channel.
 BINDING = {"for": None, "nonce": None, "entry": None, "cmd": None}
 API = "https://discord.com/api/v10"
@@ -119,7 +119,7 @@ def _settings():
     """The package's settings (muse_settings), or None when the config
     cannot be read."""
     try:
-        import muse_settings
+        from muse_discord import muse_settings
         return muse_settings.load(CONFIG, os.path.join(PACKAGE_DIR,
                                                        "plugins"))
     except Exception:

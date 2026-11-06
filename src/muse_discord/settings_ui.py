@@ -91,7 +91,7 @@ import traceback
 from datetime import datetime, timezone
 from typing import Protocol
 
-import muse_settings as ms
+from muse_discord import muse_settings as ms
 
 PREFIX = "mdset"
 VERSION = "3"

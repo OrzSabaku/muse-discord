@@ -25,7 +25,7 @@ os.environ["MUSE_DISCORD_CONFIG"] = CFG
 sys.argv = ["x", "dummy-token"]
 
 spec = importlib.util.spec_from_file_location(
-    "monitor", os.path.join(WORKTREE, "monitor.py"))
+    "monitor", os.path.join(WORKTREE, "src/muse_discord/monitor.py"))
 monitor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(monitor)
 redirect_files(monitor, SCRATCH)

@@ -577,7 +577,6 @@ class CLI(unittest.TestCase):
     def test_shell_shim(self):
         st, cfg = load_text(NEW_BASE + "presence:\n  enabled: off\n"
                             "updates:\n  notify: off\n")
-        shim = os.path.join(MUT, "muse_settings.py")
 
         def get(name):   # what watchdog.sh's reader prints
             return MS.shell_value(st, name, MUT)
@@ -587,12 +586,12 @@ class CLI(unittest.TestCase):
         self.assertEqual(get("updates_notify"), "false")
         # watchdog.sh's own reader, both with and without the module.
         fn = subprocess.run(["sed", "-n", "/^setting() {/,/^}/p",
-                             os.path.join(MUT, "watchdog.sh")],
+                             os.path.join(MUT, "bin", "watchdog.sh")],
                             capture_output=True, text=True).stdout
         for with_module in (True, False):
             d = tmpdir("wd_")
             if with_module:
-                shutil.copy(shim, d)
+                shutil.copytree(os.path.join(MUT, "src"), os.path.join(d, "src"))
             c = write(os.path.join(d, "config.yaml"),
                       "bot:\n  token_file: /a/b\npresence:\n  enabled: "
                       "false\nupdates:\n  check: false\n")

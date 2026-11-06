@@ -284,7 +284,7 @@ elif scenario == "hung":
     import importlib.util
     import types
     spec = importlib.util.spec_from_file_location(
-        "real_monitor", os.path.join(H.MUT_DIR, "monitor.py"))
+        "real_monitor", os.path.join(H.MUT_DIR, "src/muse_discord/monitor.py"))
     real = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(real)
     mod.api_get = types.FunctionType(real.api_get.__code__, mod.__dict__)

@@ -12,8 +12,8 @@ import time
 
 from common import MUT_DIR as MUT, redirect_files, scratch
 
-sys.path.insert(0, MUT)
-import muse_settings as MS  # noqa: E402,F401 (re-exported)
+sys.path.insert(0, os.path.join(MUT, "src"))
+from muse_discord import muse_settings as MS  # noqa: E402,F401 (re-exported)
 
 BOT = "999000000000000001"
 OWNER = "111000000000000001"
@@ -102,7 +102,7 @@ def load_monitor(cfg_text, tmp=None, channels=True):
     sys.argv = ["x", "dummy-token"]
     _seq[0] += 1
     spec = importlib.util.spec_from_file_location(
-        f"settings_mut_monitor_{_seq[0]}", os.path.join(MUT, "monitor.py"))
+        f"settings_mut_monitor_{_seq[0]}", os.path.join(MUT, "src/muse_discord/monitor.py"))
     mod = importlib.util.module_from_spec(spec)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):

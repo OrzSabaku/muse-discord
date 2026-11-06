@@ -28,6 +28,7 @@ LIB = os.path.dirname(os.path.abspath(__file__))
 TESTS = os.path.dirname(LIB)
 REPO = os.path.dirname(TESTS)
 MUT_DIR = os.path.abspath(os.environ.get("MUT_DIR") or REPO)
+sys.path.insert(0, os.path.join(MUT_DIR, "src"))
 os.environ["MUT_DIR"] = MUT_DIR   # subprocesses see the same tree
 
 FAKEWS = os.path.join(LIB, "fakews")          # offline `websockets`
@@ -50,12 +51,13 @@ def copy_watchdog(dst_dir):
     """Copy the tree's watchdog.sh into dst_dir with its 5 s health poll
     (wait_healthy) shortened to 0.2 s: the fakes are healthy at once, so
     only the waiting changes, not what is checked. Returns the path."""
-    with open(os.path.join(MUT_DIR, "watchdog.sh")) as f:
+    with open(os.path.join(MUT_DIR, "bin", "watchdog.sh")) as f:
         text = f.read()
-    dst = os.path.join(dst_dir, "watchdog.sh")
+    os.makedirs(os.path.join(dst_dir, "bin"), exist_ok=True)
+    dst = os.path.join(dst_dir, "bin", "watchdog.sh")
     with open(dst, "w") as f:
         f.write(text.replace("    sleep 5\n", "    sleep 0.2\n"))
-    shutil.copymode(os.path.join(MUT_DIR, "watchdog.sh"), dst)
+    shutil.copymode(os.path.join(MUT_DIR, "bin", "watchdog.sh"), dst)
     return dst
 
 

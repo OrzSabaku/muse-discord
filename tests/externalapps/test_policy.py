@@ -8,8 +8,8 @@ import unittest
 import yaml
 
 ROOT = Path(os.environ.get('MUT_DIR', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT))
-from external_apps.policy import LEVELS, Refused, evaluate, load_policy
+sys.path.insert(0, str(ROOT / "src"))
+from muse_discord.external_apps.policy import LEVELS, Refused, evaluate, load_policy
 
 
 def policy():

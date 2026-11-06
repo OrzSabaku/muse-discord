@@ -6,8 +6,8 @@ import tempfile
 import unittest
 
 ROOT = Path(os.environ.get('MUT_DIR', Path(__file__).resolve().parents[2]))
-sys.path[:0] = [str(ROOT), str(ROOT / 'tests/_lib')]
-from external_apps.binding import card
+sys.path[:0] = [str(ROOT / "src"), str(ROOT / 'tests/_lib')]
+from muse_discord.external_apps.binding import card
 from settings_harness import OWNER, dmsg, load_monitor, quiet
 
 
@@ -66,7 +66,7 @@ everywhere:
             self.assertFalse(next(item for item in queue if item['message_id'] == forwarded['id'])['external_apps']['eligible'])
 
     def test_new_setting_is_default_off_and_cannot_be_changed_by_discord_actions(self):
-        import muse_settings as settings
+        from muse_discord import muse_settings as settings
         module = load_monitor(f'version: 1\nowners: ["{OWNER}"]\n')
         self.assertEqual(module.settings().resolve(settings.Scope.dm())['abilities.external_apps'], 'off')
         self.assertFalse(settings.CORE['abilities.external_apps'].discord_editable)

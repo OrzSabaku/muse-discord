@@ -68,7 +68,10 @@ except ImportError:
           file=sys.stderr)
     sys.exit(1)
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CODE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(CODE_DIR))
+from muse_discord.paths import project_root
+BASE_DIR = str(project_root(__file__))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 QUEUE_FILE = os.path.join(BASE_DIR, "reply_queue.json")
 OUTBOX_FILE = os.path.join(BASE_DIR, "reply_outbox.json")
@@ -101,17 +104,18 @@ def _config_path():
 
 def _import_local(name):
     """name.py from this package (next to monitor.py), as
-    sys.modules[name]; a copy elsewhere on sys.path otherwise."""
-    here = os.path.join(BASE_DIR, name + ".py")
+    sys.modules["muse_discord." + name]; a package on sys.path otherwise."""
+    here = os.path.join(CODE_DIR, name + ".py")
     if not os.path.isfile(here):
-        return importlib.import_module(name)
-    cached = sys.modules.get(name)
+        return importlib.import_module("muse_discord." + name)
+    qualified = "muse_discord." + name
+    cached = sys.modules.get(qualified)
     if cached is not None and os.path.abspath(
             getattr(cached, "__file__", "") or "") == here:
         return cached
-    spec = importlib.util.spec_from_file_location(name, here)
+    spec = importlib.util.spec_from_file_location(qualified, here)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
+    sys.modules[qualified] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -154,7 +158,7 @@ def _import_telemetry():
     telemetry.py cannot be loaded (it never stops the bot)."""
     try:
         spec = importlib.util.spec_from_file_location(
-            "muse_telemetry", os.path.join(BASE_DIR, "telemetry.py"))
+            "muse_telemetry", os.path.join(CODE_DIR, "telemetry.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return mod.Recorder(lambda: (TELEMETRY_FILE, TELEMETRY_ID_FILE,
@@ -186,7 +190,7 @@ class _NoProactive:
 def _import_proactive():
     try:
         spec = importlib.util.spec_from_file_location(
-            "muse_proactive", os.path.join(BASE_DIR, "proactive.py"))
+            "muse_proactive", os.path.join(CODE_DIR, "proactive.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return mod.Proactive(globals())
@@ -3003,14 +3007,14 @@ def load_settings_ui():
     if _SETTINGS_UI["mod"] is not None:
         return _SETTINGS_UI["mod"]
     try:
-        here = os.path.join(BASE_DIR, "settings_ui.py")
+        here = os.path.join(CODE_DIR, "settings_ui.py")
         if os.path.isfile(here):
             spec = importlib.util.spec_from_file_location("settings_ui",
                                                           here)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
         else:
-            import settings_ui as mod
+            mod = importlib.import_module("muse_discord.settings_ui")
         if not callable(getattr(mod, "handle", None)):
             raise ImportError("settings_ui has no handle()")
     except Exception as e:
@@ -5999,7 +6003,7 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
     # original owner DMs only. A reply/forward/attachment cannot grant them.
     item["external_apps"] = {"eligible": False, "level": "off"}
     if here["abilities.external_apps"] != "off":
-        from external_apps.binding import card as external_app_card
+        from muse_discord.external_apps.binding import card as external_app_card
         item["external_apps"] = external_app_card(
             msg, fragments, dm=dm, owner=str(author_id) in OWNER_USER_IDS,
             from_bot=from_bot, level=here["abilities.external_apps"])

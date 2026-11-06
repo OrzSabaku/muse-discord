@@ -34,8 +34,8 @@ class OutboxAppend(unittest.TestCase):
         os.makedirs(os.path.join(self.pkg, "bin"))
         shutil.copy(os.path.join(MUT_DIR, "bin", "outbox-append.py"),
                     os.path.join(self.pkg, "bin"))
-        for f in ("muse_settings.py", "settings_nl.py"):
-            shutil.copy(os.path.join(MUT_DIR, f), self.pkg)
+        shutil.copytree(os.path.join(MUT_DIR, "src"),
+                        os.path.join(self.pkg, "src"))
         shutil.copytree(os.path.join(MUT_DIR, "plugins"),
                         os.path.join(self.pkg, "plugins"))
 

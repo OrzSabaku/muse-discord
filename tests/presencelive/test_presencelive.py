@@ -61,7 +61,7 @@ class Live(unittest.TestCase):
         sys.argv = ["x", "dummy-token"]
         _seq[0] += 1
         spec = importlib.util.spec_from_file_location(
-            f"mut_presence_{_seq[0]}", os.path.join(MUT_DIR, "presence.py"))
+            f"mut_presence_{_seq[0]}", os.path.join(MUT_DIR, "src/muse_discord/presence.py"))
         self.p = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.p)
         self.p.SETTINGS_POLL_SECONDS = POLL
@@ -128,7 +128,7 @@ class Live(unittest.TestCase):
         self.tearDown()
         self.setUp()
         sys.path.insert(0, MUT_DIR)
-        import muse_settings as MS
+        from muse_discord import muse_settings as MS
 
         async def sc(task):
             await self.ready()

@@ -16,9 +16,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "_lib"))
 from common import MUT_DIR as MUT, scratch  # noqa: E402
 
-sys.path.insert(0, MUT)
-import muse_settings as MS  # noqa: E402
-import settings_ui as UI  # noqa: E402,F401 (re-exported)
+sys.path.insert(0, os.path.join(MUT, "src"))
+from muse_discord import muse_settings as MS  # noqa: E402
+from muse_discord import settings_ui as UI  # noqa: E402,F401 (re-exported)
 
 PLUGINS = os.path.join(MUT, "plugins")
 # The custom_id prefix the pages render now ("mdset:<version>:").

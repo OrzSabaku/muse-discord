@@ -382,7 +382,7 @@ class Watchdog(unittest.TestCase):
         copy_watchdog(self.seed)
         for n in ("monitor.py", "presence.py"):
             shutil.copy(FAKE_PROC,
-                        os.path.join(self.seed, n))
+                        os.path.join(self.seed, "bin", n))
         with open(os.path.join(self.seed, ".gitignore"), "w") as f:
             f.write("config.yaml\nbot_token\n*.log\n*.log.1\n*.json\n"
                     "monitor.heartbeat\n.*.tmp\n")
@@ -426,7 +426,7 @@ class Watchdog(unittest.TestCase):
         p = subprocess.run(
             ["unshare", "--user", "--map-root-user", "--pid", "--fork",
              "--mount-proc", "bash", "-c",
-             f"cd '{self.inst}' && bash watchdog.sh"],
+             f"cd '{self.inst}' && bash bin/watchdog.sh"],
             capture_output=True, text=True, timeout=200, env=e)
         return p.stdout + p.stderr
 

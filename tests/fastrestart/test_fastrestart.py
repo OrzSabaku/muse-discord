@@ -53,6 +53,7 @@ class Base(unittest.TestCase):
         self.procs = []
         self.d = tempfile.mkdtemp(prefix="muse-fastrestart-")
         os.makedirs(os.path.join(self.d, "hooks"))
+        os.makedirs(os.path.join(self.d, "bin"))
         shutil.copy(os.path.join(MUT_DIR, "hooks", "mention-watch.sh"),
                     os.path.join(self.d, "hooks"))
         if self.real_watchdog:
@@ -65,10 +66,10 @@ class Base(unittest.TestCase):
                                      "        time.sleep(0.05)\n"))
         else:
             shutil.copy(os.path.join(HERE, "fake_watchdog.sh"),
-                        os.path.join(self.d, "watchdog.sh"))
+                        os.path.join(self.d, "bin", "watchdog.sh"))
         for n in ("monitor.py", "presence.py"):
             shutil.copy(os.path.join(HERE, "fake_proc.py"),
-                        os.path.join(self.d, n))
+                        os.path.join(self.d, "bin", n))
         tok = os.path.join(self.d, "bot_token")
         with open(tok, "w") as f:
             f.write("dummy\n")
@@ -210,13 +211,13 @@ class HookTrigger(Base):
     def test_live_monitor_no_trigger(self):
         # Absolute path: watchdog's pgrep pattern does not match it, so
         # only the pidfile can tell the hook it is alive.
-        mon = self.start_monitor(self.p("monitor.py"))
+        mon = self.start_monitor(self.p("bin/monitor.py"))
         self.hook()
         self.assertEqual(self.get_state(), {})
         mon.kill()
         mon.wait()
         # No pidfile: pgrep finds it.
-        self.start_monitor("monitor.py", pidfile=False)
+        self.start_monitor("bin/monitor.py", pidfile=False)
         self.hook()
         self.assertEqual(self.get_state(), {})
         self.assertEqual(self.wait_calls(1, 0.3), [])
@@ -250,7 +251,7 @@ class HookTrigger(Base):
     def test_recovery_resets_backoff(self):
         now = int(time.time())
         self.put_state({"restart": {"next": now + 100, "fails": 3}})
-        mon = self.start_monitor(self.p("monitor.py"))
+        mon = self.start_monitor(self.p("bin/monitor.py"))
         secs, out = self.hook()
         # Alive but its window has not passed yet: keep the record.
         self.assertEqual(self.get_state()["restart"]["fails"], 3)
@@ -311,7 +312,7 @@ class RealWatchdog(Base):
         self.fail("watchdog.sh still running")
 
     def wd(self, *args):
-        return subprocess.run(["bash", self.p("watchdog.sh"), *args],
+        return subprocess.run(["bash", self.p("bin/watchdog.sh"), *args],
                               cwd=self.d, env=self.env, capture_output=True,
                               text=True, timeout=400)
 
@@ -363,10 +364,10 @@ class RealWatchdog(Base):
             cfg = f.read().replace("enabled: false", "enabled: true")
         with open(self.p("config.yaml"), "w") as f:
             f.write(cfg)
-        a = subprocess.Popen(["bash", self.p("watchdog.sh")], cwd=self.d,
+        a = subprocess.Popen(["bash", self.p("bin/watchdog.sh")], cwd=self.d,
                              env=self.env, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True)
-        b = subprocess.Popen(["bash", self.p("watchdog.sh")], cwd=self.d,
+        b = subprocess.Popen(["bash", self.p("bin/watchdog.sh")], cwd=self.d,
                              env=self.env, stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT, text=True)
         oa, _ = a.communicate(timeout=400)

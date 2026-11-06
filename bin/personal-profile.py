@@ -9,9 +9,9 @@ import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 import yaml
-import muse_settings as MS
+from muse_discord import muse_settings as MS
 
 
 def profile(owner, token_from):

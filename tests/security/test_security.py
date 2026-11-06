@@ -119,7 +119,7 @@ with open(TOKEN_FILE, "w") as f:
 
 sys.argv = ["x", "dummy-token"]
 spec = importlib.util.spec_from_file_location("monitor",
-                                              os.path.join(SRC, "monitor.py"))
+                                              os.path.join(SRC, "src/muse_discord/monitor.py"))
 M = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(M)
 redirect_files(M, os.path.join(WORK, "run"))

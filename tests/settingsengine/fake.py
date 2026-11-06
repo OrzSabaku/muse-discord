@@ -12,10 +12,10 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 MUT = os.path.abspath(os.environ.get("MUT_DIR")
                       or os.path.join(HERE, "..", ".."))
-sys.path.insert(0, MUT)
+sys.path.insert(0, os.path.join(MUT, "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 sys.dont_write_bytecode = True
-import muse_settings as MS  # noqa: E402
+from muse_discord import muse_settings as MS  # noqa: E402
 from common import redirect_files  # noqa: E402
 
 PLUGINS = os.path.join(MUT, "plugins")
@@ -125,7 +125,7 @@ def load_monitor(test, text):
     sys.argv = ["monitor.py", "dummy-token"]
     _seq[0] += 1
     spec = importlib.util.spec_from_file_location(
-        f"engine_mut_monitor_{_seq[0]}", os.path.join(MUT, "monitor.py"))
+        f"engine_mut_monitor_{_seq[0]}", os.path.join(MUT, "src/muse_discord/monitor.py"))
     mod = importlib.util.module_from_spec(spec)
     try:
         with contextlib.redirect_stdout(io.StringIO()):

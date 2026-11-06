@@ -20,7 +20,7 @@ def scenario(steps, env=None, token_file=True, token_env=None,
     d = scratch("muse-wd-")
     copy_watchdog(d)
     for n in ("monitor.py", "presence.py"):
-        shutil.copy(FAKE_PROC, os.path.join(d, n))
+        shutil.copy(FAKE_PROC, os.path.join(d, "bin", n))
     tok = os.path.join(d, "bot_token")
     if token_file:
         with open(tok, "w") as f:
@@ -44,7 +44,7 @@ def scenario(steps, env=None, token_file=True, token_env=None,
     return p.stdout + p.stderr, d
 
 
-WD = "bash watchdog.sh"
+WD = "bash bin/watchdog.sh"
 # name -> scenario() arguments; they all run at once (setUpModule).
 SCENARIOS = {
     "token_env_only": (WD, dict(env={"MY_BOT_TOKEN": "x"},

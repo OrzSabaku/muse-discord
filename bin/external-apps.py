@@ -8,9 +8,9 @@ import sqlite3
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-from external_apps.broker import Broker
-from external_apps.policy import Refused, load_policy
+sys.path.insert(0, str(ROOT / "src"))
+from muse_discord.external_apps.broker import Broker
+from muse_discord.external_apps.policy import Refused, load_policy
 
 
 def main(argv=None):

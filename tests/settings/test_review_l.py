@@ -32,8 +32,8 @@ class VenvReexec(unittest.TestCase):
                         os.path.join(pkg, "bin"))
         shutil.copytree(os.path.join(MUT_DIR, "plugins"),
                         os.path.join(pkg, "plugins"))
-        for f in ("muse_settings.py", "telemetry.py"):
-            shutil.copy(os.path.join(MUT_DIR, f), pkg)
+        shutil.copytree(os.path.join(MUT_DIR, "src"),
+                        os.path.join(pkg, "src"))
         # .venv as bin/install.sh makes it (python3 -m venv), with the
         # packages (here: the system's) and its .muse-ok marker.
         venv = os.path.join(pkg, ".venv")

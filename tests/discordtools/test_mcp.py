@@ -9,18 +9,18 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 ROOT = Path(os.environ.get('MUT_DIR', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 HAVE_MCP = importlib.util.find_spec('mcp') is not None
 if HAVE_MCP:
     from mcp import Client
     from mcp.client.stdio import StdioServerParameters
-    from discord_tools.mcp_server import create_server
+    from muse_discord.discord_tools.mcp_server import create_server
 
 
 @unittest.skipUnless(HAVE_MCP, 'Install requirements-mcp.txt to run SDK integration tests')
 class MCP(unittest.IsolatedAsyncioTestCase):
     async def test_in_process_schema_and_cli_mapping(self):
-        with patch('discord_tools.mcp_server.invoke', new_callable=AsyncMock) as invoke:
+        with patch('muse_discord.discord_tools.mcp_server.invoke', new_callable=AsyncMock) as invoke:
             invoke.return_value = {'messages': [], 'untrusted': True}
             async with Client(create_server()) as client:
                 tools = await client.list_tools()
@@ -56,8 +56,8 @@ class MCP(unittest.IsolatedAsyncioTestCase):
             target = root / 'media/on-demand/x.png'
             target.parent.mkdir(parents=True)
             target.write_bytes(b'PNG')
-            with patch('discord_tools.mcp_server.ROOT', root), \
-                 patch('discord_tools.mcp_server.invoke', new_callable=AsyncMock) as invoke:
+            with patch('muse_discord.discord_tools.mcp_server.ROOT', root), \
+                 patch('muse_discord.discord_tools.mcp_server.invoke', new_callable=AsyncMock) as invoke:
                 invoke.return_value = {'path': str(target), 'bytes': 3, 'content_type': 'image/png'}
                 async with Client(create_server()) as client:
                     args = {'for_id': 'i', 'nonce': 'n', 'channel_id': 'c', 'emoji': '😀'}

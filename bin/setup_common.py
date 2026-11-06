@@ -128,9 +128,9 @@ PLUGINS_DIR = os.path.join(PKG_DIR, "plugins")
 
 
 def settings_module():
-    if PKG_DIR not in sys.path:
-        sys.path.insert(0, PKG_DIR)
-    import muse_settings
+    if os.path.join(PKG_DIR, "src") not in sys.path:
+        sys.path.insert(0, os.path.join(PKG_DIR, "src"))
+    from muse_discord import muse_settings
     return muse_settings
 
 

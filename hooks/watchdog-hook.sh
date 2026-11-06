@@ -54,7 +54,7 @@ for fd in fds:
             os.close(fd)
         except OSError:
             pass
-script = ('bash "$1/watchdog.sh" > "$2.tmp" 2>&1; mv -f "$2.tmp" "$2"')
+script = ('bash "$1/bin/watchdog.sh" > "$2.tmp" 2>&1; mv -f "$2.tmp" "$2"')
 os.execvp("bash", ["bash", "-c", script, "watchdog-hook", d, out])
 PYEOF
 

@@ -14,7 +14,8 @@ from mcp.types import ImageContent, TextContent
 
 from .media import IMAGE_TYPES, INLINE_BYTES
 
-ROOT = Path(__file__).resolve().parents[1]
+from muse_discord.paths import project_root
+ROOT = project_root(__file__)
 
 
 async def invoke(command, for_id, nonce, *args):

@@ -62,7 +62,7 @@ import re
 import secrets
 import threading
 
-import muse_settings as MS
+from muse_discord import muse_settings as MS
 
 VERSION = 1
 MAX_CHANGES = 10

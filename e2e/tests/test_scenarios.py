@@ -18,9 +18,9 @@ import unittest
 E2E = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO = os.path.dirname(E2E)
 sys.path.insert(0, E2E)
-sys.path.insert(0, REPO)
+sys.path.insert(0, os.path.join(REPO, "src"))
 
-import muse_settings  # noqa: E402
+from muse_discord import muse_settings  # noqa: E402
 import scenario  # noqa: E402
 import sut  # noqa: E402
 
@@ -44,7 +44,7 @@ def base():
 def injection_patterns():
     """monitor.py's INJECTION_PATTERNS, read without importing monitor
     (its import reads config and the token)."""
-    with open(os.path.join(REPO, "monitor.py")) as f:
+    with open(os.path.join(REPO, "src/muse_discord/monitor.py")) as f:
         tree = ast.parse(f.read())
     for node in tree.body:
         if isinstance(node, ast.Assign) and any(

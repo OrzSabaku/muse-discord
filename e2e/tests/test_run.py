@@ -320,7 +320,8 @@ class SettingsSUT(FakeSUT):
     def __init__(self, tree=None, run_dir=None, base_config=None,
                  token=None):
         super().__init__(tree, run_dir, base_config, token)
-        shutil.copy(os.path.join(REPO, "muse_settings.py"), self.pkg_dir)
+        shutil.copytree(os.path.join(REPO, "src"),
+                        os.path.join(self.pkg_dir, "src"))
         shutil.copytree(os.path.join(REPO, "plugins"),
                         os.path.join(self.pkg_dir, "plugins"))
         self.log = ""
@@ -419,7 +420,7 @@ FAKE_MONITOR = r'''
 import json, os, sys, time
 import yaml
 cfg = yaml.safe_load(open(os.environ["MUSE_DISCORD_CONFIG"]))
-here = os.path.dirname(os.path.abspath(__file__))
+here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 with open(os.path.join(here, "env_seen.json"), "w") as f:
     json.dump(sorted(k for k in os.environ if k.startswith("E2E_")
                      or k == "CLAUDE_CODE_OAUTH_TOKEN"), f)
@@ -447,7 +448,7 @@ class SUTTests(unittest.TestCase):
         self.tree = os.path.join(self.tmp, "tree")
         os.makedirs(os.path.join(self.tree, ".git"))
         os.makedirs(os.path.join(self.tree, "bin"))
-        with open(os.path.join(self.tree, "monitor.py"), "w") as f:
+        with open(os.path.join(self.tree, "bin/monitor.py"), "w") as f:
             f.write(FAKE_MONITOR)
         for name in ("state.json", "config.yaml", ".git/HEAD",
                      "config.discord.yaml", "owner_dm_nonces.json",

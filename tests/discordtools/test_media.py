@@ -8,8 +8,8 @@ import unittest
 from unittest.mock import patch
 
 ROOT = Path(os.environ.get('MUT_DIR', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT))
-from discord_tools.media import MediaTools, NoRedirect, download, validate_url
+sys.path.insert(0, str(ROOT / "src"))
+from muse_discord.discord_tools.media import MediaTools, NoRedirect, download, validate_url
 
 
 class Response(io.BytesIO):
@@ -60,7 +60,7 @@ class Media(unittest.TestCase):
     def test_size_limits_cleanup_and_symlink_escape(self):
         with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as outside:
             url = 'https://cdn.discordapp.com/attachments/1/2/x.png'
-            with patch('discord_tools.media.MAX_BYTES', 2):
+            with patch('muse_discord.discord_tools.media.MAX_BYTES', 2):
                 for headers in ({'Content-Length': '3'}, {}):
                     with self.assertRaises(ValueError):
                         download(url, 'x.png', directory, Opener(Response(b'123', headers)))

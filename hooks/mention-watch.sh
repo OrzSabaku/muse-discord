@@ -61,7 +61,7 @@ monitor_alive() {
         && [[ $arg1 == *monitor.py ]]; then
         return 0
     fi
-    pgrep -f '^python3 [m]onitor.py' >/dev/null 2>&1
+    pgrep -f '^python3 (bin/)?[m]onitor.py' >/dev/null 2>&1
 }
 
 # True after a token rejection: the scheduled watchdog run handles that
@@ -102,11 +102,11 @@ for fd in fds:
             os.close(fd)
         except OSError:
             pass
-os.execvp("bash", ["bash", os.path.join(d, "watchdog.sh"), "--from-hook"])
+os.execvp("bash", ["bash", os.path.join(d, "bin", "watchdog.sh"), "--from-hook"])
 PYEOF
 }
 
-if [ -f "$PKG_DIR/watchdog.sh" ]; then
+if [ -f "$PKG_DIR/bin/watchdog.sh" ]; then
     rs_next=0
     rs_fails=0
     if [[ $state == *'"restart"'* ]]; then

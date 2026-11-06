@@ -35,8 +35,8 @@ if [ $# -gt 0 ] && [ -d "$1" ] && [ ! -d "$TESTS/$1" ]; then
   TREE=$1; shift
 fi
 TREE=$(cd "$TREE" && pwd) || exit 2
-if [ ! -f "$TREE/monitor.py" ]; then
-  echo "run_all.sh: $TREE has no monitor.py" >&2
+if [ ! -f "$TREE/src/muse_discord/monitor.py" ]; then
+  echo "run_all.sh: $TREE has no src/muse_discord/monitor.py" >&2
   exit 2
 fi
 

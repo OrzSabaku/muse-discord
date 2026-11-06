@@ -11,7 +11,7 @@ import secrets
 import sqlite3
 import time
 
-import muse_settings as MS
+from muse_discord import muse_settings as MS
 from .policy import LEVELS, Refused, canonical, digest, evaluate, load_policy
 
 PLAN_TTL = 300

@@ -58,9 +58,9 @@ def module_problems(name, item, *args):
     them: settings_nl (a settings action, and fields starting with _nl)
     or muse_watches (a schedule action)."""
     try:
-        if PACKAGE_DIR not in sys.path:
-            sys.path.insert(0, PACKAGE_DIR)
-        mod = importlib.import_module(name)
+        if os.path.join(PACKAGE_DIR, "src") not in sys.path:
+            sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
+        mod = importlib.import_module("muse_discord." + name)
     except Exception as e:  # the monitor checks it anyway
         print(f"note: could not load {name}.py to check the item ({e}); "
               f"the monitor will check it", file=sys.stderr)

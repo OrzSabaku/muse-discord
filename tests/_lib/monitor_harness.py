@@ -108,7 +108,7 @@ def load_monitor(tmp=None, cfg_extra=""):
     sys.argv = ["x", "dummy-token"]
     _seq[0] += 1
     spec = importlib.util.spec_from_file_location(
-        f"mut_monitor_{_seq[0]}", os.path.join(MUT_DIR, "monitor.py"))
+        f"mut_monitor_{_seq[0]}", os.path.join(MUT_DIR, "src/muse_discord/monitor.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     redirect_files(mod, tmp)
@@ -141,7 +141,7 @@ def load_presence(tmp=None):
     sys.argv = ["x", "dummy-token"]
     _seq[0] += 1
     spec = importlib.util.spec_from_file_location(
-        f"mut_presence_{_seq[0]}", os.path.join(MUT_DIR, "presence.py"))
+        f"mut_presence_{_seq[0]}", os.path.join(MUT_DIR, "src/muse_discord/presence.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

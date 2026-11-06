@@ -40,7 +40,7 @@ servers:
 """
 HOOK = os.path.join(MUT_DIR, "hooks", "mention-watch.sh")
 sys.path.insert(0, MUT_DIR)
-import muse_watches as W  # noqa: E402
+from muse_discord import muse_watches as W  # noqa: E402
 
 
 class Base(unittest.TestCase):

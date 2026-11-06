@@ -11,11 +11,11 @@ import unittest
 from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(os.environ.get('MUT_DIR', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT))
-from discord_tools.messages import format_message, split_message
-from discord_tools.media import MediaTools
-from discord_tools.state import read_state
-from discord_tools.tools import MessageTools, PartialSendError
+sys.path.insert(0, str(ROOT / "src"))
+from muse_discord.discord_tools.messages import format_message, split_message
+from muse_discord.discord_tools.media import MediaTools
+from muse_discord.discord_tools.state import read_state
+from muse_discord.discord_tools.tools import MessageTools, PartialSendError
 
 CHANNEL = '200000000000000001'
 OTHER = '200000000000000002'

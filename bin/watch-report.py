@@ -32,8 +32,8 @@ import tempfile
 import time
 
 PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, PACKAGE_DIR)
-import muse_watches as W  # noqa: E402
+sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
+from muse_discord import muse_watches as W  # noqa: E402
 
 DUE = os.path.join(PACKAGE_DIR, "web_watches_due.json")
 RESULTS = os.path.join(PACKAGE_DIR, "web_watch_results.json")

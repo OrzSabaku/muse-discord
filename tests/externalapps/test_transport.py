@@ -11,13 +11,13 @@ from unittest.mock import AsyncMock, patch
 import yaml
 
 ROOT = Path(os.environ.get('MUT_DIR', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT))
-from external_apps.broker import Broker
-from external_apps.policy import Refused
+sys.path.insert(0, str(ROOT / "src"))
+from muse_discord.external_apps.broker import Broker
+from muse_discord.external_apps.policy import Refused
 HAVE_MCP = importlib.util.find_spec('mcp') is not None
 if HAVE_MCP:
     from mcp import Client
-    from discord_tools.mcp_server import create_server
+    from muse_discord.discord_tools.mcp_server import create_server
 
 OWNER = '100000000000000001'
 ITEM = '300000000000000001'
@@ -62,7 +62,7 @@ class AppTransport(unittest.TestCase):
 @unittest.skipUnless(HAVE_MCP, 'Optional MCP SDK')
 class Facade(unittest.IsolatedAsyncioTestCase):
     async def test_mcp_plan_and_execute_keep_dm_binding_and_signed_receipt(self):
-        with patch('discord_tools.mcp_server.invoke_external', new_callable=AsyncMock) as invoke:
+        with patch('muse_discord.discord_tools.mcp_server.invoke_external', new_callable=AsyncMock) as invoke:
             invoke.return_value = {'request_id': 'r', 'decision': 'approval-required'}
             async with Client(create_server()) as client:
                 args = {'for_id': ITEM, 'nonce': NONCE, 'app': 'calendar',

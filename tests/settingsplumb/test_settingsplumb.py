@@ -325,19 +325,13 @@ class Routing(unittest.TestCase):
 class MissingUI(unittest.TestCase):
     def test_missing_ui_gets_an_ephemeral_answer(self):
         mod = load_monitor(CFG)
-        mod.BASE_DIR = tmpdir("noui_")
-        saved = list(sys.path)
-        sys.modules.pop("settings_ui", None)
-        sys.path[:] = [p for p in sys.path
-                       if not os.path.isfile(os.path.join(
-                           p or ".", "settings_ui.py"))]
-        try:
+        from unittest.mock import patch
+        mod.CODE_DIR = tmpdir("noui_")
+        with patch.dict(sys.modules, {"muse_discord.settings_ui": None}):
             with quiet():
                 r1 = mod.dispatch_interaction(cmd_ix(), lambda r: None)
                 r2 = mod.dispatch_interaction(comp_ix("mdset:x"),
                                               lambda r: None)
-        finally:
-            sys.path[:] = saved
         for r in (r1, r2):
             self.assertEqual(r["type"], 4)
             self.assertEqual(r["data"]["flags"], 64)

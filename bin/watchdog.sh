@@ -57,7 +57,7 @@
 #     The previous run's log is kept as <name>.log.1 on each restart.
 
 set -u
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The package's own Python: bin/install.sh makes .venv when pip cannot
 # install into the system Python, and marks it .muse-ok once the
 # packages import there. Every python3 below (and the monitor and
@@ -110,7 +110,7 @@ then
 fi
 [ "$FROM_HOOK" = "1" ] && log "run triggered by the wake hook (monitor process not found)"
 
-alive() { pgrep -f "^python3 $1" >/dev/null 2>&1; }
+alive() { pgrep -f "^python3 (bin/)?$1" >/dev/null 2>&1; }
 # The alert text and the path go in as arguments, never into the code.
 get_state() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("last_alert",""))' "$STATE" 2>/dev/null || echo ""; }
 set_state() { python3 -c 'import json,sys;json.dump({"last_alert":sys.argv[1]},open(sys.argv[2],"w"))' "$1" "$STATE" 2>/dev/null; }
@@ -126,9 +126,9 @@ setting() {
 import os
 import sys
 d, cfg, name, fallback = sys.argv[1:5]
-sys.path.insert(0, d)
+sys.path.insert(0, os.path.join(d, "src"))
 try:
-    import muse_settings
+    from muse_discord import muse_settings
 except ImportError:
     muse_settings = None
 try:
@@ -195,12 +195,12 @@ PYEOF
 # Stop a process: SIGTERM, up to 10s to exit, then SIGKILL.
 # $1 = alive() pattern.
 stop_proc() {
-  pkill -f "^python3 $1" 2>/dev/null
+  pkill -f "^python3 (bin/)?$1" 2>/dev/null
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     alive "$1" || return 0
     sleep 1
   done
-  pkill -9 -f "^python3 $1" 2>/dev/null
+  pkill -9 -f "^python3 (bin/)?$1" 2>/dev/null
   sleep 1
 }
 
@@ -232,7 +232,7 @@ os.dup2(si.fileno(), 0)
 os.dup2(so.fileno(), 1)
 os.dup2(se.fileno(), 2)
 # argv[0]='python3' keeps the pgrep "^python3 ..." health checks matching.
-os.execv(sys.executable, ['python3', script])
+os.execv(sys.executable, ['python3', "bin/" + script])
 EOF
 }
 

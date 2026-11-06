@@ -1,0 +1,1 @@
+"""Muse Discord application package."""

@@ -16,8 +16,8 @@ from common import MUT_DIR, scratch  # noqa: E402
 PROBE = r"""
 import sys, json
 sys.argv = ["x", "dummy-token"]
-sys.path.insert(0, %(repo)r)
-import monitor
+sys.path.insert(0, %(repo)r + "/src")
+from muse_discord import monitor
 out = {k: getattr(monitor, k) for k in (
     "COALESCE_SECS", "BOT_COALESCE_SECS", "MAX_REPLY_CHARS",
     "POLL_INTERVAL", "SWEEP_EVERY_CYCLES", "SWEEP_GRACE_SECS",

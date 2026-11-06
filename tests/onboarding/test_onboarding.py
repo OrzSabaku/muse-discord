@@ -102,7 +102,7 @@ def make_pkg():
     root = scratch("muse-onb-")
     pkg = os.path.join(root, "pkg")
     os.makedirs(pkg)
-    for name in ("muse_settings.py", "config.example.yaml",
+    for name in ("config.example.yaml",
                  "prompts/worker-prompt.template.md"):
         target = os.path.join(pkg, name)
         os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -110,7 +110,7 @@ def make_pkg():
     # Keep the shipped placeholder in the test fixtures, independent of
     # the real install's missing or owner-customized persona.md.
     shutil.copy2(os.path.join(HERE, "fixtures", "persona.md"), pkg)
-    for d in ("bin", "plugins"):
+    for d in ("bin", "plugins", "src"):
         shutil.copytree(os.path.join(MUT_DIR, d), os.path.join(pkg, d))
     home = os.path.join(root, "home")
     os.makedirs(home)
@@ -136,7 +136,7 @@ def all_files(*roots):
 
 def load_ms(pkg):
     spec = importlib.util.spec_from_file_location(
-        f"ms_{id(pkg)}", os.path.join(pkg, "muse_settings.py"))
+        f"ms_{id(pkg)}", os.path.join(pkg, "src/muse_discord/muse_settings.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -466,12 +466,13 @@ class WatchdogHook(unittest.TestCase):
         from common import HOOK_RUNTIME
         root = scratch("muse-wdh-")
         os.makedirs(os.path.join(root, "hooks"))
+        os.makedirs(os.path.join(root, "bin"))
         hook = os.path.join(root, "hooks", "watchdog-hook.sh")
         shutil.copy2(os.path.join(MUT_DIR, "hooks", "watchdog-hook.sh"),
                      hook)
         go = os.path.join(root, "go")
         # The watchdog run ends only once the hook has stopped waiting.
-        with open(os.path.join(root, "watchdog.sh"), "w") as f:
+        with open(os.path.join(root, "bin", "watchdog.sh"), "w") as f:
             f.write(f"until [ -e {go} ]; do sleep 0.02; done\n"
                     "echo 'ALERT: monitor DOWN: test'\n")
         env = dict(os.environ, HATCH_HOOK_RUNTIME=HOOK_RUNTIME,
@@ -485,7 +486,7 @@ class WatchdogHook(unittest.TestCase):
                     "watchdog-hook.out.") and not f.endswith(".tmp")]:
                 break
             time.sleep(0.02)
-        with open(os.path.join(root, "watchdog.sh"), "w") as f:
+        with open(os.path.join(root, "bin", "watchdog.sh"), "w") as f:
             f.write("echo 'OK monitor alive'\n")
         second = subprocess.run(["bash", hook], env=env, capture_output=True,
                                 text=True, timeout=30).stdout

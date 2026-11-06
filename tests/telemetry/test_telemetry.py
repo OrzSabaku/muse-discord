@@ -37,7 +37,7 @@ from settings_harness import (BOT, CH, G1, MS, OWNER, U1, U2,  # noqa: E402
                               author, gmsg, load_monitor, quiet, state)
 
 sys.path.insert(0, MUT_DIR)
-import telemetry as T  # noqa: E402
+from muse_discord import telemetry as T  # noqa: E402
 
 DAY = 86400
 BASE = f"""version: 1
@@ -175,7 +175,8 @@ class BuildInfo(unittest.TestCase):
     def test_ahead_and_modified(self):
         d = scratch("muse-telemetry-git-")
         self.git(d, "init", "-q")
-        for name in ("monitor.py", "persona.md"):
+        os.makedirs(os.path.join(d, "src", "muse_discord"))
+        for name in ("src/muse_discord/monitor.py", "persona.md"):
             with open(os.path.join(d, name), "w") as f:
                 f.write("x\n")
         self.git(d, "add", ".")
@@ -188,7 +189,7 @@ class BuildInfo(unittest.TestCase):
         self.assertEqual(T.build_info(d, "v1.0.0"), (0, False))
         for i in range(2):
             self.git(d, "commit", "-qam", f"main {i}", "--allow-empty")
-        with open(os.path.join(d, "monitor.py"), "w") as f:
+        with open(os.path.join(d, "src/muse_discord/monitor.py"), "w") as f:
             f.write("edited\n")
         self.assertEqual(T.build_info(d, "v1.0.0"), (2, True))
 
@@ -516,8 +517,8 @@ class BadEndpoint(Base):
                         os.path.join(pkg, "bin"))
         shutil.copytree(os.path.join(MUT_DIR, "plugins"),
                         os.path.join(pkg, "plugins"))
-        for f in ("muse_settings.py", "telemetry.py"):
-            shutil.copy(os.path.join(MUT_DIR, f), pkg)
+        shutil.copytree(os.path.join(MUT_DIR, "src"),
+                        os.path.join(pkg, "src"))
         with open(os.path.join(pkg, "config.yaml"), "w") as f:
             f.write(BASE)
         with open(os.path.join(pkg, "telemetry.json"), "w") as f:

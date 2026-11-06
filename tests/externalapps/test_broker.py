@@ -14,9 +14,9 @@ import unittest
 import yaml
 
 ROOT = Path(os.environ.get('MUT_DIR', Path(__file__).resolve().parents[2]))
-sys.path.insert(0, str(ROOT))
-from external_apps.broker import Broker, store
-from external_apps.policy import Refused, canonical
+sys.path.insert(0, str(ROOT / "src"))
+from muse_discord.external_apps.broker import Broker, store
+from muse_discord.external_apps.policy import Refused, canonical
 from test_policy import policy
 
 OWNER = '100000000000000001'

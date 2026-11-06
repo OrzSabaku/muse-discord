@@ -321,7 +321,7 @@ def _settings_module():
     """The muse_settings.py next to e2e/ (the code under test), or None
     when it is missing or does not import."""
     if not _MS:
-        path = os.path.join(os.path.dirname(E2E_DIR), "muse_settings.py")
+        path = os.path.join(os.path.dirname(E2E_DIR), "src/muse_discord/muse_settings.py")
         mod = None
         if os.path.isfile(path):
             try:

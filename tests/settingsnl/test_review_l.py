@@ -20,8 +20,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
 from common import MUT_DIR  # noqa: E402
 
 sys.path.insert(0, MUT_DIR)
-import muse_settings as MS  # noqa: E402
-import settings_nl as NL  # noqa: E402
+from muse_discord import muse_settings as MS  # noqa: E402
+from muse_discord import settings_nl as NL  # noqa: E402
 
 PLUGINS = os.path.join(MUT_DIR, "plugins")
 OWNER = "11100000000000000001"

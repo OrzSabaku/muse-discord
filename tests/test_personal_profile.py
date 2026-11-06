@@ -5,8 +5,8 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
-import muse_settings as MS
+sys.path.insert(0, str(ROOT / "src"))
+from muse_discord import muse_settings as MS
 spec = importlib.util.spec_from_file_location('personal', ROOT / 'bin/personal-profile.py')
 p = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(p)

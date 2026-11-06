@@ -299,7 +299,7 @@ class SUT:
                       f" =====\n")
             log.flush()
             self.proc = subprocess.Popen(
-                [self.python, os.path.join(self.pkg_dir, "monitor.py")],
+                [self.python, os.path.join(self.pkg_dir, "bin/monitor.py")],
                 cwd=self.pkg_dir, env=env, stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT,
                 start_new_session=True)
