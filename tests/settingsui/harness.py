@@ -224,6 +224,7 @@ class FakeCtx:
         self.outcomes = list(OUTCOMES if outcomes is None else outcomes)
         self.applied, self.undos, self.notified, self.logs = [], [], [], []
         self.stash = {}
+        self.sessions = {}
         self._tok = 0
         self.names_extra = dict(NAMES)
         if seed and text == BASE:
@@ -262,10 +263,10 @@ class FakeCtx:
                 ov = f.read()
         except OSError:
             ov = None
-        return ov, dict(self.stash), self._tok
+        return ov, dict(self.stash), self._tok, dict(self.sessions)
 
     def restore(self, snap):
-        ov, stash, tok = snap
+        ov, stash, tok, sessions = snap
         if ov is None:
             if os.path.exists(self.overlay_path):
                 os.remove(self.overlay_path)
@@ -273,6 +274,7 @@ class FakeCtx:
             with open(self.overlay_path, "w") as f:
                 f.write(ov)
         self.stash, self._tok = dict(stash), tok
+        self.sessions = dict(sessions)
         self.refresh()
 
     # -- the Ctx ------------------------------------------------------------
@@ -348,6 +350,20 @@ class FakeCtx:
             raise PermissionError("not yours")
         del self.stash[tok]
         return e[1]
+
+    def session_peek(self, uid, key):
+        e = self.sessions.get((str(uid), str(key)))
+        if e is None or e[1] < self.now:
+            self.sessions.pop((str(uid), str(key)), None)
+            return None
+        return json.loads(json.dumps(e[0]))
+
+    def session_put(self, uid, key, payload, ttl=900):
+        self.sessions[(str(uid), str(key))] = (
+            json.loads(json.dumps(payload)), self.now + ttl)
+
+    def session_drop(self, uid, key):
+        self.sessions.pop((str(uid), str(key)), None)
 
     def notify_owners_admin_change(self, *a):
         self.notified.append(a)
