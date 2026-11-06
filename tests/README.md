@@ -66,6 +66,7 @@ sleeps: patch the clock or shorten the interval.
 
 | Suite | Covers |
 | --- | --- |
+| `externalapps` | 全体・アプリ別の権限上限、本人DMとnonce、計画の失効・競合・再実行防止。依存がある場合は署名検証と偽アプリへのMCP接続。 |
 | `discordtools` | CLIの未読・既読位置、長文返信、途中送信失敗、所有者nonceによる認可、CDN取得の制限。MCP SDKがある場合はstdio接続と画像ブロックも検証。 |
 | `config` | Config resolution: defaults, nulls, zeros honored or clamped, out-of-range values; an old config's bare-name trigger never fires. |
 | `security` | Generated files bound to their queue item, `bin/discord-api.py` file and id gating, safe media fetches (host allowlist, redirects, private addresses), injection quarantine for documents and reply context, `allowed_mentions`, ffmpeg input whitelists; secrets (the bot token, live nonces, disguised forms) never sent by any send path (`test_secrets.py`). |

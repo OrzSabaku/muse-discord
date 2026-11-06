@@ -149,3 +149,8 @@ all_servers:
 # Advanced engine settings (polling, timing, the reply size ceiling)
 # are listed in docs/PROTOCOL.md under "Engine settings". Most installs
 # never need them.
+
+# External apps are off by default. Enable globally under everywhere.abilities:
+#   external_apps: read-only
+# Levels: off, read-only, confirm, write, unconditional (no per-action approval).
+# Register exact apps/tools in external-apps.yaml; see docs/EXTERNAL_APPS.md.

@@ -142,3 +142,12 @@ python3 bin/watches.py cancel <id> ...  # removes them; nothing fires
 ```
 
 The running bot picks a cancel up within seconds.
+
+## External app access
+
+`everywhere.abilities.external_apps` is an owner-managed ceiling: `off`
+(default), `read-only`, `confirm`, `write`, or `unconditional`.
+`unconditional` skips per-operation approval even for destructive registered
+tools; owner-DM authorization and declared target restrictions still apply. It cannot be changed by
+Discord settings actions or set in server/channel scopes. App-specific
+limits and approval requirements are in [EXTERNAL_APPS.md](EXTERNAL_APPS.md).

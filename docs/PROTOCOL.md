@@ -1478,3 +1478,17 @@ file is still there 6 hours later). The Muse updates to exactly that
 tag by following docs/UPDATING.md, then deletes the file, also when it
 stops early. The hook never runs git, holds no secrets, and hands on
 only a `vX.Y.Z` version.
+
+### External app operations
+
+The monitor adds `external_apps: {eligible, level}` after plugin annotations.
+Only original text-only owner DMs may be eligible. The broker requires the
+open queue entry and its live `owner_dm_nonce`, independently of
+`abilities.owner_commands`. Its global ceiling is `abilities.external_apps`
+(default off), further bounded by the queue-time and registered app levels.
+Plans expire after five minutes and are consumed before one remote call.
+Writes that need approval require an exact-operation Ed25519 receipt.
+At the effective `unconditional` level, even registered dangerous operations
+skip approval receipts; source binding and declared target limits still apply.
+See [EXTERNAL_APPS.md](EXTERNAL_APPS.md) for the policy, receipt format,
+restrictions and the unconnected native approval authority.

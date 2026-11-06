@@ -15,6 +15,7 @@ MuseのVMに配置し、受信フックを登録して動かします。
 | 依存関係・Bot接続・フックを設定する | [セットアップ](docs/SETUP.md) |
 | 単発CLIで未読取得・既読管理・返信する | [CLIガイド](docs/CLI.md) |
 | MCPから返信・メディア取得を使う | [MCPガイド](docs/MCP.md) |
+| 外部アプリの利用権限を段階的に制御する | [外部アプリ仕様・設定](docs/EXTERNAL_APPS.md) |
 | 設定を変更する | [設定ガイド](docs/SETTINGS.md) |
 | 問題を調べる | [トラブルシューティング](docs/TROUBLESHOOTING.md) |
 | 手動で更新する | [更新手順](docs/UPDATING.md) |
@@ -29,6 +30,7 @@ docs/                   導入・運用・仕様の文書
 prompts/                ワーカーとWeb監視用のプロンプト原本
 bin/                    導入・診断・設定などのコマンド
 discord_tools/          CLI・MCP共通の未読管理・返信・メディア取得
+external_apps/          外部アプリの権限・承認・実行
 hooks/                  Museの受信・監視フック
 plugins/                拡張機能
 tests/                  オフラインテスト

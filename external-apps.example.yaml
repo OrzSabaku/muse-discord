@@ -1,0 +1,27 @@
+# Copy to external-apps.yaml and register your own trusted MCP stdio server.
+version: 1
+# Raw Ed25519 public key, base64 encoded, from the trusted approval authority.
+# approval_public_key: REPLACE_WITH_PUBLIC_KEY
+apps:
+  calendar:
+    # Levels: off, read-only, confirm, write, unconditional.
+    # unconditional skips receipts for every registered effect, including dangerous.
+    level: read-only
+    command: [/absolute/path/to/calendar-mcp-server]
+    # Only explicitly mapped environment variables reach this app.
+    env:
+      CALENDAR_ACCESS_TOKEN: MY_CALENDAR_ACCESS_TOKEN
+    tools:
+      list_events:
+        effect: read
+        constraints:
+          calendar_id: [personal]
+      create_draft:
+        effect: write
+        auto_write: true
+        constraints:
+          calendar_id: [personal]
+      send_invitation:
+        effect: dangerous
+        constraints:
+          calendar_id: [personal]
