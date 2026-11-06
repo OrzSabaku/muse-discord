@@ -315,7 +315,11 @@ fi
 owner_dms=$(printf '%s' "$due" | jq -c "$OWNER_DM"'[.[] | select(owner_dm)]
     | if any(.[]; .kind == "dm") then map(select(.kind == "dm"))
       elif any(.[]; .kind == "proactive")
-      then map(select(.kind == "proactive"))[:1] else . end')
+      then map(select(.kind == "proactive"))[:1] else . end
+    | if any(.[]; .external_apps.eligible? == true)
+      then map(select(.external_apps.eligible? == true))[:1] else . end')
+# An app-capable DM gets its own wake and nonce, never another owner's
+# DM or another request's app output in the same privileged context.
 nowner=$(printf '%s' "$owner_dms" | jq 'length')
 if [ "$nowner" -gt 0 ] && [ "$nowner" -lt "$ndue" ]; then
     log "owner DMs wake alone; the rest wait for the next run" \

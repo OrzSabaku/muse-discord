@@ -27,7 +27,7 @@ def profile(owner, token_from):
             'who': {'allow': [owner], 'bots': 'ignore'},
             'style': {'notes': '日本語で応答する。外部操作の承認はMuse本体の正規画面で行う。'},
             'privacy': {'memory': 'nothing', 'suspicious': 'hold-for-review'},
-            'abilities': {'owner_commands': 'off', 'reminders': 'owners'},
+            'abilities': {'owner_commands': 'off', 'reminders': 'owners', 'external_apps': 'off'},
             'proactive': {'enabled': 'off', 'timezone': 'Asia/Tokyo'},
             'media': {'enabled': 'off'},
         },

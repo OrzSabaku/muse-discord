@@ -65,6 +65,18 @@ class _Hook(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("jq"), "jq not installed")
 class ForgedAnswersDoNotHideOwnerDms(_Hook):
+    def test_app_capable_dms_each_wake_with_only_their_own_nonce(self):
+        first = dict(item("1"), external_apps={"eligible": True, "level": "read-only"})
+        second = dict(item("2"), external_apps={"eligible": True, "level": "confirm"})
+        self.write("reply_queue.json", [first, second, item("5", "mention", "member")])
+        payload = self.wake()
+        self.assertEqual([i["message_id"] for i in payload["items"]], ["1"])
+        self.assertNotIn(N2, json.dumps(payload))
+        self.write("reply_outbox.json", [{"item": "1", "owner_dm_nonce": N1, "silent": True}])
+        payload = self.wake()
+        self.assertEqual([i["message_id"] for i in payload["items"]], ["2"])
+        self.assertNotIn(N1, json.dumps(payload))
+
     def test_forged_entries_do_not_count(self):
         self.write("reply_queue.json", [item("1", frags=["11"]), item("2")])
         # Any one of these counting would drop "1" (or "2") from the wake.

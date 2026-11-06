@@ -5965,6 +5965,14 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
                                   msg["channel_id"], exchange),
     }
     item.update(extra)
+    # External-app capabilities are stamped after plugins, from verified
+    # original owner DMs only. A reply/forward/attachment cannot grant them.
+    item["external_apps"] = {"eligible": False, "level": "off"}
+    if here["abilities.external_apps"] != "off":
+        from external_apps.binding import card as external_app_card
+        item["external_apps"] = external_app_card(
+            msg, fragments, dm=dm, owner=str(author_id) in OWNER_USER_IDS,
+            from_bot=from_bot, level=here["abilities.external_apps"])
     # Reminders and watches: the author's own list, and whether they may
     # set one here (abilities.reminders).
     item["watches"] = watch_card(author_id, guild_id, dm, from_bot, here,

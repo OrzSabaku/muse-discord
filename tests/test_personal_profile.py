@@ -30,6 +30,7 @@ class ProfileTests(unittest.TestCase):
             self.assertEqual(server['who.replies'], 'off')
             self.assertEqual(server['privacy.memory'], 'nothing')
             self.assertEqual(dm['who.bots'], 'ignore')
+            self.assertEqual(dm['abilities.external_apps'], 'off')
             self.assertEqual(next(d.glob('config.yaml.bak-*')).read_text(), original)
             self.assertEqual(target.stat().st_mode & 0o777, 0o600)
 
