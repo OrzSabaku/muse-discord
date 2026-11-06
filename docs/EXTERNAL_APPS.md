@@ -19,7 +19,9 @@
 
 ## 設定
 
-`config.yaml` の全体上限は、ファイルからのみ変更できます。
+全体上限は、所有者が `/settings` → 適用先「全体」→「Edit settings」→「Permissions」で変更できます。権限を広げる場合は保存時に確認が必要です。アプリ別の接続先・操作・上限は引き続きファイルで設定します。
+
+`config.yaml` で指定する場合：
 
 ```yaml
 everywhere:

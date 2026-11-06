@@ -87,4 +87,4 @@ python3 bin/settings.py undo --place dms --by muse.ai
 
 変更先は `defaults`・`dms`・`server:ID`・`channel:SERVER_ID:CHANNEL_ID` です。
 終了コード3の変更は未適用です。警告を確認し、その変更への明示的な承認後だけ `--yes` で再実行します。
-外部アプリの段階はファイルからのみ変更できます。[外部アプリ設定](EXTERNAL_APPS.md) を参照してください。
+所有者は `/settings` の「Edit settings」→「Permissions」で所有者コマンドの許可と、全体の外部アプリ権限を変更できます。応答対象のユーザー・ロールは「People & replies」で指定します。[外部アプリ設定](EXTERNAL_APPS.md) を参照してください。
