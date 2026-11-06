@@ -6,6 +6,17 @@ quiet in #announcements"). Read it every time before you change a
 setting. The owner can also DM the bot what they want, or type
 `/settings` in Discord.
 
+The `/settings` panel itself: the home page's quick controls apply at
+once, and its "Edit settings" pages (basic / people & replies /
+limits & features) cover every Discord-editable setting for the
+place — who it answers and ignores, other bots, the daily caps, what
+it remembers, reminders, reaching out on its own. Edit pages never
+apply at once: picks stage into a 15-minute draft, and Save applies
+the whole draft as one undo group (a risky draft shows the usual
+confirm card first). Two settings stay off the panel by the spec
+(`abilities.external_apps`, `privacy.never_share`), and owner
+commands likewise.
+
 Commands run in the package dir.
 
 ## 1. When
