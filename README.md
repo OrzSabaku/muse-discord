@@ -17,8 +17,8 @@ DiscordやMuseでの実動作は、導入先で確認してください。
 
 ## 主な配置
 
-`bin/` は操作用コマンド、`hooks/` は受信・監視、`prompts/` は実行用指示です。
-Python本体と実行状態はルートに置き、`discord_tools/` と `external_apps/` に追加機能を分けています。
+`src/muse_discord/` にPython本体、`bin/` に起動・操作コマンドをまとめています。
+`hooks/` は受信・監視、`prompts/` は実行用指示です。設定と実行状態はルートに保存します。
 `config.yaml`・生成物・実行状態はGit管理から除外しています。
 
 ライセンスは [MIT](LICENSE)。上流の履歴は [CHANGELOG.md](CHANGELOG.md) を参照してください。

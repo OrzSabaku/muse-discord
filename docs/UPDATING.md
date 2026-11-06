@@ -66,12 +66,14 @@ python3 bin/render-worker-prompt.py --media none
 フックをコピーして登録している場合はコピーも更新します。MCP・外部アプリの依存は [CLI・MCP](TOOLS.md) を参照してください。
 旧形式の設定はそのまま読めます。変換する場合は `bin/settings.py migrate --dry-run` で差分を確認してから実行し、生成されたバックアップを保持します。
 
+起動コマンドは `bash bin/watchdog.sh` です。cronなどに旧パスを登録している場合は更新します。
+
 ## 4. 再起動と確認
 
 ```bash
 kill "$(cat monitor.pid)"
-pkill -f "^python3 presence.py"
-bash watchdog.sh
+pkill -f "^python3 (bin/)?presence.py"
+bash bin/watchdog.sh
 python3 bin/doctor.py --no-dm
 ```
 

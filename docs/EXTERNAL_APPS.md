@@ -72,4 +72,4 @@ Discordの「OK」や、モデルの自己申告では承認されません。
 - 公開鍵：`external-apps.yaml` の `approval_public_key` にraw形式32バイトのbase64を設定。
 
 別依頼・操作・引数・DMへの流用、期限切れ、偽署名、未知の項目を拒否します。
-正確な検証処理は [broker.py](../external_apps/broker.py) を参照してください。
+正確な検証処理は [broker.py](../src/muse_discord/external_apps/broker.py) を参照してください。

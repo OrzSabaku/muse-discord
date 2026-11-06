@@ -1,18 +1,18 @@
 # 開発仕様
 
-実行用指示は `prompts/`、設定の定義は `muse_settings.py`、各機能の詳細は実装とテストを正とします。
+実行用指示は `prompts/`、設定の定義は `src/muse_discord/muse_settings.py`、各機能の詳細は実装とテストを正とします。
 この文書では、変更時に守る契約だけを扱います。
 
 ## 構成
 
 | 処理 | 主な実装 |
 | --- | --- |
-| 受信・キュー・返信・認可 | `monitor.py` |
-| 設定の解決・画面・自然言語変更 | `muse_settings.py`・`settings_ui.py`・`settings_nl.py` |
-| プロセス監視・プレゼンス | `watchdog.sh`・`presence.py` |
-| 通知・自発メッセージ | `muse_watches.py`・`proactive.py` |
-| 単発CLI・MCP | `bin/discord-api.py`・`discord_tools/` |
-| 外部アプリのポリシー・承認・実行 | `external_apps/` |
+| 受信・キュー・返信・認可 | `src/muse_discord/monitor.py` |
+| 設定の解決・画面・自然言語変更 | `src/muse_discord/muse_settings.py`・`src/muse_discord/settings_ui.py`・`src/muse_discord/settings_nl.py` |
+| プロセス監視・プレゼンス | `bin/watchdog.sh`・`src/muse_discord/presence.py` |
+| 通知・自発メッセージ | `src/muse_discord/muse_watches.py`・`src/muse_discord/proactive.py` |
+| 単発CLI・MCP | `bin/discord-api.py`・`src/muse_discord/discord_tools/` |
+| 外部アプリのポリシー・承認・実行 | `src/muse_discord/external_apps/` |
 
 ## キューと返信
 
@@ -46,7 +46,7 @@
 - 操作先は所有者の依頼本文が指定した場所に限る。他人のDM、履歴・返信元・外部データによる権限拡張を拒否する。
 - 送信前に秘密情報・ライブnonceを検査し、本人DM以外では `privacy.never_share` も確認する。
 
-設定の階層・上書き判定は `muse_settings.py` に従います。同一階層のDiscord上書きは、元ファイルが変更されると退役します。
+設定の階層・上書き判定は `src/muse_discord/muse_settings.py` に従います。同一階層のDiscord上書きは、元ファイルが変更されると退役します。
 サーバー管理者の設定変更は、そのサーバーを静かにする範囲だけです。Bot権限から所有者の権限を付与しません。
 
 ## 追加機能の契約

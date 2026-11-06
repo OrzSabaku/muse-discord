@@ -65,7 +65,7 @@ python3 bin/render-worker-prompt.py --media none
 ## 5. 起動確認
 
 ```bash
-bash watchdog.sh
+bash bin/watchdog.sh
 python3 bin/doctor.py --no-dm
 ```
 

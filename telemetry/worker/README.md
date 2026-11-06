@@ -1,6 +1,6 @@
 # 利用統計の受信Worker
 
-`telemetry.py` が送る匿名の日次報告をCloudflare WorkerとD1で受信します。デプロイは保守担当者だけが行います。
+`src/muse_discord/telemetry.py` が送る匿名の日次報告をCloudflare WorkerとD1で受信します。デプロイは保守担当者だけが行います。
 
 | API | 用途 |
 | --- | --- |
@@ -22,7 +22,7 @@ npx wrangler d1 execute muse-telemetry --remote --file=schema.sql
 npx wrangler deploy
 ```
 
-URLを `telemetry.py` の `TELEMETRY_URL` に設定します。パス・末尾スラッシュは付けません。
+URLを `src/muse_discord/telemetry.py` の `TELEMETRY_URL` に設定します。パス・末尾スラッシュは付けません。
 確認先は `<Worker URL>/v1/stats` です。
 
 ## 変更・調査
@@ -32,7 +32,7 @@ node --test
 npx wrangler d1 execute muse-telemetry --remote --command "<SQL>"
 ```
 
-報告フィールドを変える場合は、`telemetry.py` と `src/validate.js` の `SCHEMA` を揃え、`schema.sql` と既存DBの列も更新します。
+報告フィールドを変える場合は、`src/muse_discord/telemetry.py` と `src/validate.js` の `SCHEMA` を揃え、`schema.sql` と既存DBの列も更新します。
 古いDBに `ahead`・`modified` 列がない場合は、それぞれ `INTEGER NOT NULL DEFAULT 0` で追加します。
 送信側との互換性はリポジトリの `tests/telemetry` でも確認します。
 特定のインストールを削除する場合は、`bin/telemetry.py status` で確認したIDを対象にします。
