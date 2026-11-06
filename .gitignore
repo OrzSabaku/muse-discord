@@ -17,6 +17,9 @@ watchdog-hook.out.*
 state.json
 read-state.sqlite
 read-state.sqlite-*
+external-apps.yaml
+external-apps.sqlite
+external-apps.sqlite-*
 reply_queue.json
 reply_outbox.json
 reply_outbox.processing.json
