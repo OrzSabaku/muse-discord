@@ -12,6 +12,18 @@ from settings_harness import OWNER, dmsg, load_monitor, quiet
 
 
 class Binding(unittest.TestCase):
+    def test_unconditional_is_available_on_a_new_owner_dm(self):
+        module = load_monitor(f'''version: 1
+owners: ["{OWNER}"]
+everywhere:
+  abilities:
+    external_apps: unconditional
+''')
+        state, queue = module.load_state(), []
+        with quiet():
+            self.assertTrue(module.enqueue_message(dmsg(OWNER), 'owner DM', state, queue, dm=True))
+        self.assertEqual(queue[0]['external_apps'], {'eligible': True, 'level': 'unconditional'})
+
     def test_untrusted_inputs_and_non_dm_context_cannot_grant_apps(self):
         base = {'id': '1', 'content': 'read my calendar'}
         for field, value in [('attachments', [{'id': '2'}]),

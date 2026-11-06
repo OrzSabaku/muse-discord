@@ -192,7 +192,7 @@ CORE = {
     "abilities.owner_commands": Spec("on-off", True, "ES"),
     # External apps are owner-managed: chat/settings actions cannot widen it.
     "abilities.external_apps": Spec("choice", "off", "E",
-                                values=("off", "read-only", "confirm", "write"),
+                                values=("off", "read-only", "confirm", "write", "unconditional"),
                                 risky=True, discord_editable=False, hidden=True),
     # Who can set reminders and watches (muse_watches.py): owners always
     # can; a list names the others who may.

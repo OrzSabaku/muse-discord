@@ -7,7 +7,7 @@ import re
 
 import yaml
 
-LEVELS = ('off', 'read-only', 'confirm', 'write')
+LEVELS = ('off', 'read-only', 'confirm', 'write', 'unconditional')
 EFFECTS = ('read', 'write', 'dangerous')
 
 
@@ -100,6 +100,7 @@ def evaluate(policy, global_level, app_id, tool, arguments):
                 type(arguments[parameter]) is type(value) and arguments[parameter] == value
                 for value in values):
             raise Refused('TARGET_NOT_ALLOWED')
-    needs_approval = effect == 'dangerous' or (effect == 'write' and not (
-        level == LEVELS.index('write') and rule.get('auto_write') is True))
+    needs_approval = level < LEVELS.index('unconditional') and (
+        effect == 'dangerous' or (effect == 'write' and not (
+            level == LEVELS.index('write') and rule.get('auto_write') is True)))
     return app, effect, needs_approval

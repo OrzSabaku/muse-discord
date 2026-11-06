@@ -40,6 +40,18 @@ class Policy(unittest.TestCase):
                             self.assertEqual(approval, ceiling < 4 and tool != 'list'
                                              and not (ceiling == 3 and tool == 'draft'))
 
+    def test_unconditional_still_requires_registered_tools_and_declared_targets(self):
+        data = policy()
+        data['apps']['calendar']['level'] = 'unconditional'
+        for tool in ('list', 'edit', 'delete'):
+            self.assertFalse(evaluate(data, 'unconditional', 'calendar', tool, {})[2])
+        for app, tool, arguments in [('unknown', 'delete', {}), ('calendar', 'unknown', {}),
+                                     ('calendar', 'draft', {'calendar_id': 'work'})]:
+            with self.assertRaises(Refused):
+                evaluate(data, 'unconditional', app, tool, arguments)
+        self.assertEqual(evaluate(data, 'unconditional', 'calendar', 'draft',
+                                  {'calendar_id': 'personal'})[2], False)
+
     def test_unregistered_targets_and_type_confusion_fail_closed(self):
         for app, tool, args in [('unknown', 'list', {}), ('calendar', 'unknown', {}),
                                  ('calendar', 'draft', {}),

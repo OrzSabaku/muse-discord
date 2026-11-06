@@ -124,6 +124,34 @@ class BrokerTests(unittest.TestCase):
             self.plan('draft', {'calendar_id': 'personal'})
         self.assertEqual(self.calls, [])
 
+    def enable_unconditional(self, source_level='unconditional'):
+        self.write_config('unconditional')
+        self.data['apps']['calendar']['level'] = 'unconditional'
+        self.write_policy()
+        self.item['external_apps']['level'] = source_level
+        self.write_source()
+
+    def test_unconditional_writes_and_dangerous_calls_need_no_receipt_or_public_key(self):
+        self.enable_unconditional()
+        for tool in ('edit', 'delete'):
+            plan = self.plan(tool)
+            self.assertEqual(plan['decision'], 'allowed')
+            result = self.broker.execute(ITEM, NONCE, plan['request_id'])
+            self.assertTrue(result['untrusted'])
+            with self.assertRaises(Refused):
+                self.broker.execute(ITEM, NONCE, plan['request_id'])
+        self.assertEqual([tool for tool, _args in self.calls], ['edit', 'delete'])
+
+    def test_unconditional_is_capped_by_queue_time_and_live_policy(self):
+        self.enable_unconditional(source_level='write')
+        self.assertEqual(self.plan('delete')['decision'], 'approval-required')
+        self.enable_unconditional()
+        plan = self.plan('delete')
+        self.write_config('confirm')
+        with self.assertRaises(Refused):
+            self.broker.execute(ITEM, NONCE, plan['request_id'])
+        self.assertEqual(self.calls, [])
+
     def test_uncertain_remote_result_is_never_retried(self):
         def fail(*args):
             self.calls.append('attempt')
