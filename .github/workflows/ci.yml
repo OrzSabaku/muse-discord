@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      # Docs-only changes skip the tests. These .md files are inputs to
+      # the code (rendered prompts, UPDATING.md's commands, the shipped
+      # persona's hash), so they still run them.
+      - "**"
+      - "!**.md"
+      - "!**.png"
+      - "!LICENSE"
+      - "worker-prompt.template.md"
+      - "watch-checker-prompt.template.md"
+      - "UPDATING.md"
+      - "persona.md"
+  pull_request:
+    paths:
+      # Same list as push.
+      - "**"
+      - "!**.md"
+      - "!**.png"
+      - "!LICENSE"
+      - "worker-prompt.template.md"
+      - "watch-checker-prompt.template.md"
+      - "UPDATING.md"
+      - "persona.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest supported (SETUP.md promises 3.10+) and newest.
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff
+      - name: Compile every script
+        run: git ls-files '*.py' | xargs python -m py_compile
+      - name: Lint for real bugs (syntax errors, undefined names, dead code)
+        run: ruff check --select E9,F .
+      - name: Parse every YAML file
+        run: |
+          git ls-files '*.yaml' '*.yml' | xargs python -c '
+          import sys, yaml
+          for path in sys.argv[1:]:
+              with open(path) as f:
+                  yaml.safe_load(f)
+              print("ok", path)
+          '
+      - name: Offline e2e harness tests
+        run: python3 -m unittest discover -s e2e/tests -t .
+      - name: Usage stats Worker tests (Node, no packages)
+        if: matrix.python == '3.13'   # not Python's: once is enough
+        run: cd telemetry/worker && node --test
+
+  offline:
+    name: Offline suites (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    # The suites take about 30 s (4 at a time); see tests/README.md.
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Allow unprivileged user namespaces
+        # The watchdog suites run watchdog.sh in a user+PID namespace
+        # (unshare), so its pgrep/pkill only ever see their fakes. Ubuntu
+        # 24.04 blocks those namespaces through AppArmor by default.
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Install ffmpeg (security suite's video tests)
+        # The apt mirror sometimes hangs; the video tests skip without
+        # ffmpeg, so a slow mirror must not cancel the whole job.
+        timeout-minutes: 2
+        continue-on-error: true
+        run: |
+          command -v ffmpeg >/dev/null || {
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends ffmpeg
+          }
+      - name: Offline suites (tests/)
+        run: bash tests/run_all.sh
+
+  shell:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell scripts
+        run: git ls-files '*.sh' | xargs shellcheck -S warning

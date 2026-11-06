@@ -1,0 +1,185 @@
+name: E2E
+
+# End-to-end tests against a private Discord test server (e2e/README.md).
+# Tier 1 (scripted worker, code checks) runs on every same-repo PR.
+# Tier 2 (Claude as worker and judge, subscription usage) runs only when
+# the PR has the `e2e-full` label, and never blocks the PR.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      # Docs-only changes skip the tests. These .md files are inputs to
+      # the code (rendered prompts, UPDATING.md's commands, the shipped
+      # persona's hash), so they still run them.
+      - "**"
+      - "!**.md"
+      - "!**.png"
+      - "!LICENSE"
+      - "worker-prompt.template.md"
+      - "watch-checker-prompt.template.md"
+      - "UPDATING.md"
+      - "persona.md"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Also run tier 2 (Claude worker + judge)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  tier1:
+    name: E2E tier 1
+    # Same-repo PRs only (fork PRs get no secrets). Not again on a label
+    # event: tier 1 already ran for this commit.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+       github.event.action != 'labeled')
+    # One run at a time, repo-wide: every run shares the test server and
+    # the bot token, and two monitors on one token would both reply. Set
+    # per job, not per workflow, so a run that skips both jobs (an
+    # unrelated label added) never takes the queue slot from a real one.
+    concurrency:
+      group: muse-discord-e2e
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_GUILD_ID: ${{ secrets.E2E_GUILD_ID }}
+      E2E_SUT_TOKEN: ${{ secrets.E2E_SUT_TOKEN }}
+      E2E_DRIVER_A_TOKEN: ${{ secrets.E2E_DRIVER_A_TOKEN }}
+      E2E_DRIVER_B_TOKEN: ${{ secrets.E2E_DRIVER_B_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      # Exits 0 with a "skipped" summary when the secrets are missing.
+      - name: Run tier 1
+        run: python3 e2e/run.py --tree . --tier 1 --out out
+      - name: Upload results and transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-tier1
+          path: out/
+          if-no-files-found: warn
+      - name: Update the sticky PR comment
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          MARKER: "<!-- muse-discord-e2e -->"
+          TITLE: "Tier 1"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: &sticky |
+          # One comment per tier, found by its marker (the first line)
+          # and updated in place. The summary starts with run.py's
+          # marker; it is swapped for this tier's.
+          if [ -s out/summary.md ]; then
+            summary=$(grep -vxF '<!-- muse-discord-e2e -->' out/summary.md \
+              || true)
+          else
+            summary="No summary was written; see the job log."
+          fi
+          {
+            printf '%s\n' "$MARKER"
+            printf '%s\n\n' "**muse-discord e2e: $TITLE**"
+            printf '%s\n\n' "${summary:0:60000}"
+            printf '%s\n' "[Workflow run]($RUN_URL) (results and transcripts are in its artifacts)"
+          } > comment.md
+          ids=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\")
+                 | select(.body | startswith(\"$MARKER\")) | .id")
+          id=${ids%%$'\n'*}
+          if [ -n "$id" ]; then
+            gh api --silent -X PATCH \
+              "repos/$GITHUB_REPOSITORY/issues/comments/$id" \
+              -F body=@comment.md
+          else
+            gh api --silent \
+              "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+              -F body=@comment.md
+          fi
+
+  tier2:
+    name: E2E tier 2 (Claude)
+    # After tier 1 (never alongside it: one bot token), whatever tier 1's
+    # outcome. Only with the e2e-full label (or the dispatch input); a
+    # label event runs it only when that label is the one added.
+    needs: tier1
+    if: >-
+      !cancelled() && (
+        (github.event_name == 'workflow_dispatch' && inputs.full) ||
+        (github.event_name == 'pull_request' &&
+         github.event.pull_request.head.repo.full_name == github.repository &&
+         contains(github.event.pull_request.labels.*.name, 'e2e-full') &&
+         (github.event.action != 'labeled' ||
+          github.event.label.name == 'e2e-full')))
+    # Non-blocking: LLM verdicts are advisory.
+    continue-on-error: true
+    # One run at a time, repo-wide: every run shares the test server and
+    # the bot token, and two monitors on one token would both reply. Set
+    # per job, not per workflow, so a run that skips both jobs (an
+    # unrelated label added) never takes the queue slot from a real one.
+    concurrency:
+      group: muse-discord-e2e
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      E2E_GUILD_ID: ${{ secrets.E2E_GUILD_ID }}
+      E2E_SUT_TOKEN: ${{ secrets.E2E_SUT_TOKEN }}
+      E2E_DRIVER_A_TOKEN: ${{ secrets.E2E_DRIVER_A_TOKEN }}
+      E2E_DRIVER_B_TOKEN: ${{ secrets.E2E_DRIVER_B_TOKEN }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Install Claude Code
+        if: env.CLAUDE_CODE_OAUTH_TOKEN != ''
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          claude --version
+      - name: Run tier 2
+        run: |
+          if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+            mkdir -p out
+            printf '%s\n\n%s\n' '<!-- muse-discord-e2e -->' \
+              'Tier 2 skipped: the CLAUDE_CODE_OAUTH_TOKEN secret is not set.' \
+              > out/summary.md
+            exit 0
+          fi
+          python3 e2e/run.py --tree . --tier 2 --out out
+      - name: Upload results and transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-tier2
+          path: out/
+          if-no-files-found: warn
+      - name: Update the sticky PR comment
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          MARKER: "<!-- muse-discord-e2e-tier2 -->"
+          TITLE: "Tier 2 (Claude worker + judge, advisory)"
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: *sticky
