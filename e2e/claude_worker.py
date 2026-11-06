@@ -77,7 +77,7 @@ PAYLOAD_FIELDS = (
     "author_id", "content", "media", "documents", "unviewable", "history",
     "may_generate", "owner_command", "reply_to", "burst",
     "burst_fragments", "from_bot", "bot_turns", "participants",
-    "follow_up", "settings", "watches", "reminder", "proactive")
+    "follow_up", "settings", "watches", "reminder", "proactive", "external_apps")
 
 # Env vars the worker run has no business seeing. The SUT token stays:
 # bin/discord-api.py may resolve it through token_from (env:NAME).

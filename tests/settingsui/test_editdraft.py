@@ -16,7 +16,7 @@ import crawl  # noqa: E402
 import harness as H  # noqa: E402
 from harness import (ADMIN, G1, G2, HOMEWORK, MANAGE, MEMBER,  # noqa: E402
                      MUSECHAT, OWNER, OWNER2, ROLE, SAM, UI, FakeCtx, P,
-                     command, component, submit)
+                     component, submit)
 
 S1 = H.MS.Place.server(G1)
 S2 = H.MS.Place.server(G2)
