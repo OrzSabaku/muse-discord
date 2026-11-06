@@ -65,14 +65,13 @@ everywhere:
         if any(item['message_id'] == forwarded['id'] for item in queue):
             self.assertFalse(next(item for item in queue if item['message_id'] == forwarded['id'])['external_apps']['eligible'])
 
-    def test_new_setting_is_default_off_and_cannot_be_changed_by_discord_actions(self):
+    def test_setting_is_default_off_and_editable_only_at_global_scope(self):
         from muse_discord import muse_settings as settings
         module = load_monitor(f'version: 1\nowners: ["{OWNER}"]\n')
         self.assertEqual(module.settings().resolve(settings.Scope.dm())['abilities.external_apps'], 'off')
-        self.assertFalse(settings.CORE['abilities.external_apps'].discord_editable)
-        self.assertTrue(settings.CORE['abilities.external_apps'].hidden)
-        with self.assertRaises(settings.SettingsError):
-            settings.check_settable(module.settings(), ('everywhere',), 'abilities.external_apps')
+        self.assertTrue(settings.CORE['abilities.external_apps'].discord_editable)
+        self.assertFalse(settings.CORE['abilities.external_apps'].hidden)
+        settings.check_settable(module.settings(), ('everywhere',), 'abilities.external_apps')
         # Existing schema validates global-only: no server-specific escalation.
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'config.yaml'

@@ -27,10 +27,8 @@ What each person gets:
   (a Ctx session, 15 minutes), the pages list what would change, and
   Save applies the whole draft as one undo group through the same
   assess / confirm path as any other write; Cancel throws it away.
-  Two settings stay off the pages by the engine's own rules
-  (abilities.external_apps, privacy.never_share: not
-  discord_editable), and owner commands likewise (the owner toggles
-  them by DM or in config).
+  Owners manage owner commands and external app access on Permissions.
+  privacy.never_share remains file-only.
 - A server admin (Manage Server) gets "Quiet the bot" for their server:
   quieter only (muse_settings' admin rule), and Undo of admins' changes.
 - Anyone else gets a polite refusal.
@@ -190,7 +188,7 @@ CORE_CODES = {
     "who.replies": "r", "who.dms_from": "df", "who.allow": "al",
     "who.ignore": "ig", "who.bots": "b", "who.bot_exchange_limit": "bx",
     "style.length": "ln", "style.notes": "n",
-    "abilities.owner_commands": "oc", "abilities.reminders": "rw",
+    "abilities.external_apps": "ea", "abilities.owner_commands": "oc", "abilities.reminders": "rw",
     "privacy.memory": "m",
     "privacy.suspicious": "su", "limits.per_day": "pd",
     "limits.per_person_per_day": "pp", "presence.status": "ps",
@@ -203,7 +201,7 @@ _PLUGIN_CODE = re.compile(r"~([A-Za-z0-9_\-]{1,40})\.([A-Za-z0-9_\-]{1,40})")
 _PLACE = re.compile(r"x|d|s(\d{1,25})|c(\d{1,25})\.(\d{1,25})")
 _ID = re.compile(r"\d{1,25}")
 _PART = re.compile(r"[^:]{1,100}")
-PAGES = ("h", "y", "e", "d", "f")
+PAGES = ("h", "y", "e", "d", "f", "p")
 
 
 def kcode(key):
@@ -1981,7 +1979,7 @@ def render(R, place, page):
         return page_why(R, place)
     if R.admin:
         return page_quiet(R, R.admin_gid)
-    if page in ("e", "d", "f"):
+    if page in ("e", "d", "f", "p"):
         return page_edit(R, place, page)
     return page_home(R, place)
 
@@ -2323,6 +2321,8 @@ DRAFT_PREFIX = "draft:"
 # Split in two because one page of pickers would break Discord's
 # 40-component limit.
 DETAIL_PAGES = {
+    "p": {"channel": (), "server": ("oc",), "dms": (),
+          "defaults": ("oc", "ea")},
     "d": {"channel": (),
           "server": ("al", "ig", "b", "bx", "rw"),
           "dms": ("al", "ig", "b", "rw"),
@@ -2333,17 +2333,17 @@ DETAIL_PAGES = {
           "defaults": ("pd", "m", "su", "pe", "pf", "un", "p1", "p7")},
 }
 DETAIL_CODES = {kind: tuple(dict.fromkeys(
-    DETAIL_PAGES["d"][kind] + DETAIL_PAGES["f"][kind]))
+    DETAIL_PAGES["d"][kind] + DETAIL_PAGES["f"][kind] + DETAIL_PAGES["p"][kind]))
     for kind in DETAIL_PAGES["d"]}
 EDIT_PAGE_LABELS = {"e": "Basic settings", "d": "People & replies",
-                    "f": "Limits & features"}
+                    "f": "Limits & features", "p": "Permissions"}
 
 
 def edit_pages(R, place):
     """The edit pages place has: always the basic page, plus each
     detail page that has a control for this kind of place."""
     out = ["e"]
-    for p in ("d", "f"):
+    for p in ("d", "f", "p"):
         if DETAIL_PAGES[p].get(place.kind):
             out.append(p)
     return out
@@ -2477,6 +2477,16 @@ def ctl_notes(R, place):
 
 
 DETAIL_CONTROLS = {
+    "oc": lambda R, p: ctl_choice(R, p, "oc", "abilities.owner_commands", (
+        ("on", "Allow", "Owners may request Discord operations"),
+        ("off", "Deny", "Disable owner Discord operations here")), "Owner commands"),
+    "ea": lambda R, p: ctl_choice(R, p, "ea", "abilities.external_apps", (
+        ("off", "Disabled", "No external app calls"),
+        ("read-only", "Read only", "Allow reads; deny writes"),
+        ("confirm", "Confirm writes", "Writes require signed approval"),
+        ("write", "Scoped automatic writes", "Only configured targets skip approval"),
+        ("unconditional", "Unconditional approval", "Registered writes and dangerous actions skip approval")),
+        "External apps (everywhere)\nApp-specific limits still apply; send a new owner DM after changing."),
     "al": lambda R, p: ctl_people(R, p, "al", "who.allow",
                                   "Who I answer", everyone=True,
                                   min_values=1),
@@ -2726,9 +2736,11 @@ def set_changes(R, place, code, v):
         return None
     # The detail controls (edit pages). "=" is the inherit fallthrough
     # at the end; a people key's list values come through pk instead.
-    if code in ("b", "m", "su", "pe", "pf", "un", "rw"):
+    if code in ("b", "m", "su", "pe", "pf", "un", "rw", "oc", "ea"):
         key = kdecode(code)
-        vals = {"b": ("ignore", "when-addressed"),
+        vals = {"oc": ("on", "off"),
+                "ea": ("off", "read-only", "confirm", "write", "unconditional"),
+                "b": ("ignore", "when-addressed"),
                 "m": ("everything", "public-only", "nothing"),
                 "su": ("hold-for-review", "ignore"),
                 "pe": ("on", "off"), "un": ("on", "off"),
@@ -2763,7 +2775,7 @@ def v_set(R, place, args, values):
         return notice(OUT_OF_DATE)
     code = args[0]
     origin = shown(R, place)
-    editing = origin[1] in ("e", "d", "f")
+    editing = origin[1] in ("e", "d", "f", "p")
     basic = code in PLACE_CONTROLS.get(place.kind, ())
     detail = code in DETAIL_CODES.get(place.kind, ())
     if not basic and not (detail and editing):
@@ -2831,7 +2843,7 @@ def v_pre(R, place, args, values):
                            f"already has the {title} style.")]
         return show(R, *shown(R, place))
     _p, _page = shown(R, place)
-    if _page in ("e", "d", "f"):
+    if _page in ("e", "d", "f", "p"):
         return stage(R, place, _page, changes)
     return do_changes(R, shown(R, place), changes, notes=notes,
                       headline=f"{R.gname(place.guild_id)} now has the "
@@ -2896,7 +2908,7 @@ def v_tg(R, place, args, values):
         return notice(OUT_OF_DATE)
     key = _key(R, args[0])
     origin = shown(R, place)
-    if key is None or origin[1] not in ("e", "d", "f") \
+    if key is None or origin[1] not in ("e", "d", "f", "p") \
             or args[0] not in DETAIL_CODES.get(place.kind, ()):
         return notice(OUT_OF_DATE)
     v = args[1]
@@ -2921,7 +2933,7 @@ def v_pk(R, place, args, values):
     key = _key(R, args[0])
     origin = shown(R, place)
     if key not in ("who.allow", "who.ignore", "abilities.reminders") \
-            or origin[1] not in ("e", "d", "f") \
+            or origin[1] not in ("e", "d", "f", "p") \
             or args[0] not in DETAIL_CODES.get(place.kind, ()):
         return notice(OUT_OF_DATE)
     picked, dropped = people_from(R, values, place)

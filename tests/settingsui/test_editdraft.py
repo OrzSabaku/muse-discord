@@ -204,13 +204,42 @@ class EditDraft(Base):
         r = self.owner(f"{P}sv:s{G1}")
         self.assertEqual(self.val("style.length", S1), "brief")
 
+    def test_external_app_escalation_requires_confirmation(self):
+        place = MS.Place.defaults()
+        r = self.open_edit("x")
+        r = self.owner(f"{P}pg:x:p", message=msg(r))
+        self.assertIsNotNone(control(r, f"{P}set:x:ea"))
+        r = self.owner(f"{P}set:x:ea", ["unconditional"], message=msg(r))
+        self.assertEqual(self.val("abilities.external_apps", place), "off")
+        r = self.owner(f"{P}sv:x", message=msg(r))
+        ok = control(r, "ok")
+        self.assertIsNotNone(ok)
+        self.assertEqual(self.val("abilities.external_apps", place), "off")
+        self.owner(ok["custom_id"], message=msg(r))
+        self.assertEqual(self.val("abilities.external_apps", place), "unconditional")
+
+    def test_admin_and_member_cannot_change_external_app_access(self):
+        for user in (ADMIN, MEMBER):
+            r = self.h(component(user, f"{P}pg:x:p", guild=G1))
+            self.h(component(user, f"{P}set:x:ea", ["unconditional"],
+                             G1, MUSECHAT, message=msg(r)))
+            self.h(component(user, f"{P}sv:x", guild=G1))
+            self.assertEqual(self.val("abilities.external_apps", MS.Place.defaults()), "off")
+
+    def test_owner_commands_can_be_disabled_from_permissions(self):
+        r = self.open_edit(f"s{G1}")
+        r = self.owner(f"{P}pg:s{G1}:p", message=msg(r))
+        r = self.owner(f"{P}set:s{G1}:oc", ["off"], message=msg(r))
+        self.owner(f"{P}sv:s{G1}", message=msg(r))
+        self.assertFalse(self.val("abilities.owner_commands", S1))
+
     def test_edit_pages_stay_within_limits(self):
         for tok, guild, channel in ((f"s{G1}", G1, MUSECHAT),
                                     (f"c{G1}.{MUSECHAT}", G1, MUSECHAT),
                                     ("x", G1, MUSECHAT),
                                     ("d", None, None)):
             r = self.owner(f"{P}ed:{tok}", guild=guild, channel=channel)
-            for page in ("e", "d", "f"):
+            for page in ("e", "d", "f", "p"):
                 r = self.owner(f"{P}pg:{tok}:{page}", guild=guild,
                                channel=channel, message=msg(r))
                 n = UI.count_components(r["data"]["components"])

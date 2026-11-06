@@ -190,10 +190,10 @@ CORE = {
                          values=("brief", "normal", "detailed")),
     "style.notes": Spec("text", "", "EDSC", maxlen=NOTES_MAX),
     "abilities.owner_commands": Spec("on-off", True, "ES"),
-    # External apps are owner-managed: chat/settings actions cannot widen it.
+    # External app access is owner-managed; app-specific policy remains file-only.
     "abilities.external_apps": Spec("choice", "off", "E",
                                 values=("off", "read-only", "confirm", "write", "unconditional"),
-                                risky=True, discord_editable=False, hidden=True),
+                                risky=True),
     # Who can set reminders and watches (muse_watches.py): owners always
     # can; a list names the others who may.
     "abilities.reminders": Spec("people", "everyone", "EDS",
@@ -4285,6 +4285,15 @@ def assess(st, changes, info=None, names=None, named=()):
     look = _namer(look_names)
     after = simulate(st, changes)
     out = Assessment()
+    levels = ("off", "read-only", "confirm", "write", "unconditional")
+    scope = Scope.everywhere()
+    before_apps = st.resolve(scope)["abilities.external_apps"]
+    after_apps = after.resolve(scope)["abilities.external_apps"]
+    if levels.index(after_apps) > levels.index(before_apps):
+        out.warnings.append(
+            f"External app access increases from {before_apps} to {after_apps}. "
+            "App-specific limits still apply. Unconditional approval skips "
+            "approval for registered writes, deletes and sends.")
 
     gids = set(inf.guilds()) | set(st.servers_listed())
     for ch in changes:
