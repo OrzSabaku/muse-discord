@@ -8,6 +8,12 @@ under test writes goes to a temp dir. CI runs them on every push and
 pull request (`.github/workflows/ci.yml`). The end-to-end tests on a
 real Discord server are in `e2e/` (see `e2e/README.md`).
 
+Onboarding copies `tests/onboarding/fixtures/persona.md` into its scratch
+package, never the real install's `persona.md`. The fixture is the unchanged
+placeholder from `cszach/muse-discord` commit
+`7bd0706621b791a5adc72a94d06725ed993f406f`; setup recognizes its SHA-256
+before replacing it. Keep that fixture's contents intact.
+
 ## Running
 
 ```bash

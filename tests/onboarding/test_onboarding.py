@@ -102,11 +102,14 @@ def make_pkg():
     root = scratch("muse-onb-")
     pkg = os.path.join(root, "pkg")
     os.makedirs(pkg)
-    for name in ("muse_settings.py", "config.example.yaml", "persona.md",
+    for name in ("muse_settings.py", "config.example.yaml",
                  "prompts/worker-prompt.template.md"):
         target = os.path.join(pkg, name)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copy2(os.path.join(MUT_DIR, name), target)
+    # Keep the shipped placeholder in the test fixtures, independent of
+    # the real install's missing or owner-customized persona.md.
+    shutil.copy2(os.path.join(HERE, "fixtures", "persona.md"), pkg)
     for d in ("bin", "plugins"):
         shutil.copytree(os.path.join(MUT_DIR, d), os.path.join(pkg, d))
     home = os.path.join(root, "home")
