@@ -51,6 +51,10 @@ server settings, webhooks, roles, and anything else are NOT implemented:
 if the owner asks for something outside this list, the worker says so
 honestly instead of improvising.
 
+JSON commands for unread/history, acknowledgments, split sends, replies,
+and media downloads use the same owner binding and channel guard. They
+are shared with bin/discord-mcp.py; see docs/CLI.md and docs/MCP.md.
+
 The bot token is resolved exactly like monitor.py's: token_from in the
 package config.yaml (../config.yaml relative to this file, or
 MUSE_DISCORD_CONFIG), read through muse_settings.py so both config
@@ -62,6 +66,7 @@ import json
 import mimetypes
 import os
 import re
+import sqlite3
 import sys
 import urllib.parse
 import urllib.request
@@ -75,6 +80,8 @@ OWNER_ITEMS_FILE = os.path.join(PACKAGE_DIR, "owner_items.json")
 DM_TYPES = (1, 3)   # DM, group DM
 sys.path.insert(0, PACKAGE_DIR)
 import secret_scan as SCAN  # noqa: E402
+from discord_tools.tools import MessageTools, PartialSendError  # noqa: E402
+from discord_tools.media import MediaTools  # noqa: E402
 # --for / --nonce from the command line (main), for guard_channel.
 BINDING = {"for": None, "nonce": None, "entry": None, "cmd": None}
 API = "https://discord.com/api/v10"
@@ -199,7 +206,7 @@ def guard_target(cid):
                          f"command's own.")
     if cid in (e.get("channels") or []):
         return
-    if BINDING.get("cmd") == "post" and cid in (e.get("post_channels")
+    if BINDING.get("cmd") in ("post", "send-message") and cid in (e.get("post_channels")
                                                 or []):
         return
     raise SystemExit(f"Refusing: the owner's own message does not name "
@@ -519,6 +526,76 @@ def cmd_delete_own(args):
     print(f"deleted {mid}")
 
 
+def message_tools():
+    return MessageTools(api, guard_target, scrub, bot_id,
+                        os.path.join(PACKAGE_DIR, "read-state.sqlite"),
+                        ALLOWED_MENTIONS)
+
+
+def _json_tool(action):
+    try:
+        print(json.dumps(action(), ensure_ascii=False))
+    except (ValueError, OSError) as error:
+        # Do not print exception contents: file or network errors may hold
+        # paths, credentials, or untrusted response text.
+        raise SystemExit("Invalid arguments or unavailable local read state.") from error
+
+
+def cmd_get_messages(args):
+    """get-messages <channel_id> [limit] [before_id] -- JSON history, oldest first."""
+    cid = snowflake(args[0])
+    before = snowflake(args[2]) if len(args) > 2 else None
+    _json_tool(lambda: message_tools().messages(cid, args[1] if len(args) > 1 else 50,
+                                               before))
+
+
+def cmd_list_unread(args):
+    """list-unread <channel_id> [limit] -- initialize once, then read without marking."""
+    cid = snowflake(args[0])
+    _json_tool(lambda: message_tools().unread(cid, args[1] if len(args) > 1 else 50))
+
+
+def cmd_mark_read(args):
+    """mark-read <channel_id> [message_id] -- advance local read position only."""
+    cid = snowflake(args[0])
+    mid = snowflake(args[1]) if len(args) > 1 else None
+    _json_tool(lambda: message_tools().mark_read(cid, mid))
+
+
+def cmd_send_message(args):
+    """send-message <channel_id> <text> -- JSON result, splitting long content."""
+    cid = snowflake(args[0])
+    _json_tool(lambda: message_tools().send(cid, args[1]))
+
+
+def cmd_reply_message(args):
+    """reply-message <channel_id> <message_id> <text> -- split reply without pinging author."""
+    cid, mid = snowflake(args[0]), snowflake(args[1])
+    _json_tool(lambda: message_tools().send(cid, args[2], mid))
+
+
+def media_tools():
+    return MediaTools(api, guard_target, PACKAGE_DIR)
+
+
+def cmd_fetch_attachment(args):
+    """fetch-attachment <channel_id> <message_id> <attachment_id> -- download to media/on-demand/."""
+    cid, mid, aid = map(snowflake, args[:3])
+    _json_tool(lambda: media_tools().attachment(cid, mid, aid))
+
+
+def cmd_get_emoji(args):
+    """get-emoji <channel_id> <emoji> -- download a custom or Unicode emoji."""
+    cid = snowflake(args[0])
+    _json_tool(lambda: media_tools().emoji(cid, args[1]))
+
+
+def cmd_get_avatar(args):
+    """get-avatar <channel_id> <user_id> -- download a user's avatar."""
+    cid, uid = map(snowflake, args[:2])
+    _json_tool(lambda: media_tools().avatar(cid, uid))
+
+
 # Lookups (a server's channel and active-thread names and ids, never
 # message content): an owner command's nonce, or an owner DM's (a
 # settings request names places). Every other subcommand needs an owner
@@ -527,6 +604,14 @@ def cmd_delete_own(args):
 LOOKUPS = {"resolve-channel", "list-threads"}
 
 COMMANDS = {
+    "fetch-attachment": (cmd_fetch_attachment, 3),
+    "get-emoji": (cmd_get_emoji, 2),
+    "get-avatar": (cmd_get_avatar, 2),
+    "get-messages": (cmd_get_messages, 1),
+    "list-unread": (cmd_list_unread, 1),
+    "mark-read": (cmd_mark_read, 1),
+    "send-message": (cmd_send_message, 2),
+    "reply-message": (cmd_reply_message, 3),
     "resolve-channel": (cmd_resolve_channel, 2),
     "read": (cmd_read, 1),
     "list-threads": (cmd_list_threads, 2),
@@ -538,6 +623,25 @@ COMMANDS = {
     "unpin": (cmd_unpin, 2),
     "delete-own": (cmd_delete_own, 2),
 }
+
+JSON_COMMANDS = {"get-messages", "list-unread", "mark-read",
+                 "send-message", "reply-message", "fetch-attachment",
+                 "get-emoji", "get-avatar"}
+
+
+def run_json_command(fn, args):
+    try:
+        require_owner_command()
+        fn(args)
+        return 0
+    except PartialSendError as error:
+        failure = {"code": "PARTIAL_SEND", "message": str(error),
+                   "message_ids": error.message_ids}
+    except (SystemExit, ValueError, OSError, sqlite3.Error):
+        failure = {"code": "REQUEST_FAILED",
+                   "message": "Request refused, invalid arguments, or Discord/local state unavailable."}
+    print(json.dumps({"error": failure}))
+    return 1
 
 
 def main(argv):
@@ -562,6 +666,8 @@ def main(argv):
         print(fn.__doc__.strip(), file=sys.stderr)
         return 2
     BINDING["cmd"] = args[0]
+    if args[0] in JSON_COMMANDS:
+        return run_json_command(fn, args[1:])
     require_owner_command(lookup=args[0] in LOOKUPS)
     fn(args[1:])
     return 0

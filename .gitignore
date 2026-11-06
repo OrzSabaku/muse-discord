@@ -14,6 +14,8 @@ watchdog-hook.out.*
 
 # Runtime state and queues (created by the monitor)
 state.json
+read-state.sqlite
+read-state.sqlite-*
 reply_queue.json
 reply_outbox.json
 reply_outbox.processing.json
