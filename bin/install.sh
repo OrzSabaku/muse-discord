@@ -6,7 +6,7 @@
 #   bash bin/install.sh
 #
 # 1. Python 3.10 or newer, and jq (the hooks use it).
-# 2. The Python packages in requirements.txt (websockets, PyYAML), tried
+# 2. The Python packages in requirements.txt (websockets, PyYAML, Pydantic v2), tried
 #    in this order until they import: already there; pip install --user;
 #    a virtual environment in the package dir (.venv). When .venv is
 #    used, watchdog.sh, the hooks and the rendered worker prompt all run
@@ -45,7 +45,7 @@ else
 fi
 
 # ---- Python packages ----
-have_pkgs() { "$1" -c 'import websockets, yaml' >/dev/null 2>&1; }
+have_pkgs() { "$1" -c 'import websockets, yaml; from pydantic import TypeAdapter' >/dev/null 2>&1; }
 if have_pkgs "$PY"; then
   echo "OK Python packages ($PY)"
 elif python3 -m pip install --user -q -r "$REQ" >/dev/null 2>&1 \

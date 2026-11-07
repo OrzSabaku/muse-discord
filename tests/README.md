@@ -13,7 +13,7 @@ MUT_DIR=/path/to/tree python3 tests/locking/test_locking.py
 bash tests/run_all.sh onboarding
 ```
 
-Python 3.10以上、PyYAML、bash、git、jq、unshareが必要です。
+Python 3.10以上、PyYAML、Pydantic v2、bash、git、jq、unshareが必要です。
 watchdog系はユーザー・PID名前空間を使います。UbuntuのAppArmor設定で制限される場合は名前空間の許可が必要です。
 動画テストはffmpegがないとスキップします。遅いスイートには `SLOW` があります。
 

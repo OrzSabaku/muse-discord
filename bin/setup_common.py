@@ -29,6 +29,7 @@ def venv_python():
 # `python3 bin/<script>` always works.
 try:
     import yaml  # noqa: F401
+    from pydantic import TypeAdapter  # noqa: F401 (Pydantic v2 required)
 except ImportError:
     _venv = venv_python()
     # Not running in .venv yet (its python3 may be a symlink to this

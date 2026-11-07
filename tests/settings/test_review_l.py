@@ -40,10 +40,12 @@ class VenvReexec(unittest.TestCase):
         self.assertTrue(os.path.islink(os.path.join(venv, "bin",
                                                     "python3")))
         import yaml   # the packages "installed" in it: a .pth to them
+        import pydantic
         site = os.path.join(venv, "lib", "python%d.%d" % sys.version_info[:2],
                             "site-packages")
         with open(os.path.join(site, "review_l.pth"), "w") as f:
             f.write(os.path.dirname(os.path.dirname(yaml.__file__)) + "\n")
+            f.write(os.path.dirname(os.path.dirname(pydantic.__file__)) + "\n")
         open(os.path.join(venv, ".muse-ok"), "w").close()
         cfg = os.path.join(pkg, "config.yaml")
         with open(cfg, "w") as f:

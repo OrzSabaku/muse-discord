@@ -63,8 +63,9 @@ from datetime import datetime, timezone
 
 try:
     import yaml  # noqa: F401 (muse_settings needs it)
+    from pydantic import TypeAdapter  # noqa: F401 (Pydantic v2 required)
 except ImportError:
-    print("PyYAML is required: pip install -r requirements.txt",
+    print("PyYAML and Pydantic v2 are required: pip install -r requirements.txt",
           file=sys.stderr)
     sys.exit(1)
 
