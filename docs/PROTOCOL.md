@@ -12,7 +12,7 @@
 | Discord HTTP通信 | `src/muse_discord/discord_rest.py`（discord.py） |
 | Discord接続・UI操作受付 | `src/muse_discord/discord_connection.py`（discord.py） |
 | 設定の解決・画面 | `src/muse_discord/muse_settings.py`・`src/muse_discord/settings_ui.py` |
-| プロセス監視・プレゼンス | `bin/watchdog.sh`・`src/muse_discord/presence.py` |
+| プロセス監視 | `bin/watchdog.sh` |
 | 通知・自発メッセージ | `src/muse_discord/muse_watches.py`・`src/muse_discord/proactive.py` |
 | 単発CLI・MCP | `bin/discord-api.py`・`src/muse_discord/discord_tools/` |
 | 外部アプリのポリシー・承認・実行 | `src/muse_discord/external_apps/` |
@@ -52,7 +52,7 @@
 設定の階層・上書き判定は `src/muse_discord/muse_settings.py` に従います。同一階層のDiscord上書きは、元ファイルが変更されると退役します。
 サーバー管理者の設定変更は、そのサーバーを静かにする範囲だけです。Bot権限から所有者の権限を付与しません。
 `/settings` はdiscord.pyの部品・コールバックを使い、変更を下書きにまとめて保存します。操作のたびに所有者・管理者の権限を再確認し、編集中に対象の設定が変わった場合は上書きしません。
-Gatewayの再接続はdiscord.pyに任せ、メッセージは既存の受信キューへ渡します。RESTポーリングによる受信漏れの補完と重複排除は維持します。
+Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセージは既存の受信キューへ渡します。RESTポーリングによる受信漏れの補完と重複排除は維持します。
 モニター・所有者用CLI・導入ツールのDiscord REST通信は `discord_rest.py` に集約します。SDKがHTTP接続・短いレート制限・multipartを扱い、長い制限と呼び出しの時間切れは呼び出し元へ返します。送信前の認可と秘密情報検査は呼び出し元で行います。
 メッセージはnonceで再試行時の重複を防ぎます。識別子のない新規作成は、応答が5xxでもSDKに自動再試行させません。SDKの内部HTTPClient・Routeへの依存を通信層内に限定するため、discord.pyは2.7系（2.7.1以上）に制限し、更新時はローカルHTTP試験で確認します。
 

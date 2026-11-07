@@ -427,11 +427,18 @@ if (cfg.get("testing") or {}).get("crash"):
     sys.exit(2)
 print("Bot user id: 1", flush=True)
 print("muse-discord monitor starting. Polling 1 channels.", flush=True)
-import discord
-if discord.Client.connect.__name__ == "_gateway_disabled":
-    print("GATEWAY DISABLED (thread died: Gateway disabled by the e2e harness)", flush=True)
+try:
+    import discord
+except ImportError:
+    if "no-gateway" in os.environ.get("PYTHONPATH", ""):
+        print("GATEWAY DISABLED (thread died: Gateway disabled by the e2e harness)", flush=True)
+    else:
+        print("Gateway READY: realtime ingest live (discord.py).", flush=True)
 else:
-    print("Gateway READY: realtime ingest live (discord.py).", flush=True)
+    if discord.Client.connect.__name__ == "_gateway_disabled":
+        print("GATEWAY DISABLED (thread died: Gateway disabled by the e2e harness)", flush=True)
+    else:
+        print("Gateway READY: realtime ingest live (discord.py).", flush=True)
 while True:
     time.sleep(0.2)
 '''
@@ -486,6 +493,8 @@ class SUTTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.s.token_file))
 
     def test_gateway_off_keeps_the_sdk_http_transport_available(self):
+        if importlib.util.find_spec("discord") is None:
+            self.skipTest("discord.py not installed")
         env = dict(os.environ, PYTHONPATH=os.pathsep.join([
             self.s._stub_dir, os.path.join(REPO, "src")]))
         code = ("import asyncio, discord; from muse_discord.discord_rest import Rest; "

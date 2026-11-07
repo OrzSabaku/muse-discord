@@ -9,7 +9,7 @@
 
 SUT copies the PR checkout (minus .git and runtime files) into
 <run_dir>/pkg and runs monitor.py from there, so the PR's own code,
-bin/ tools, and plugins are what gets tested. The token goes to
+bin/ tools are what gets tested. The token goes to
 <run_dir>/sut_token (mode 600), outside pkg, and config.yaml points at
 it; monitor.py's stdout and stderr append to <pkg>/monitor.log.
 
@@ -98,10 +98,14 @@ FATAL_MARKERS = ("TOKEN REJECTED", "Another monitor holds the pidfile",
 SECRET_ENV = ("E2E_SUT_TOKEN", "E2E_DRIVER_A_TOKEN", "E2E_DRIVER_B_TOKEN",
               "CLAUDE_CODE_OAUTH_TOKEN", "MUSE_DISCORD_CONFIG")
 STUB_GATEWAY = (
-    'import discord\n'
-    'async def _gateway_disabled(self, *args, **kwargs):\n'
-    '    raise RuntimeError("Gateway disabled by the e2e harness")\n'
-    'discord.Client.connect = _gateway_disabled\n')
+    'try:\n'
+    '    import discord\n'
+    'except Exception:\n'
+    '    discord = None\n'
+    'if discord is not None:\n'
+    '    async def _gateway_disabled(self, *args, **kwargs):\n'
+    '        raise RuntimeError("Gateway disabled by the e2e harness")\n'
+    '    discord.Client.connect = _gateway_disabled\n')
 
 
 class SUTError(Exception):
