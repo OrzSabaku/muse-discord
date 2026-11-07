@@ -16,7 +16,7 @@ This module is the data model, the outbox action's shape and meaning,
 the caps, the matching and the store. It makes no Discord calls:
 monitor.py does the I/O (who can read which channel, the queue, the
 sends) and calls in here; bin/watches.py (the owner's CLI) uses the
-Store. Standard library only.
+Store. Pydantic validates the incoming protocol.
 
 Security properties (docs/PROTOCOL.md, Reminders and watches):
 - The requester is always the author of the queue item the action
@@ -45,6 +45,10 @@ import re
 import secrets
 import tempfile
 import time
+from typing import Annotated, Literal
+
+from pydantic import (AfterValidator, BaseModel, ConfigDict, Discriminator, Field,
+                      Tag, ValidationError, field_validator, model_validator)
 from datetime import datetime, timezone
 
 VERSION = 1
@@ -90,16 +94,9 @@ WEB_BACKOFF_MAX = 86400
 WHAT_MAX = SUMMARY_MAX = 300
 RESULTS = ("met", "not-met", "unknown", "refused")
 
-ID_RE = re.compile(r"[1-9][0-9]{0,19}")
-ITEM_ID_RE = re.compile(r"[rw][a-z0-9]{5}")
 TZ_RE = re.compile(r"(UTC|[A-Za-z_]{1,32}(/[A-Za-z0-9_+\-]{1,32}){1,2})")
 PLACE_RE = re.compile(r"here|server|server:([1-9][0-9]{0,19})"
                       r"|channel:([1-9][0-9]{0,19}):([1-9][0-9]{0,19})")
-NONCE_RE = re.compile(r"[0-9a-f]{32,64}")
-ADD_KEYS = {"op", "kind", "at", "after", "note", "match", "until"}
-WEB_KEYS = {"op", "kind", "check", "what", "every", "until", "note",
-            "repeat"}
-MATCH_KEYS = {"words", "in", "every"}
 NOT_ON_SCHEDULE_ITEMS = ("silent", "settings", "attachments")
 _ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
 
@@ -187,158 +184,156 @@ def known_tz(name):
 # ---------------------------------------------------------------------------
 # The outbox action's shape (bin/outbox-append.py and the monitor)
 # ---------------------------------------------------------------------------
-def _is_id(v):
-    return isinstance(v, str) and ID_RE.fullmatch(v) is not None
+# Pydantic validates the wire format; decide() still owns authorization,
+# dates relative to now, quotas, and whether the requested place is allowed.
+class _Shape(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
-def _int(v):
-    return isinstance(v, int) and not isinstance(v, bool)
+def _utc(value):
+    if parse_utc(value) is None:
+        raise ValueError("expected an ISO-8601 UTC time before 2100")
+    return value
 
 
-def _words_problem(words, where):
-    if not isinstance(words, list) or not 1 <= len(words) <= WORDS_MAX:
-        return f"{where}.words must be a list of 1 to {WORDS_MAX} words or " \
-               f"phrases"
-    for w in words:
-        if not isinstance(w, str) or "\n" in w \
-                or not WORD_MIN <= len(w.strip()) <= WORD_MAX:
-            return f"{where}.words: each is one line of {WORD_MIN} to " \
-                   f"{WORD_MAX} characters"
-    return None
+def _word(value):
+    if "\n" in value or not WORD_MIN <= len(value.strip()) <= WORD_MAX:
+        raise ValueError(f"expected one line of {WORD_MIN} to {WORD_MAX} characters")
+    return value
 
 
-def _add_problems(c, where, keys):
-    """Unknown fields and the note: what every add checks."""
-    out = []
-    extra = set(c) - keys
-    if extra:
-        out.append(f"{where} has unknown fields: "
-                   f"{', '.join(sorted(map(str, extra)))} (the requester "
-                   f"and place are always the item's own)")
-    note = c.get("note")
-    if note is not None and (not isinstance(note, str)
-                             or len(note) > NOTE_MAX):
-        out.append(f"{where}.note is text up to {NOTE_MAX} characters")
-    return out
+def _true(value):
+    if value is not True:
+        raise ValueError("must be true")
+    return value
 
 
-def _change_problems(c, where):
-    if not isinstance(c, dict):
-        return [f"{where} is not an object"]
-    op = c.get("op")
-    if op == "add" and c.get("check") is not None:
-        return _web_problems(c, where)
+UTC = Annotated[str, AfterValidator(_utc)]
+ItemId = Annotated[str, Field(pattern=r"^[rw][a-z0-9]{5}$")]
+Note = Annotated[str, Field(max_length=NOTE_MAX)]
+
+
+class _Add(_Shape):
+    op: Literal["add"]
+    note: Note | None = None
+
+
+class _Reminder(_Add):
+    kind: Literal["remind"]
+    at: UTC | None = None
+    after: Annotated[int, Field(gt=0, le=AFTER_MAX)] | None = None
+
+    @model_validator(mode="after")
+    def one_time(self):
+        if ("at" in self.model_fields_set) == ("after" in self.model_fields_set):
+            raise ValueError("a reminder takes exactly one of at or after")
+        if self.at is None and self.after is None:
+            raise ValueError("at or after cannot be null")
+        return self
+
+
+class _Match(_Shape):
+    words: Annotated[list[Annotated[str, AfterValidator(_word)]], Field(min_length=1, max_length=WORDS_MAX)]
+    in_: Annotated[str, Field(alias="in", pattern="^(?:" + PLACE_RE.pattern + ")$")]
+    every: bool = False
+
+
+class _DiscordWatch(_Add):
+    kind: Literal["watch"]
+    match: _Match
+    until: UTC = Field(default=None)  # omitted is allowed; an explicit null is not
+
+
+class _WebWatch(_Add):
+    kind: Literal["watch"]
+    check: Literal["web"]
+    what: Annotated[str, Field(min_length=1, max_length=WHAT_MAX)]
+    every: Annotated[int, Field(ge=WEB_EVERY_MIN, le=WEB_EVERY_MAX)]
+    until: UTC = Field(default=None)
+    repeat: bool = False
+
+    @field_validator("what")
+    @classmethod
+    def nonblank(cls, value):
+        if not value.strip():
+            raise ValueError("what must not be blank")
+        return value
+
+
+class _CancelId(_Shape):
+    op: Literal["cancel"]
+    id: ItemId
+
+
+class _CancelAll(_Shape):
+    op: Literal["cancel"]
+    all: Annotated[bool, AfterValidator(_true)]
+
+
+class _Timezone(_Shape):
+    op: Literal["tz"]
+    tz: Annotated[str, Field(pattern="^(?:" + TZ_RE.pattern + ")$")] | None
+
+
+def _action_tag(value):
+    if not isinstance(value, dict):
+        return None
+    op = value.get("op")
+    if not isinstance(op, str):
+        return None
     if op == "add":
-        out = _add_problems(c, where, ADD_KEYS)
-        kind = c.get("kind")
-        if kind not in KINDS:
-            return out + [f'{where}.kind must be "remind" or "watch"']
-        if kind == "remind":
-            if ("at" in c) == ("after" in c):
-                out.append(f'{where}: a reminder takes "at" (ISO-8601 UTC) '
-                           f'or "after" (seconds), one of them')
-            elif "at" in c and parse_utc(c["at"]) is None:
-                out.append(f'{where}.at must be an ISO-8601 UTC time such '
-                           f'as "2026-10-21T21:36:00Z"')
-            elif "after" in c and not (_int(c["after"])
-                                       and 0 < c["after"] <= AFTER_MAX):
-                out.append(f"{where}.after is a whole number of seconds "
-                           f"(a reminder is at most a year away)")
-            for k in ("match", "until"):
-                if k in c:
-                    out.append(f"{where}: a reminder takes no {k}")
-            return out
-        for k in ("at", "after"):
-            if k in c:
-                out.append(f"{where}: a watch takes no {k} (until, "
-                           f"optional, ends it)")
-        m = c.get("match")
-        if not isinstance(m, dict) or "words" not in m or "in" not in m \
-                or not set(m) <= MATCH_KEYS:
-            return out + [f'{where}.match must be {{"words": [...], "in": '
-                          f'"here" | "server" | "server:<id>" | '
-                          f'"channel:<server id>:<channel id>", "every": '
-                          f'true|false}}']
-        p = _words_problem(m["words"], f"{where}.match")
-        if p:
-            out.append(p)
-        if not isinstance(m["in"], str) or not PLACE_RE.fullmatch(m["in"]):
-            out.append(f'{where}.match.in must be "here", "server", '
-                       f'"server:<id>" or "channel:<server id>:<channel '
-                       f'id>"')
-        if "every" in m and not isinstance(m["every"], bool):
-            out.append(f"{where}.match.every is true or false")
-        if "until" in c and parse_utc(c["until"]) is None:
-            out.append(f"{where}.until must be an ISO-8601 UTC time")
-        return out
+        kind = value.get("kind")
+        return "web" if value.get("check") is not None else kind if isinstance(kind, str) else None
     if op == "cancel":
-        if set(c) == {"op", "id"}:
-            if isinstance(c["id"], str) and ITEM_ID_RE.fullmatch(c["id"]):
-                return []
-            return [f"{where}.id is a reminder or watch id from the item's "
-                    f"watches list"]
-        if set(c) == {"op", "all"} and c["all"] is True:
-            return []
-        return [f'{where} must be {{"op": "cancel", "id": "<id>"}} or '
-                f'{{"op": "cancel", "all": true}}']
-    if op == "tz":
-        if set(c) != {"op", "tz"}:
-            return [f'{where} must be {{"op": "tz", "tz": "<IANA name>"}} '
-                    f'(null forgets it)']
-        if c["tz"] is not None and not (isinstance(c["tz"], str)
-                                        and TZ_RE.fullmatch(c["tz"])):
-            return [f'{where}.tz is an IANA time zone such as '
-                    f'"Europe/Berlin", or null']
-        return []
-    return [f'{where}.op must be "add", "cancel" or "tz"']
+        return "cancel-id" if "id" in value else "cancel-all"
+    return op
 
 
-def _web_problems(c, where):
-    out = _add_problems(c, where, WEB_KEYS)
-    if c.get("kind") != "watch" or c.get("check") != "web":
-        out.append(f'{where}: a web watch is "kind": "watch", "check": '
-                   f'"web"')
-    what = c.get("what")
-    if not isinstance(what, str) or not 1 <= len(what.strip()) <= WHAT_MAX:
-        out.append(f"{where}.what is the condition in the requester's "
-                   f"words, up to {WHAT_MAX} characters")
-    e = c.get("every")
-    if not (_int(e) and WEB_EVERY_MIN <= e <= WEB_EVERY_MAX):
-        out.append(f"{where}.every is the seconds between checks, "
-                   f"{WEB_EVERY_MIN} to {WEB_EVERY_MAX}")
-    if "until" in c and parse_utc(c["until"]) is None:
-        out.append(f"{where}.until must be an ISO-8601 UTC time")
-    if "repeat" in c and not isinstance(c["repeat"], bool):
-        out.append(f"{where}.repeat is true or false")
-    return out
+_Action = Annotated[
+    Annotated[_Reminder, Tag("remind")] | Annotated[_DiscordWatch, Tag("watch")]
+    | Annotated[_WebWatch, Tag("web")] | Annotated[_CancelId, Tag("cancel-id")]
+    | Annotated[_CancelAll, Tag("cancel-all")] | Annotated[_Timezone, Tag("tz")],
+    Discriminator(_action_tag),
+]
+
+
+class _Schedule(_Shape):
+    v: Annotated[int, Field(ge=1, le=VERSION)]
+    changes: Annotated[list[_Action], Field(min_length=1, max_length=CHANGES_MAX)]
+
+
+class _ScheduledReply(_Shape):
+    model_config = ConfigDict(extra="allow", strict=True)
+    item: Annotated[str, Field(pattern=r"^[1-9][0-9]{0,19}$")]
+    schedule: _Schedule
+
+    @model_validator(mode="after")
+    def no_other_actions(self):
+        bad = set(self.model_extra) & set(NOT_ON_SCHEDULE_ITEMS)
+        if bad:
+            raise ValueError("a schedule item carries no " + ", ".join(sorted(bad)))
+        return self
+
+
+def _validation_problems(model, value):
+    try:
+        model.model_validate(value)
+    except ValidationError as exc:
+        out = []
+        for error in exc.errors(include_url=False, include_input=False):
+            loc, message = error["loc"], error["msg"]
+            if error["type"].startswith("union_tag"):
+                message = "expected an add (remind/watch/web), cancel, or tz action"
+            if error["type"] == "extra_forbidden":
+                loc = loc[:-1]  # unknown field names can contain secrets too
+            out.append(f"{'.'.join(map(str, loc)) or 'schedule'}: {message}")
+        return out
+    return []
 
 
 def shape_problems(item):
-    """What is wrong with an outbox item's `schedule` action, as
-    sentences the worker can act on; [] when the shape is fine. Meaning
-    (who asked, where, caps) is the monitor's: see Decider."""
-    if not isinstance(item, dict) or "schedule" not in item:
-        return []
-    out = []
-    if not _is_id(str(item.get("item") or "")):
-        out.append('a schedule item needs "item" (the queue item\'s '
-                   'message_id)')
-    bad = [k for k in NOT_ON_SCHEDULE_ITEMS if k in item]
-    if bad:
-        out.append(f"a schedule item carries no {', '.join(bad)}: it is a "
-                   f"normal reply (text or parts) plus the action")
-    s = item["schedule"]
-    if not isinstance(s, dict) or set(s) != {"v", "changes"}:
-        return out + ['schedule must be {"v": 1, "changes": [...]}']
-    if s["v"] != VERSION or isinstance(s["v"], bool):
-        out.append("schedule.v must be 1")
-    ch = s["changes"]
-    if not isinstance(ch, list) or not 1 <= len(ch) <= CHANGES_MAX:
-        return out + [f"schedule.changes must be a list of 1 to "
-                      f"{CHANGES_MAX} changes"]
-    for i, c in enumerate(ch):
-        out += _change_problems(c, f"schedule.changes[{i}]")
-    return out
+    """Validate only schedule items; ordinary reply validation is the monitor's."""
+    return _validation_problems(_ScheduledReply, item) if isinstance(item, dict) and "schedule" in item else []
 
 
 # ---------------------------------------------------------------------------
@@ -850,25 +845,23 @@ def web_due(data, now=None):
     return out
 
 
+class _Report(_Shape):
+    id: ItemId
+    nonce: Annotated[str, Field(pattern=r"^[0-9a-f]{32,64}$")]
+    result: Literal["met", "not-met", "unknown", "refused"]
+    summary: Annotated[str, Field(max_length=SUMMARY_MAX)]
+    at: Annotated[float, Field(ge=0)] = Field(default=None)  # local report-tool timestamp
+
+    @field_validator("summary")
+    @classmethod
+    def plain_text(cls, value):
+        if any(ord(ch) < 32 and ch != "\n" for ch in value):
+            raise ValueError("summary must be plain text")
+        return value
+
+
 def report_problems(rep):
-    """Shape of one check report (bin/watch-report.py, the monitor)."""
-    if not isinstance(rep, dict):
-        return ["not an object"]
-    out = []
-    if not (isinstance(rep.get("id"), str)
-            and ITEM_ID_RE.fullmatch(rep["id"])):
-        out.append("id is the check's id from the data block")
-    if not (isinstance(rep.get("nonce"), str)
-            and NONCE_RE.fullmatch(rep["nonce"])):
-        out.append("nonce is the check's nonce from the data block")
-    if rep.get("result") not in RESULTS:
-        out.append("result is met, not-met, unknown or refused")
-    sm = rep.get("summary")
-    if not isinstance(sm, str) or len(sm) > SUMMARY_MAX \
-            or any(ord(ch) < 32 and ch != "\n" for ch in sm):
-        out.append(f"summary is plain text, up to {SUMMARY_MAX} "
-                   f"characters")
-    return out
+    return _validation_problems(_Report, rep)
 
 
 def web_apply(data, rep, now=None, owners=None):
