@@ -72,6 +72,8 @@ except ImportError:
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(CODE_DIR))
 from muse_discord.paths import project_root
+from muse_discord import reply_protocol
+from muse_discord.reply_protocol import is_snowflake as _is_snowflake
 BASE_DIR = str(project_root(__file__))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 QUEUE_FILE = os.path.join(BASE_DIR, "reply_queue.json")
@@ -4035,17 +4037,6 @@ SEND_ALLOWED_MENTIONS = {"parse": ["users"], "replied_user": True}
 DISCORD_MAX_CHARS = 2000  # Discord's hard per-message content limit
 
 
-def _is_snowflake(value):
-    """True for a plain Discord id in its one canonical form: ASCII
-    digits, no leading zero. Ids from the worker-written outbox are
-    interpolated into API paths, where anything else ("1/../../guilds/2")
-    could turn a send into a different API call, and compared as strings
-    (owner_dm_gate), where "0" + an id would be a different string for
-    the same channel."""
-    return isinstance(value, (str, int)) and not isinstance(value, bool) \
-        and re.fullmatch(r"[1-9][0-9]{0,19}", str(value)) is not None
-
-
 def reply_reference(message_id):
     """The message_reference for a reply. fail_if_not_exists: false makes
     Discord post it as a plain message when the message replied to was
@@ -5636,52 +5627,22 @@ def _outbox_problem(item):
     """Why an outbox item cannot be processed, or None. Ids given as
     numbers are normalized to strings in place. Checked first, so a
     wrong type never raises out of process_outbox mid-pass."""
-    if not isinstance(item, dict):
-        return "not a JSON object"
-    for field in ("channel_id", "reply_to", "item"):
-        value = item.get(field)
-        if value in (None, "") and field != "channel_id":
+    problems = reply_protocol.shape_problems(item)
+    if problems:
+        return "; ".join(problems)
+    for field in reply_protocol.ID_FIELDS:
+        if item.get(field) in (None, ""):
             item.pop(field, None)
-            continue
-        if not _is_snowflake(value):
-            return f"{field} is not a Discord id"
-        item[field] = str(value)
-    if item.get("text") is not None and not isinstance(item["text"], str):
-        return "text is not a string"
-    for field in ("parts", "reactions", "attachments", "remember"):
-        value = item.get(field)
-        if value is not None and not (
-                isinstance(value, list)
-                and all(isinstance(v, str) for v in value)):
-            return f"{field} is not a list of strings"
-    if item.get("_retry") is not None \
-            and not isinstance(item["_retry"], dict):
-        return "_retry was edited (leave it alone)"
-    if item.get("_hold") is not None and not isinstance(item["_hold"], str):
-        return "_hold was edited (leave it alone)"
+        else:
+            item[field] = str(item[field])
     if "schedule" in item:
         # Reminders and watches (muse_watches.py): shape only here.
         problems = W.shape_problems(item)
         if problems:
             return "schedule: " + "; ".join(problems)
-    if "settings" in item or any(str(k).startswith("_nl") for k in item):
-        return "settings actions are no longer supported; use /settings"
     if item.get("silent"):
-        if not (item.get("reply_to") or item.get("item")):
-            return "silent item names no message (reply_to or item)"
-        return None
-    # Only silent: true (or a reactions-only item) is a deliberate
-    # no-reply. Anything else that would send nothing (say, the reply in
-    # a "content" field) was a mistake: settling it as silence would
-    # leave the mention unanswered for good.
-    reactions = [e for e in item.get("reactions") or [] if e.strip()]
-    if not normalize_parts(item):
-        if not reactions:
-            return ("nothing to send: no text, parts, or reactions, and "
-                    "not silent: true")
-        if not item.get("reply_to"):
-            return "reactions without reply_to"
-    return None
+        return reply_protocol.content_problem(item)
+    return reply_protocol.content_problem(item, has_text=bool(normalize_parts(item)))
 
 
 # An outbox file that does not parse but changed this recently is most

@@ -66,6 +66,7 @@ def fresh_pkg():
     os.makedirs(os.path.join(d, "bin"))
     shutil.copy(os.path.join(WORKTREE, "bin", "outbox-append.py"),
                 os.path.join(d, "bin"))
+    shutil.copytree(os.path.join(WORKTREE, "src"), os.path.join(d, "src"))
     for attr, name in [("STATE_FILE", "state.json"),
                        ("QUEUE_FILE", "reply_queue.json"),
                        ("OUTBOX_FILE", "reply_outbox.json"),

@@ -116,6 +116,27 @@ class OutboxAppend(unittest.TestCase):
             self.assertEqual(rc, 1, it)
             self.assertEqual(self.outbox(), [], it)
 
+    def test_monitor_only_field_types_are_rejected_before_appending(self):
+        good = {"item": "1", "channel_id": "2", "text": "fine"}
+        for field, value in (("remember", "not a list"),
+                             ("remember", [True]), ("_retry", []), ("_hold", {})):
+            with self.subTest(field=field, value=value):
+                code, error = self.append([good, dict(good, **{field: value})])
+                self.assertEqual(code, 1, error)
+                self.assertIn(field, error)
+                self.assertEqual(self.outbox(), [])
+
+    def test_schedule_is_validated_by_the_shared_watch_schema(self):
+        good = {"item": "1", "channel_id": "2", "text": "OK", "schedule": {
+            "v": 1, "changes": [{"op": "add", "kind": "remind", "after": 60}]}}
+        bad = dict(good, schedule={"v": 1, "changes": [{"op": "unknown"}]})
+        code, error = self.append([good, bad])
+        self.assertEqual(code, 1, error)
+        self.assertEqual(self.outbox(), [])
+        code, error = self.append(good)
+        self.assertEqual(code, 0, error)
+        self.assertEqual(self.outbox(), [good])
+
 
 if __name__ == "__main__":
     unittest.main()
