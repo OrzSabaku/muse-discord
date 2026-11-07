@@ -1,4 +1,4 @@
-"""watchdog.sh scenarios against fake monitor/presence processes. Each runs
+"""watchdog.sh scenarios against a fake monitor process. Each runs
 in its own user+PID namespace (unshare), so the watchdog's pgrep/pkill
 can only ever see the fakes, and every fake dies with the namespace;
 they all run at once. The watchdog's output lines are what the owners
@@ -12,15 +12,14 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "_lib"))
-from common import FAKE_PROC, FAKEWS, copy_watchdog, scratch  # noqa: E402
+from common import FAKE_PROC, copy_watchdog, scratch  # noqa: E402
 
 
 def scenario(steps, env=None, token_file=True, token_env=None,
              presence=False, old_log=None):
     d = scratch("muse-wd-")
     copy_watchdog(d)
-    for n in ("monitor.py", "presence.py"):
-        shutil.copy(FAKE_PROC, os.path.join(d, "bin", n))
+    shutil.copy(FAKE_PROC, os.path.join(d, "bin", "monitor.py"))
     tok = os.path.join(d, "bot_token")
     if token_file:
         with open(tok, "w") as f:
@@ -34,8 +33,6 @@ def scenario(steps, env=None, token_file=True, token_env=None,
         with open(os.path.join(d, "monitor.log"), "w") as f:
             f.write(old_log)
     e = os.environ.copy()
-    # A fake websockets package, so the watchdog never pip-installs.
-    e["PYTHONPATH"] = FAKEWS
     e.update(env or {})
     p = subprocess.run(
         ["unshare", "--user", "--map-root-user", "--pid", "--fork",
@@ -57,7 +54,6 @@ SCENARIOS = {
                         f" {WD}; echo; {WD}", dict(env={"FAKE_MODE": "hung"})),
     "gateway_disabled": (f"{WD}; {WD}; {WD}", dict(env={"FAKE_MODE":
                                                          "gwoff"})),
-    "presence_token": (WD, dict(env={"FAKE_PMODE": "token"}, presence=True)),
     "healthy": (f"{WD}; {WD}", dict(presence=True)),
 }
 _results = {}
@@ -109,15 +105,10 @@ class Watchdog(unittest.TestCase):
                                    "DISABLED (code 4014)"), 1, out)
         self.assertIn("OK already alerted", out)
 
-    def test_presence_token_rejected(self):
-        out, _ = _results["presence_token"]
-        self.assertIn("ALERT: presence DOWN: Discord rejected the token",
-                      out)
-
     def test_healthy_run_is_quiet(self):
         out, _ = _results["healthy"]
         self.assertIn("OK monitor alive", out)
-        self.assertIn("OK presence alive", out)
+        self.assertNotIn("presence", out)
         self.assertNotIn("ALERT", out)
 
 
