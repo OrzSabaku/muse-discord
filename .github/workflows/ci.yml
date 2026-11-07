@@ -64,7 +64,7 @@ jobs:
               print("ok", path)
           '
       - name: Offline e2e harness tests
-        run: python3 -m unittest discover -s e2e/tests -t .
+        run: uv run --no-sync python -m unittest discover -s e2e/tests -t .
       - name: Install optional MCP dependencies
         if: matrix.python == '3.13'
         run: uv sync --locked --group apps

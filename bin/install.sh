@@ -24,10 +24,6 @@ fail() { echo "INSTALL FAILED: $*"; exit 1; }
 # ---- Python ----
 # .venv counts only with its .muse-ok marker (written below once the
 # packages import there); the watchdog, hooks and scripts check it too.
-PY=python3
-if [ -x "$VENV/bin/python3" ] && [ -e "$VENV/.muse-ok" ]; then
-  PY="$VENV/bin/python3"
-fi
 command -v python3 >/dev/null 2>&1 || fail "python3 is not installed. Install Python 3.10 or newer."
 if ! python3 -c 'import sys; sys.exit(sys.version_info < (3, 10))'; then
   fail "Python 3.10 or newer is needed; python3 is $(python3 -c 'import platform; print(platform.python_version())')."
@@ -55,7 +51,6 @@ if ! (cd "$DIR" && uv sync --locked --no-dev --quiet); then
 fi
 have_pkgs "$VENV/bin/python3" || fail "the packages still don't import from $VENV."
 : > "$VENV/.muse-ok"
-PY="$VENV/bin/python3"
 echo "OK Python packages installed in $VENV (the watchdog, hooks and worker prompt use it)"
 
 # ---- the token drop-off ----
