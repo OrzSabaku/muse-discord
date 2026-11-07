@@ -73,7 +73,7 @@
 
 ```bash
 bash tests/run_all.sh
-python3 -m unittest discover -s tests -p test_personal_profile.py
+bash tests/run_all.sh onboarding
 python3 -m unittest discover -s e2e/tests -t .
 node --test telemetry/worker/test/worker.test.js
 ```

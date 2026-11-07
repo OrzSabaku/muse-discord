@@ -4,7 +4,10 @@ import sys
 import tempfile
 import unittest
 
-ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "_lib"))
+from common import MUT_DIR
+
+ROOT = Path(MUT_DIR)
 sys.path.insert(0, str(ROOT / "src"))
 from muse_discord import muse_settings as MS
 spec = importlib.util.spec_from_file_location('personal', ROOT / 'bin/personal-profile.py')
@@ -45,6 +48,20 @@ class ProfileTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 p.apply(d, OWNER)
             self.assertEqual(target.read_text(), 'version: 1\nowners: []\n')
+
+    def test_server_files_do_not_silently_override_private_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            target = d / 'config.yaml'
+            original = f'version: 1\nowners: ["{OWNER}"]\n'
+            target.write_text(original)
+            (d / 'servers').mkdir()
+            server = d / 'servers' / '223456789012345678.yaml'
+            server.write_text('who: {replies: freely}\n')
+            with self.assertRaises(ValueError):
+                p.apply(d)
+            self.assertEqual(target.read_text(), original)
+            self.assertTrue(server.exists())
 
     def test_invalid_owner(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -10,7 +10,7 @@ bash tests/run_all.sh                    # 全スイート、並列数4
 bash tests/run_all.sh settings ownerdm   # 対象を指定
 bash tests/run_all.sh --skip-slow -j 8
 MUT_DIR=/path/to/tree python3 tests/locking/test_locking.py
-python3 -m unittest discover -s tests -p test_personal_profile.py
+bash tests/run_all.sh onboarding
 ```
 
 Python 3.10以上、PyYAML、bash、git、jq、unshareが必要です。

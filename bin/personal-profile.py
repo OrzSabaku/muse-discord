@@ -43,6 +43,8 @@ def apply(directory, owner=None):
     # Refuse instead of silently inheriting wider permissions from an overlay.
     if overlay.exists():
         raise ValueError('config.discord.yaml exists: stop the monitor and archive it before applying')
+    if MS.server_config_paths(str(target)):
+        raise ValueError('servers/*.yaml exists: stop the monitor and archive server settings before applying')
     old = yaml.safe_load(target.read_text()) if target.exists() else {}
     old = old or {}
     owners = old.get('owners', [])
