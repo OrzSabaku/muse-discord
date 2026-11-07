@@ -20,7 +20,6 @@ sys.path.insert(0, os.path.join(MUT, "src"))
 from muse_discord import muse_settings as MS  # noqa: E402
 from muse_discord import settings_ui as UI  # noqa: E402,F401 (re-exported)
 
-PLUGINS = os.path.join(MUT, "plugins")
 # The custom_id prefix the pages render now ("mdset:<version>:").
 P = f"{UI.PREFIX}:{UI.VERSION}:"
 
@@ -243,15 +242,13 @@ class FakeCtx:
         """An owner's Discord change over a config.yaml value, and an
         admin's addition to Never answer."""
         MS.apply(self.cfg, [MS.Change(MS.Place.server(G1), "who.replies",
-                                      "conversational")], OWNER,
-                 plugins_dir=PLUGINS, role="owner")
+                                      "conversational")], OWNER, role="owner")
         MS.apply(self.cfg, [MS.Change(MS.Place.server(G1), "who.ignore",
-                                      [BOB, SPAM])], ADMIN,
-                 plugins_dir=PLUGINS, role="admin", admin_gid=G1,
+                                      [BOB, SPAM])], ADMIN, role="admin", admin_gid=G1,
                  info=self)
 
     def refresh(self):
-        self.settings = MS.load(self.cfg, PLUGINS)
+        self.settings = MS.load(self.cfg)
 
     def reload(self):
         self.refresh()
@@ -287,13 +284,13 @@ class FakeCtx:
 
     def apply(self, changes, by, role, group=None, admin_gid=None):
         self.applied.append((list(changes), by, role, admin_gid))
-        return MS.apply(self.cfg, changes, by, group, PLUGINS, role=role,
+        return MS.apply(self.cfg, changes, by, group, role=role,
                         admin_gid=admin_gid, info=self)
 
     def undo(self, prefix, by, **kw):
         if kw.get("admin_gid"):
             kw.setdefault("info", self)
-        out = MS.undo_changes(self.cfg, prefix, by, PLUGINS, **kw)
+        out = MS.undo_changes(self.cfg, prefix, by, **kw)
         self.undos.append((prefix, by, kw, out))
         return out
 
@@ -373,7 +370,7 @@ class FakeCtx:
 
     # -- reading back -------------------------------------------------------
     def value(self, key, place):
-        return MS.place_value(MS.load(self.cfg, PLUGINS), place, key)
+        return MS.place_value(MS.load(self.cfg), place, key)
 
     def overlay(self):
         return MS._read_overlay_doc(self.overlay_path)

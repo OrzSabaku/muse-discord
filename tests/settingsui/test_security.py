@@ -23,7 +23,7 @@ MC = MS.Place.channel(G1, MUSECHAT)
 
 
 def owner_apply(ctx, changes):
-    MS.apply(ctx.cfg, changes, OWNER, plugins_dir=H.PLUGINS, role="owner")
+    MS.apply(ctx.cfg, changes, OWNER, role="owner")
     ctx.refresh()
 
 

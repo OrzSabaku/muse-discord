@@ -36,8 +36,6 @@ class OutboxAppend(unittest.TestCase):
                     os.path.join(self.pkg, "bin"))
         shutil.copytree(os.path.join(MUT_DIR, "src"),
                         os.path.join(self.pkg, "src"))
-        shutil.copytree(os.path.join(MUT_DIR, "plugins"),
-                        os.path.join(self.pkg, "plugins"))
 
     def append(self, items):
         r = subprocess.run([sys.executable, os.path.join(

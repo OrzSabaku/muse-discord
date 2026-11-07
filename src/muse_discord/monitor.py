@@ -93,7 +93,6 @@ OUTBOX_PROCESSING_FILE = os.path.join(BASE_DIR,
 OUTBOX_REJECTED_FILE = os.path.join(BASE_DIR, "reply_outbox.rejected.json")
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
 GENERATED_DIR = os.path.join(BASE_DIR, "generated")
-PLUGINS_DIR = os.path.join(BASE_DIR, "plugins")
 
 def _config_path():
     if len(sys.argv) > 2 and sys.argv[1] == "--config":
@@ -131,7 +130,7 @@ def _import_local(name):
 # ---------------------------------------------------------------------------
 MS = _import_local("muse_settings")
 try:
-    _SETTINGS = MS.Watcher(_config_path(), PLUGINS_DIR)
+    _SETTINGS = MS.Watcher(_config_path())
 except MS.SettingsError as e:
     print(f"CONFIG ERROR: config.yaml is invalid; not starting.\n{e}",
           file=sys.stderr, flush=True)
@@ -213,7 +212,7 @@ if _S0.retired_notice:
 # _SETTINGS_LOCK, and every read-modify-write of config.discord.yaml in
 # this process (a /settings change, an undo, the conflict rule retiring
 # entries) holds _OVERLAY_LOCK. A reload noticed off the main thread
-# leaves its follow-up work (owner list, plugin loading) to the main
+# leaves its follow-up work (owner list) to the main
 # loop's next settings() call.
 _SETTINGS_LOCK = threading.RLock()
 _OVERLAY_LOCK = threading.RLock()
@@ -256,10 +255,6 @@ def _on_settings_changed(prev, cur):
         OWNER_USER_IDS = set(cur.owners)
         print(f"Owners are now: {', '.join(sorted(OWNER_USER_IDS)) or 'none'}",
               flush=True)
-    try:
-        load_plugins()  # a plugin turned on somewhere for the first time
-    except Exception as e:
-        print(f"Plugin load after reload failed: {e}", flush=True)
 
 
 def _cfg_num(section, key, default, cast, name, minimum=None,
@@ -1891,8 +1886,7 @@ def _join_summary(gid, ginfo, channels):
                                  "messages there, and the follow-ups of "
                                  "someone I just answered"}
     on = (["image and video generation"] if res.get("media.enabled")
-          else []) + [pid for pid in sorted(st.manifests)
-                      if res.get(f"plugins.{pid}.enabled")]
+          else [])
     return (f"I just joined **{name}**.\n"
             f"{replies.get(res['who.replies'], replies['when-addressed'])}"
             f". Extras on there: {', '.join(on) or 'none'}.\n{seen}"
@@ -2710,7 +2704,7 @@ class SettingsCtx:
         """One change by `by` (its role inferred: a non-owner is an
         admin, held to the admin rules)."""
         with _OVERLAY_LOCK:
-            MS.set_value(_SETTINGS.config_path, key, value, by, PLUGINS_DIR)
+            MS.set_value(_SETTINGS.config_path, key, value, by)
         settings()
 
     def undo(self, scope_prefix, by, **kw):
@@ -2721,8 +2715,7 @@ class SettingsCtx:
         if kw.get("admin_gid"):
             kw.setdefault("info", self)
         with _OVERLAY_LOCK:
-            out = MS.undo(_SETTINGS.config_path, scope_prefix, by,
-                          PLUGINS_DIR, **kw)
+            out = MS.undo(_SETTINGS.config_path, scope_prefix, by, **kw)
         settings()
         return out
 
@@ -2732,8 +2725,7 @@ class SettingsCtx:
         are checked against the admin rule with admin_gid and this ctx's
         channel lists."""
         with _OVERLAY_LOCK:
-            out = MS.apply(_SETTINGS.config_path, changes, by, group,
-                           PLUGINS_DIR, role=role, admin_gid=admin_gid,
+            out = MS.apply(_SETTINGS.config_path, changes, by, group, role=role, admin_gid=admin_gid,
                            info=self)
         settings()
         return out
@@ -2742,8 +2734,7 @@ class SettingsCtx:
         """muse_settings.undo_group: undo one specific group (owners
         only)."""
         with _OVERLAY_LOCK:
-            out = MS.undo_group(_SETTINGS.config_path, group, by,
-                                PLUGINS_DIR, role="owner", undo_id=undo_id)
+            out = MS.undo_group(_SETTINGS.config_path, group, by, role="owner", undo_id=undo_id)
         settings()
         return out
 
@@ -2931,8 +2922,7 @@ def _digest_words(c):
     try:
         path, key = MS.parse_key(c["key"])
         place = MS.place_of_path(path)
-        if place is None or MS.CORE.get(key) is None and not \
-                key.startswith("plugins."):
+        if place is None or MS.CORE.get(key) is None:
             return None
         return MS.describe_change(place, key, c["old"], c["new"],
                                   _digest_name, path)
@@ -5678,26 +5668,17 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
     history = [h for h in chan_hist
                if h["id"] not in burst_ids][-HISTORY_ATTACHED:]
 
-    # 5. Generation permission (media.*) and plugin gates. may_generate
+    # 5. Generation permission (media.*). may_generate
     #    is permission, not a decision: the worker judges whether
     #    generation is wanted. Queue time records it, plus the single-use
     #    approval below (keyed by message id: the worker's outbox item
-    #    does not carry the flag). Plugins may annotate the item
-    #    (gate_message), but never grant may_generate.
+    #    does not carry the flag).
     def author_matches(who):
         return people_match(who, author_id, lambda: (
             set((msg.get("member") or {}).get("roles") or [])
             if "roles" in (msg.get("member") or {})
             else member_roles(guild_id, author_id)))
     may_generate = media_permission(state, scope, here, author_matches)
-    extra = {}
-    for res in call_hook("gate_message",
-                         {"state": state, "owners": OWNER_USER_IDS,
-                          "author_matches": author_matches},
-                         msg, guild_id, scope=scope):
-        if isinstance(res, dict):
-            extra.update(res)
-    extra.pop("may_generate", None)
     if may_generate:
         # Bound to the channel too: the file may only go back where the
         # request came from (an image made in a DM never posts publicly).
@@ -5750,8 +5731,7 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
         "settings": settings_card(scope, here, author_id, from_bot,
                                   msg["channel_id"], exchange),
     }
-    item.update(extra)
-    # External-app capabilities are stamped after plugins, from verified
+    # External-app capabilities are stamped from verified
     # original owner DMs only. A reply/forward/attachment cannot grant them.
     item["external_apps"] = {"eligible": False, "level": "off"}
     if here["abilities.external_apps"] != "off":
@@ -6484,13 +6464,11 @@ def process_outbox(state):
             if parts and gen_files:
                 # A generation really ran and its file went out: count
                 # it for media.per_day here, at send time, never at
-                # queue time, and tell plugins (generation_sent).
+                # queue time.
                 state.setdefault("gen_sent", []).extend(
                     rp for _, rp in gen_files)
                 sent_scope = scope_of_channel(item["channel_id"])
                 note_media_sent(state, sent_scope)
-                call_hook("generation_sent", {"state": state}, item,
-                          scope=sent_scope, only_where_on=False)
             if sched and sched[1]:
                 # A reminder or watch refused for a cap or a setting:
                 # ledgered like other refusals (Why no reply?).
@@ -8107,114 +8085,6 @@ def sweep_mentions(state, queue, channels, dms=True):
 
 
 # ---------------------------------------------------------------------------
-# Plugins. A plugin is a folder under plugins/ with a plugin.py exposing
-# register(api) -> {hook_name: callable}, plus a plugin.yaml whose
-# `settings:` manifest declares its settings (type, default, scopes; see
-# muse_settings.load_manifests). A plugin runs inside the monitor, with
-# its full access (the bot token included). It is loaded once some
-# scope turns it on (plugins.<id>.enabled), and its hooks run only where
-# it is on. No plugin ships today (see plugins/README.md); the core
-# calls these hooks:
-#
-#   gate_message(ctx, msg, guild_id) -> dict | None
-#       During enqueue: returned dicts are merged into the queue item
-#       (never may_generate: generation permission is the core's,
-#       media.*).
-#   generation_sent(ctx, outbox_item)
-#       A generated attachment was actually sent for an outbox item
-#       (runs wherever the reply went, on or off).
-#
-# ctx carries "state" (and "owners" for gate_message) plus, for the
-# event's scope: "scope", "settings" (the plugin's own resolved values
-# there, nothing else), "cap_layers" (key -> [(counter id, cap)]: the
-# caps set along the scope, each counting in its own scope),
-# "counter_ids" (the counters an event there adds to) and, for
-# gate_message, "author_matches" (people value -> bool). The api handed
-# to register() has log(*args) and setting(key, scope).
-# ---------------------------------------------------------------------------
-PLUGIN_HOOKS = {}
-_HOOK_OWNER = {}        # id(hook fn) -> plugin id
-_LOADED_PLUGINS = set()  # plugin folders already imported
-
-
-class PluginAPI:
-    """The facade handed to a plugin's register() at load time."""
-
-    def __init__(self, pid):
-        self._pid = pid
-
-    def log(self, *args):
-        print(*args, flush=True)
-
-    def setting(self, key, scope):
-        """One of this plugin's settings at a scope (ctx["scope"])."""
-        return settings().get(f"plugins.{self._pid}.{key}", scope)
-
-
-def load_plugins():
-    """Import every plugin under plugins/ that some scope turns on, once,
-    and collect its hooks. Called at startup and after a settings
-    reload."""
-    global _SETTINGS
-    if not os.path.isdir(PLUGINS_DIR):
-        return
-    if os.path.abspath(_SETTINGS.plugins_dir or "") \
-            != os.path.abspath(PLUGINS_DIR):
-        _SETTINGS = MS.Watcher(_config_path(), PLUGINS_DIR)
-    st = _SETTINGS.current
-    by_folder = {m.folder: m for m in st.manifests.values()}
-    for name in sorted(os.listdir(PLUGINS_DIR)):
-        pfile = os.path.join(PLUGINS_DIR, name, "plugin.py")
-        if not os.path.isfile(pfile) or name in _LOADED_PLUGINS:
-            continue
-        man = by_folder.get(name)
-        pid = man.id if man else name
-        if not st.plugin_enabled_anywhere(pid):
-            continue
-        api = PluginAPI(pid)
-        try:
-            spec = importlib.util.spec_from_file_location(
-                f"muse_discord_plugin_{name}", pfile)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            hooks = mod.register(api) or {}
-        except Exception as e:
-            print(f"Plugin {name} failed to load: {e}", flush=True)
-            continue
-        _LOADED_PLUGINS.add(name)
-        for hook_name, fn in hooks.items():
-            if callable(fn):
-                PLUGIN_HOOKS.setdefault(hook_name, []).append(fn)
-                _HOOK_OWNER[id(fn)] = pid
-        print(f"Plugin loaded: {name} "
-              f"(hooks: {', '.join(sorted(hooks))})", flush=True)
-
-
-def call_hook(name, ctx, *args, scope=None, only_where_on=True):
-    """Run every plugin's callable for a hook; returns their results.
-    With scope, a plugin's hook runs only where the plugin is on (unless
-    only_where_on is False) and its ctx carries its settings there. A
-    failing plugin never breaks the pipeline."""
-    out = []
-    st = settings() if scope is not None else None
-    for fn in PLUGIN_HOOKS.get(name, []):
-        pid = _HOOK_OWNER.get(id(fn))
-        c = ctx
-        if pid is not None and st is not None:
-            if only_where_on and not st.plugin_enabled(pid, scope):
-                continue
-            c = dict(ctx, scope=scope,
-                     settings=st.plugin_values(pid, scope),
-                     cap_layers=lambda key, pid=pid: st.cap_layers(
-                         f"plugins.{pid}.{key}", scope),
-                     counter_ids=MS.Settings.counter_ids(scope))
-        try:
-            out.append(fn(c, *args))
-        except Exception as e:
-            print(f"Plugin hook {name} failed: {e}", flush=True)
-    return out
-
-
 _no_send_logged = set()
 
 
@@ -8530,7 +8400,6 @@ def main():
               "guild membership and channel permissions); discovery "
               "keeps retrying on the refresh cadence.", flush=True)
     state = load_state()
-    load_plugins()
     load_settings_ui()  # imported now, not on the first /settings
     # Join watermarks for every guild, plus the owner summary for any
     # guild joined while the monitor was down.
@@ -8594,7 +8463,7 @@ def main():
     outbox_pass_at = 0.0     # when process_outbox last ran
     while True:
         # Each phase below has its own try/except: one failing phase (a
-        # poison message, a corrupt file, a plugin) must not skip the
+        # poison message, a corrupt file) must not skip the
         # sweep, discovery, cleanup, and state saves of every cycle.
         if _token_rejected or _gateway_status.get("token_rejected"):
             save_state(state)

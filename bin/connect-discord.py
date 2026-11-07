@@ -266,7 +266,7 @@ def write_config(cfg, owner_id, rep):
             rep.line(f"OK: Wrote config.yaml (owner: Discord user "
                      f"{owner_id}); everything else is the default.")
     # Check it exactly as the bot will, before it replaces anything.
-    MS.load(cfg, C.PLUGINS_DIR, text=text)
+    MS.load(cfg, text=text)
     MS.atomic_write_text(cfg, text)
     return MS, C.load_settings(cfg)
 

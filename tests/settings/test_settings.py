@@ -1,7 +1,7 @@
 """The settings overhaul (PR 1), offline: schema validation, scope
 resolution, the Discord overlay and its conflict rule, old-layout
 migration, live reload, the per-message card, the never_share backstop,
-who-rules, per-scope caps, conversational follow-ups, plugins, and the
+who-rules, per-scope caps, conversational follow-ups, and the
 shell integration. MUT_DIR = the package tree under test."""
 import json
 import os
@@ -20,7 +20,6 @@ from settings_harness import (BOT, CAT, CH, CH2, CH_G2, G1, G2,  # noqa: E402
                               bump, dmsg, gmsg, load_monitor, quiet,
                               sf, state, tmpdir, write)
 
-PLUGINS = os.path.join(MUT, "plugins")
 NEW_BASE = f"""version: 1
 owners: ["{OWNER}"]
 token_from: env:MUSE_TEST_TOKEN
@@ -37,7 +36,7 @@ def load_text(text, overlay=None, legacy=False):
     cfg = write(os.path.join(d, "config.yaml"), text)
     if overlay is not None:
         write(os.path.join(d, "config.discord.yaml"), overlay)
-    return MS.load(cfg, PLUGINS, legacy_defaults=legacy), cfg
+    return MS.load(cfg, legacy_defaults=legacy), cfg
 
 
 def error_of(text):
@@ -52,32 +51,6 @@ def S(gid=G1, name="Lounge", ch=None, cat=None):
     return MS.Scope.server(gid, name, ch, cat)
 
 
-FAKE_PLUGIN = """
-def register(api):
-    def gate_message(ctx, msg, guild_id):
-        ctx["state"].setdefault("example_saw", []).append(msg["id"])
-        return {"example_note": ctx["settings"]["note"],
-                "may_generate": True}
-    return {"gate_message": gate_message}
-"""
-
-
-def fake_plugins(safe=True):
-    """A plugins dir holding one minimal plugin, "example" (setting
-    note; its gate_message records the message and tries to grant
-    generation)."""
-    d = os.path.join(tmpdir("plugins_"), "plugins")
-    os.makedirs(os.path.join(d, "example"))
-    write(os.path.join(d, "example", "plugin.yaml"),
-          "id: example\nhooks: [gate_message]\n"
-          f"safe_in_new_servers: {'true' if safe else 'false'}\n"
-          "settings:\n  enabled: {type: on-off, default: off}\n"
-          "  note: {type: text, default: hi, scopes: [everywhere, server]}\n")
-    write(os.path.join(d, "example", "plugin.py"), FAKE_PLUGIN)
-    return d
-
-
-# ---------------------------------------------------------------------------
 class Validation(unittest.TestCase):
     def test_invalid_configs_refused(self):
         """Every invalid file is refused, naming the key (the wording of
@@ -177,7 +150,7 @@ class ServerFiles(unittest.TestCase):
         st, cfg = load_text(NEW_BASE + "everywhere:\n  proactive:\n    per_day: 73\n")
         root = os.path.join(os.path.dirname(cfg), "servers")
         os.makedirs(root)
-        watcher = MS.Watcher(cfg, PLUGINS)
+        watcher = MS.Watcher(cfg)
         path = write(os.path.join(root, G1 + ".yaml"), f'''name: Lounge
 proactive:
   frequency: often
@@ -197,7 +170,7 @@ channels:
         self.assertEqual(st.get("who.replies", S(ch=CH2)), "off")
         self.assertEqual(st.get("proactive.per_day", MS.Scope.everywhere()), 73)
         with self.assertRaises(MS.SettingsError):
-            MS.set_value(cfg, "everywhere.proactive.per_day", 10, OWNER, PLUGINS)
+            MS.set_value(cfg, "everywhere.proactive.per_day", 10, OWNER)
         write(path, "proactive: {frequency: invalid}\n")
         self.assertIsNotNone(watcher.poll()[1])
         self.assertIs(watcher.current, st)
@@ -217,20 +190,39 @@ channels:
         path = write(os.path.join(root, G1 + ".yaml"),
                      f'channels:\n  "{CH}": {{replies: when-addressed}}\n')
         MS.set_value(cfg, f'servers."{G1}".channels."{CH}".replies',
-                     "freely", OWNER, PLUGINS)
-        bak, keys = MS.fold(cfg, PLUGINS)
+                     "freely", OWNER)
+        bak, keys = MS.fold(cfg)
         self.assertTrue(os.path.exists(bak))
         self.assertEqual(len(keys), 1)
         self.assertNotIn("servers:", read(cfg))
         self.assertIn("freely", read(path))
         self.assertTrue(any(name.startswith(G1 + ".yaml.bak-")
                             for name in os.listdir(root)))
-        self.assertEqual(MS.load(cfg, PLUGINS).get("who.replies", S(ch=CH)), "freely")
+        self.assertEqual(MS.load(cfg).get("who.replies", S(ch=CH)), "freely")
 
     def test_freely_is_a_more_permissive_rule(self):
         self.assertTrue(MS.loosens("who.replies", "conversational", "freely"))
         self.assertEqual(MS._quieter("who.replies", "freely", "when-addressed"),
                          "when-addressed")
+
+
+class RemovedPlugins(unittest.TestCase):
+    def test_leftover_plugin_files_do_not_affect_core_configuration(self):
+        st, cfg = load_text(NEW_BASE)
+        folder = os.path.join(os.path.dirname(cfg), "plugins", "example")
+        os.makedirs(folder)
+        write(os.path.join(folder, "plugin.yaml"), "not: [valid YAML")
+        write(os.path.join(folder, "plugin.py"), "raise RuntimeError('must not load')")
+        st = MS.load(cfg)
+        self.assertEqual(st.get("media.enabled", MS.Scope.everywhere()),
+                         MS.CORE["media.enabled"].default)
+        self.assertIsNone(st.spec("plugins.example.enabled"))
+        with self.assertRaises(MS.SettingsError):
+            MS.set_value(cfg, f'servers."{G1}".plugins.example.enabled', True, OWNER)
+
+    def test_custom_plugin_configuration_is_rejected(self):
+        message = error_of(NEW_BASE + "everywhere:\n  plugins:\n    example: {enabled: on}\n")
+        self.assertIn("plugin support was removed", message)
 
 
 class Resolution(unittest.TestCase):
@@ -276,22 +268,6 @@ class Resolution(unittest.TestCase):
         self.assertIsNone(r["limits.per_day"])
         self.assertIsNone(r["limits.per_person_per_day"])
 
-    def test_unsafe_plugin_off_in_new_servers(self):
-        plugins = fake_plugins(safe=False)
-        d = tmpdir("cfg_")
-        cfg = write(os.path.join(d, "config.yaml"), NEW_BASE + f"""everywhere:
-  plugins:
-    example: {{enabled: on}}
-  media: {{enabled: on}}
-servers:
-  "{G1}":
-    plugins:
-      example: {{enabled: on}}
-""")
-        st = MS.load(cfg, plugins)
-        self.assertTrue(st.plugin_enabled("example", S(G1)))
-        self.assertFalse(st.plugin_enabled("example", S(G2)))
-        self.assertTrue(st.get("media.enabled", S(G2)))
 
 # ---------------------------------------------------------------------------
 class Overlay(unittest.TestCase):
@@ -299,30 +275,30 @@ class Overlay(unittest.TestCase):
         st, cfg = load_text(NEW_BASE + f'servers:\n  "{G1}":\n    who:\n'
                             "      replies: when-addressed\n")
         key = f'servers."{G1}".who.replies'
-        MS.set_value(cfg, key, "off", OWNER, PLUGINS)
-        st = MS.load(cfg, PLUGINS)
+        MS.set_value(cfg, key, "off", OWNER)
+        st = MS.load(cfg)
         self.assertEqual(st.get("who.replies", S()), "off")
         # A comment-only edit of the file keeps the Discord change.
         write(cfg, read(cfg) + "# a comment edit only\n")
-        st = MS.load(cfg, PLUGINS)
+        st = MS.load(cfg)
         self.assertEqual(st.retire, [])
         self.assertEqual(st.get("who.replies", S()), "off")
         doc = MS._read_overlay_doc(st.overlay_path)
         self.assertEqual(doc["values"][key]["base"], "when-addressed")
         # inherit: as if the server set nothing.
-        MS.reset(cfg, key, OWNER, PLUGINS)
-        st = MS.load(cfg, PLUGINS)
+        MS.reset(cfg, key, OWNER)
+        st = MS.load(cfg)
         self.assertEqual(st.get("who.replies", S()), "conversational")
         # A Discord change, then the owner edits the file there: the file
         # wins, the entry is retired (one notice), and stays retired.
-        MS.set_value(cfg, key, "off", OWNER, PLUGINS)
+        MS.set_value(cfg, key, "off", OWNER)
         write(cfg, NEW_BASE + f'servers:\n  "{G1}":\n    who:\n'
               "      replies: conversational\n")
-        st = MS.load(cfg, PLUGINS)
+        st = MS.load(cfg)
         self.assertEqual(st.get("who.replies", S()), "conversational")
         self.assertEqual([r[2] for r in st.retire], ["file changed"])
         self.assertEqual(len(st.commit_retirements()), 1)
-        st2 = MS.load(cfg, PLUGINS)
+        st2 = MS.load(cfg)
         self.assertEqual(st2.retire, [])
         self.assertEqual(st2.commit_retirements(), [])
         hist = MS._read_overlay_doc(st.overlay_path)["history"]
@@ -335,15 +311,15 @@ class Overlay(unittest.TestCase):
         as file-changed."""
         st, cfg = load_text(NEW_BASE)
         key = f'servers."{G1}".proactive.per_channel_per_day'
-        MS.set_value(cfg, key, 30, OWNER, PLUGINS)
+        MS.set_value(cfg, key, 30, OWNER)
         doc = MS._read_overlay_doc(MS.overlay_path_for(cfg))
         self.assertEqual(doc["values"][key]["base"], "none")
-        st = MS.load(cfg, PLUGINS)
+        st = MS.load(cfg)
         self.assertEqual(st.retire, [])
         self.assertEqual(st.get("proactive.per_channel_per_day", S()), 30)
         MS.set_value(cfg, "dms.proactive.per_person_per_day", 7,
-                     OWNER, PLUGINS)
-        st = MS.load(cfg, PLUGINS)
+                     OWNER)
+        st = MS.load(cfg)
         self.assertEqual(st.retire, [])
         self.assertEqual(st.get("proactive.per_person_per_day",
                                 MS.Scope.dm()), 7)
@@ -373,23 +349,22 @@ class Overlay(unittest.TestCase):
                          ("dms.who.bot_exchange_limit", 3),
                          ('servers."Lounge".who.replies', "off")):
             with self.assertRaises(MS.SettingsError):
-                MS.set_value(cfg, key, val, OWNER, PLUGINS)
+                MS.set_value(cfg, key, val, OWNER)
         MS.set_value(cfg, f'servers."{G1}".channels."{CH}".replies', False,
-                     OWNER, PLUGINS)
-        st = MS.load(cfg, PLUGINS)
+                     OWNER)
+        st = MS.load(cfg)
         self.assertEqual(st.get("who.replies", S(ch=CH)), "off")
 
     def test_fold(self):
         st, cfg = load_text(NEW_BASE + "# my comment\neverywhere:\n  style:"
                             "\n    length: brief\n")
-        MS.set_value(cfg, "everywhere.style.length", "detailed", OWNER,
-                     PLUGINS)
+        MS.set_value(cfg, "everywhere.style.length", "detailed", OWNER)
         MS.set_value(cfg, f'servers."{G1}".channels."{CH}".notes', "hey",
-                     OWNER, PLUGINS)
-        bak, folded = MS.fold(cfg, PLUGINS)
+                     OWNER)
+        bak, folded = MS.fold(cfg)
         self.assertIn("# my comment", read(bak))   # the old file is kept
         self.assertEqual(len(folded), 2)
-        st = MS.load(cfg, PLUGINS)
+        st = MS.load(cfg)
         self.assertEqual(st.overlay, {})
         self.assertEqual(st.get("style.length", S()), "detailed")
         self.assertEqual(st.get("style.notes", S(ch=CH)), "hey")
@@ -564,8 +539,8 @@ class OldLayout(unittest.TestCase):
         if known:
             write(os.path.join(d, "state.json"),
                   json.dumps({"known_guilds": known}))
-        legacy = MS.load(cfg, PLUGINS, legacy_defaults=True)
-        bak, text, lines, notes = MS.migrate(cfg, PLUGINS)
+        legacy = MS.load(cfg, legacy_defaults=True)
+        bak, text, lines, notes = MS.migrate(cfg)
         return d, cfg, bak, legacy, lines, notes
 
     def test_migrate_round_trip_identical(self):
@@ -574,7 +549,7 @@ class OldLayout(unittest.TestCase):
             d, cfg, bak, legacy, lines, notes = self._migrate(name, known)
             self.assertTrue(os.path.exists(bak), name)
             self.assertEqual(read(bak), OLD_FIXTURES[name])
-            new = MS.load(cfg, PLUGINS)
+            new = MS.load(cfg)
             self.assertEqual(new.layout, "new", name)
             self.assertEqual(MS.compare(legacy, new, known), [], name)
             # The one announced difference, and nothing else.
@@ -584,7 +559,7 @@ class OldLayout(unittest.TestCase):
                 self.assertEqual(new.get("who.replies", S(G2)),
                                  "conversational")
             # Runtime of the old file == runtime of the converted file.
-            old_rt = MS.load(bak, PLUGINS)
+            old_rt = MS.load(bak)
             self.assertEqual(MS.compare(old_rt, new, known), [], name)
 
     def test_migrate_refusals(self):
@@ -592,14 +567,14 @@ class OldLayout(unittest.TestCase):
         cfg = write(os.path.join(d, "config.yaml"),
                     "behavior:\n  respond_to: [mention]\n")
         with self.assertRaises(MS.SettingsError):
-            MS.migrate(cfg, PLUGINS)
+            MS.migrate(cfg)
         cfg = write(os.path.join(d, "config.yaml"), OLD_FIXTURES["open"])
         with self.assertRaises(MS.SettingsError):
-            MS.migrate(cfg, PLUGINS)  # no state.json to resolve the name
+            MS.migrate(cfg)  # no state.json to resolve the name
         self.assertEqual(read(cfg), OLD_FIXTURES["open"])
         cfg = write(os.path.join(d, "config.yaml"), NEW_BASE)
         with self.assertRaises(MS.SettingsError):
-            MS.migrate(cfg, PLUGINS)
+            MS.migrate(cfg)
         self.assertEqual(read(cfg), NEW_BASE)
 
     def test_migrate_refuses_a_behavior_change(self):
@@ -614,7 +589,7 @@ class OldLayout(unittest.TestCase):
         MS.build_migrated = broken
         try:
             with self.assertRaisesRegex(MS.SettingsError, "who.dms_from"):
-                MS.migrate(cfg, PLUGINS)
+                MS.migrate(cfg)
         finally:
             MS.build_migrated = real
         self.assertEqual(read(cfg), OLD_FIXTURES["minimal"])
@@ -635,14 +610,13 @@ class CLI(unittest.TestCase):
         self.assertEqual(cli("validate", cfg=cfg).returncode, 0)
         self.assertEqual(cli("show", "--server", G1, "--channel", CH,
                              "--explain", cfg=cfg).returncode, 0)
-        MS.set_value(cfg, f'servers."{G1}".style.length', "detailed", OWNER,
-                     PLUGINS)
+        MS.set_value(cfg, f'servers."{G1}".style.length', "detailed", OWNER)
         before = read(cfg)
         r = cli("fold", "--dry-run", cfg=cfg)
         self.assertEqual(read(cfg), before)
         r = cli("fold", cfg=cfg)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(MS.load(cfg, PLUGINS).get("style.length", S()),
+        self.assertEqual(MS.load(cfg).get("style.length", S()),
                          "detailed")
         write(cfg, NEW_BASE + "everywhere:\n  style:\n    length: x\n")
         r = cli("validate", cfg=cfg)
@@ -653,7 +627,7 @@ class CLI(unittest.TestCase):
         self.assertEqual(read(cfg), OLD_FIXTURES["minimal"])
         r = cli("migrate", cfg=cfg)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(MS.load(cfg, PLUGINS).layout, "new")
+        self.assertEqual(MS.load(cfg).layout, "new")
 
     def test_shell_shim(self):
         st, cfg = load_text(NEW_BASE + "presence:\n  enabled: off\n"
@@ -755,7 +729,7 @@ class LiveReload(MonitorBase):
         self.rewrite(NEW_BASE + f'servers:\n  "{G1}":\n    who:\n'
                      "      replies: off\n")
         MS.set_value(m.cfg_path, f'servers."{G1}".who.replies',
-                     "when-addressed", OWNER, PLUGINS)
+                     "when-addressed", OWNER)
         bump(m._SETTINGS.overlay_path)
         self.assertEqual(self.kind(gmsg(U1, mention=True)), "mention")
         # Owners are re-read too.
@@ -768,7 +742,7 @@ class LiveReload(MonitorBase):
         m = self.m
         self.rewrite(NEW_BASE + "everywhere:\n  style:\n    length: brief\n")
         MS.set_value(m.cfg_path, "everywhere.style.length", "detailed",
-                     OWNER, PLUGINS)
+                     OWNER)
         bump(m._SETTINGS.overlay_path)
         self.rewrite(NEW_BASE + "everywhere:\n  style:\n    length: normal\n")
         with quiet():
@@ -1247,27 +1221,6 @@ servers:
         self.assertFalse(item["may_generate"])
 
 
-class Plugins(MonitorBase):
-    def test_minimal_plugin_loads_and_its_hook_runs_where_on(self):
-        """No plugin ships, but the mechanism works: a plugin in plugins/
-        loads once a scope turns it on, its hook runs only there, its
-        result reaches the queue item, and it can never grant
-        generation."""
-        m = self.m
-        self.rewrite(MON + f"""  "{G2}":
-    plugins:
-      example: {{enabled: on, note: from-g2}}
-""")
-        m.PLUGINS_DIR = fake_plugins()
-        with quiet():
-            m.load_plugins()
-        ok, item = self.enqueue(gmsg(U1, "hi", mention=True))  # G1: off
-        self.assertNotIn("example_note", item)
-        msg = gmsg(U1, "hi", mention=True, channel=CH_G2, guild=G2)
-        ok, item = self.enqueue(msg, guild=G2)
-        self.assertEqual(item["example_note"], "from-g2")
-        self.assertFalse(item["may_generate"])
-        self.assertEqual(self.st["example_saw"], [msg["id"]])
 
 
 class MovedSettings(unittest.TestCase):
@@ -1328,21 +1281,21 @@ history:
         self.assertFalse(st.get("media.enabled", S(ch=CH)))
         # Undo still finds the old history lines, then a new change
         # replaces the old entry instead of sitting beside it.
-        MS.undo_changes(cfg, f'servers."{G1}"', OWNER, PLUGINS)
-        st = MS.load(cfg, PLUGINS)
+        MS.undo_changes(cfg, f'servers."{G1}"', OWNER)
+        st = MS.load(cfg)
         self.assertEqual(st.get("media.who", S()), "owners")
-        MS.set_value(cfg, "everywhere.media.per_day", 7, OWNER, PLUGINS)
+        MS.set_value(cfg, "everywhere.media.per_day", 7, OWNER)
         doc = MS._read_overlay_doc(st.overlay_path)
         self.assertEqual([k for k in doc["values"] if "per_day" in k],
                          ["everywhere.media.per_day"])
-        self.assertEqual(MS.load(cfg, PLUGINS).get(
+        self.assertEqual(MS.load(cfg).get(
             "media.per_day", MS.Scope.everywhere()), 7)
-        MS.undo_changes(cfg, "everywhere", OWNER, PLUGINS)
-        self.assertEqual(MS.load(cfg, PLUGINS).get(
+        MS.undo_changes(cfg, "everywhere", OWNER)
+        self.assertEqual(MS.load(cfg).get(
             "media.per_day", MS.Scope.everywhere()), 3)
         # Folding writes media.* and drops the old spelling there.
-        MS.fold(cfg, PLUGINS)
-        st = MS.load(cfg, PLUGINS)
+        MS.fold(cfg)
+        st = MS.load(cfg)
         self.assertEqual(st.get("media.per_day", MS.Scope.everywhere()), 3)
         self.assertFalse(st.get("media.enabled", S(ch=CH)))
         self.assertNotIn("per_day", str(st.raw["everywhere"]["plugins"]))

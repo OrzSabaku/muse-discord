@@ -120,8 +120,7 @@ def load_monitor(tmp=None, cfg_extra=""):
                      ("PIDFILE", "monitor.pid"),
                      ("HEARTBEAT_FILE", "monitor.heartbeat"),
                      ("MEDIA_DIR", "media"),
-                     ("GENERATED_DIR", "generated"),
-                     ("PLUGINS_DIR", "noplugins")]:
+                     ("GENERATED_DIR", "generated")]:
         setattr(mod, attr, os.path.join(tmp, fn))
     mod.api = FakeAPI(mod)
     mod.api_get = mod.api.get

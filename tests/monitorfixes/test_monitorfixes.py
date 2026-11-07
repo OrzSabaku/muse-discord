@@ -42,6 +42,20 @@ def sf_at(ts):
     return str((int(ts * 1000) - EPOCH) << 22)
 
 
+class NoSendPermission(unittest.TestCase):
+    def test_no_send_channel_is_ledgered_and_logged_once(self):
+        m = load_monitor(BASE)
+        msg = gmsg(U1, mention=True)
+        with quiet() as output:
+            m._note_no_send(msg, "#general")
+            m._note_no_send(msg, "#general")
+        self.assertEqual(output.getvalue().count("the bot cannot send"), 1)
+        record = m._ledger_load()["entries"][msg["id"]]
+        self.assertEqual(record["status"], "skipped")
+        self.assertEqual(record["code"], "no-send")
+        self.assertIn("no send permission", record["reason"])
+
+
 class Base(unittest.TestCase):
     cfg = BASE
 

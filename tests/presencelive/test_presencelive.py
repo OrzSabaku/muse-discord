@@ -133,8 +133,7 @@ class Live(unittest.TestCase):
         async def sc(task):
             await self.ready()
             MS.set_value(self.cfg, "presence.status", "set in discord",
-                         by="111", plugins_dir=os.path.join(MUT_DIR,
-                                                            "plugins"))
+                         by="111")
             await self.until(lambda: ops(3))
         self.drive(sc)
         o3 = ops(3)

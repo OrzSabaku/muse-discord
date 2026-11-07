@@ -30,8 +30,6 @@ class VenvReexec(unittest.TestCase):
         pkg = scratch("review-l-venv-")
         shutil.copytree(os.path.join(MUT_DIR, "bin"),
                         os.path.join(pkg, "bin"))
-        shutil.copytree(os.path.join(MUT_DIR, "plugins"),
-                        os.path.join(pkg, "plugins"))
         shutil.copytree(os.path.join(MUT_DIR, "src"),
                         os.path.join(pkg, "src"))
         # .venv as bin/install.sh makes it (python3 -m venv), with the

@@ -59,7 +59,7 @@ def apply(directory, owner=None):
     try:
         with os.fdopen(fd, 'w') as out:
             yaml.safe_dump(data, out, allow_unicode=True, sort_keys=False)
-        MS.load(str(staged), str(directory / 'plugins'))
+        MS.load(str(staged))
         if target.exists():
             stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
             backup = directory / ('config.yaml.bak-personal-' + stamp)

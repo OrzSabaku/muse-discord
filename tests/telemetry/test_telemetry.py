@@ -240,11 +240,9 @@ class NeverIdentifying(Base):
             ctx.apply(MS.preset_changes(m.settings(), "community", place),
                       OWNER, "owner")
             MS.apply(m.cfg_path, [MS.Change(place, "style.length", "brief")],
-                     OWNER, group="nl-" + mention["id"][:12],
-                     plugins_dir=m.PLUGINS_DIR, role="owner")
+                     OWNER, group="nl-" + mention["id"][:12], role="owner")
             MS.apply(m.cfg_path, [MS.Change(place, "who.bots", "ignore")],
-                     "muse.ai", group="cli-1234abcd",
-                     plugins_dir=m.PLUGINS_DIR, role="owner")
+                     "muse.ai", group="cli-1234abcd", role="owner")
         # A crash whose message holds a secret; a wake noted by the hook.
         tm.crashed(ValueError(f"{secret} in {m.tmp}"))
         with open(m.TELEMETRY_WAKES_FILE, "w") as f:
@@ -323,7 +321,7 @@ class OffBySetting(Base):
         with quiet():
             MS.apply(self.m.cfg_path, [MS.Change(
                 MS.parse_place("defaults"), T.SETTING, "on")], "muse.ai",
-                group="cli-0000aaaa", plugins_dir=self.m.PLUGINS_DIR,
+                group="cli-0000aaaa",
                 role="owner")
         self.tm.count("messages_seen", 1)
         self.tick()
@@ -515,8 +513,6 @@ class BadEndpoint(Base):
         pkg = scratch("telemetry-cli-")
         shutil.copytree(os.path.join(MUT_DIR, "bin"),
                         os.path.join(pkg, "bin"))
-        shutil.copytree(os.path.join(MUT_DIR, "plugins"),
-                        os.path.join(pkg, "plugins"))
         shutil.copytree(os.path.join(MUT_DIR, "src"),
                         os.path.join(pkg, "src"))
         with open(os.path.join(pkg, "config.yaml"), "w") as f:

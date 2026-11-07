@@ -353,7 +353,7 @@ def main(argv=None):
         or d.path("config.yaml")
     MS = C.settings_module()
     try:
-        st = MS.load(cfg, os.path.join(d.pkg, "plugins"))
+        st = MS.load(cfg)
     except MS.SettingsError as e:
         d.add("problem", f"config.yaml is not valid: {e}",
               "python3 bin/settings.py validate names each problem.")

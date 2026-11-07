@@ -120,8 +120,7 @@ def _settings():
     cannot be read."""
     try:
         from muse_discord import muse_settings
-        return muse_settings.load(CONFIG, os.path.join(PACKAGE_DIR,
-                                                       "plugins"))
+        return muse_settings.load(CONFIG)
     except Exception:
         return None
 

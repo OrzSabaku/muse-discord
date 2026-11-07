@@ -133,7 +133,7 @@ except ImportError:
     muse_settings = None
 try:
     if muse_settings is not None:
-        st = muse_settings.load(cfg, os.path.join(d, "plugins"))
+        st = muse_settings.load(cfg)
         print(muse_settings.shell_value(st, name, d))
         sys.exit(0)
     import yaml

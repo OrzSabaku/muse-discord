@@ -40,7 +40,7 @@ muse_settings.assess (a risky outcome shows a confirm card first).
 custom_id grammar ("mdset:3:" + colon-separated parts, <= 100 chars):
 
     place := x (everywhere) | d (DMs) | s<gid> | c<gid>.<cid>
-    k     := a short code (CORE_CODES) | ~<plugin>.<key>
+    k     := a short code (CORE_CODES) | ~media.<key>
 
     pg:<place>:<page>        page: h home (admins: their panel), y why,
                              e edit (basic), d edit (more settings)
@@ -193,7 +193,7 @@ CORE_CODES = {
     "media.per_day": "mp",
 }
 CODE_KEYS = {v: k for k, v in CORE_CODES.items()}
-_PLUGIN_CODE = re.compile(r"~([A-Za-z0-9_\-]{1,40})\.([A-Za-z0-9_\-]{1,40})")
+_MEDIA_CODE = re.compile(r"~(?:media|media_generation)\.([A-Za-z0-9_\-]{1,40})")
 _PLACE = re.compile(r"x|d|s(\d{1,25})|c(\d{1,25})\.(\d{1,25})")
 _ID = re.compile(r"\d{1,25}")
 _PART = re.compile(r"[^:]{1,100}")
@@ -205,18 +205,15 @@ def kcode(key):
         return CORE_CODES[key]
     if key.startswith("media."):
         return "~" + key  # the media plugin's code: ids stay valid
-    if key.startswith("plugins."):
-        code = "~" + key[len("plugins."):]
-        if _PLUGIN_CODE.fullmatch(code):
-            return code
     return None
 
 
 def kdecode(code):
     if code in CODE_KEYS:
         return CODE_KEYS[code]
-    if _PLUGIN_CODE.fullmatch(code or ""):
-        return ms.moved_key("plugins." + code[1:])
+    if _MEDIA_CODE.fullmatch(code or ""):
+        key = ms.moved_key("plugins." + code[1:])
+        return key if key in ms.CORE else None
     return None
 
 
@@ -1015,49 +1012,8 @@ PRESET_HELP = {
 }
 
 
-def plugin_keys(R, place):
-    """The on/off keys of the plugins installed and offered at place
-    (plugins.<id>.enabled; never media, which is a core setting)."""
-    try:
-        keys = ms.place_keys(R.st, place, "basics")
-    except Exception:
-        return []
-    out = []
-    for k in keys:
-        if not (k.startswith("plugins.") and ms._is_enabled_key(k)):
-            continue
-        if kcode(k) is None:    # an id no custom_id can carry
-            if k not in _UNNAMEABLE:
-                _UNNAMEABLE.add(k)
-                R.ctx.log(f"settings_ui: plugin key {k} can't be shown "
-                          f"(its id must be 1-40 of A-Z a-z 0-9 _ -)")
-            continue
-        out.append(k)
-    return out
-
-
-_UNNAMEABLE = set()     # plugin keys already logged as skipped
-
-
 def on_off_name(key):
-    """"images & video", or a plugin's name ("Example")."""
-    if key == "media.enabled":
-        return "images & video"
-    parts = key.split(".")
-    return esc(parts[1].replace("_", " ").capitalize()) \
-        if len(parts) == 3 else esc(key)
-
-
-def plugins_line(R, place):
-    """"-# Plugins here: Example (on). DM me to switch them." or None:
-    plugins have no controls of their own on these pages."""
-    keys = plugin_keys(R, place)
-    if not keys:
-        return None
-    parts = [f"{on_off_name(k)} ({'on' if value(R, place, k) else 'off'})"
-             for k in keys]
-    return td("-# Plugins here: " + ", ".join(parts) + ". DM me to switch "
-              "them or change their settings.")
+    return "images & video" if key == "media.enabled" else esc(key)
 
 
 def style_select(R, gid):
@@ -1335,7 +1291,6 @@ def page_home(R, place):
         head, _, note = title.partition("\n")
         inner.append(td(f"**{head}**" + (f"\n{note}" if note else "")))
         inner.append(row(s))
-    inner.append(plugins_line(R, place))
     if place.kind in ("channel", "server"):
         gid = place.guild_id
         inner.append(sep())
@@ -1384,7 +1339,6 @@ def page_edit(R, place, page="e"):
         head, _, note = title.partition("\n")
         inner.append(td(f"**{head}**" + (f"\n{note}" if note else "")))
         inner.extend(rows)
-    inner.append(plugins_line(R, place))
     n = len(draft_changes(R, place) or [])
     nav = [btn(EDIT_PAGE_LABELS[p], cid("pg", ptok(place), p))
            for p in edit_pages(R, place) if p != page]
@@ -1927,7 +1881,7 @@ def page_quiet(R, gid):
             for p in adds[:25]], "Stop ignoring…", 1,
             min(25, len(adds)))))
     offs, items = [], []
-    for key in ["media.enabled"] + plugin_keys(R, server):
+    for key in ["media.enabled"]:
         name = on_off_name(key)
         if value(R, server, key):
             items.append(f"{name} on")

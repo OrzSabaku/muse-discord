@@ -341,22 +341,13 @@ def _check_setting(key, scope, where, value=None, has_value=False):
     if not isinstance(key, str) or not _SETTING_KEY_RE.match(key):
         _fail(where, f"expected a settings key like who.replies, got "
                      f"{key!r}")
-    if key.startswith("plugins."):
-        if len(key.split(".")) != 3:
-            _fail(where, f"expected plugins.<plugin>.<setting>, got "
-                         f"{key!r}")
-        if scope == "channel" and not key.endswith(".enabled"):
-            _fail(where, "a channel may set only who.replies, style.notes "
-                         "and plugins.<plugin>.enabled")
-        return  # plugin keys need the manifests: set_value checks them
     ms = _settings_module()
     if ms is None:
         return
     spec = ms.CORE.get(key)
     if spec is None:
         _fail(where, f"unknown setting {key!r} (known: "
-                     f"{', '.join(sorted(ms.CORE))}, plugins.<plugin>."
-                     f"<setting>)")
+                     f"{', '.join(sorted(ms.CORE))})")
     if scope not in spec.scopes:
         ok = [x for x in spec.scopes if x in SETTINGS_SCOPES]
         _fail(where, f"{key} cannot be set at {scope} scope (scopes that "

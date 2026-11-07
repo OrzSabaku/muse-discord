@@ -70,7 +70,6 @@ sys.path[:0] = [os.path.join(PKG, "src"), os.path.join(PKG, "bin")]
 import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
 from muse_discord import muse_settings as MS  # noqa: E402
 
-PLUGINS = os.path.join(PKG, "plugins")
 
 
 def _cfg_path(args):
@@ -150,7 +149,7 @@ def _fmt(spec, value):
 
 def cmd_validate(args):
     cfg = _cfg_path(args)
-    st = MS.load(cfg, PLUGINS)
+    st = MS.load(cfg)
     print(f"{cfg}: valid ({st.layout} layout).")
     if st.notice:
         print(st.notice)
@@ -169,7 +168,7 @@ def cmd_validate(args):
 
 def cmd_show(args):
     cfg = _cfg_path(args)
-    st = MS.load(cfg, PLUGINS)
+    st = MS.load(cfg)
     known = _known_guilds(cfg)
     if args.dms:
         scope = MS.Scope.dm()
@@ -218,7 +217,7 @@ def cmd_show(args):
 
 def cmd_fold(args):
     cfg = _cfg_path(args)
-    st = MS.load(cfg, PLUGINS)
+    st = MS.load(cfg)
     keys = sorted(MS.format_key(p, k) for (p, k), e in st.overlay.items()
                   if MS.entry_role(e) != "admin")
     if not keys:
@@ -231,7 +230,7 @@ def cmd_fold(args):
         for k in keys:
             print(f"  {k}")
         return 0
-    bak, folded = MS.fold(cfg, PLUGINS)
+    bak, folded = MS.fold(cfg)
     print(f"Backed up config.yaml to {bak}.")
     print(f"Copied {len(folded)} Discord change(s) into config.yaml and "
           f"cleared them from {MS.OVERLAY_NAME}:")
@@ -244,7 +243,7 @@ def cmd_fold(args):
 
 def cmd_migrate(args):
     cfg = _cfg_path(args)
-    bak, text, lines, notes = MS.migrate(cfg, PLUGINS, args.state,
+    bak, text, lines, notes = MS.migrate(cfg, args.state,
                                          write=not args.dry_run)
     print("What moved where:")
     for line in lines or ["(nothing set; the defaults carry over)"]:
@@ -300,7 +299,7 @@ def _run(args, st, cfg, info, changes, by):
     if risk.risky and not args.yes:
         raise NeedsYes()
     MS.apply(cfg, [r.change for r in todo], by,
-             group=f"cli-{secrets.token_hex(4)}", plugins_dir=PLUGINS,
+             group=f"cli-{secrets.token_hex(4)}",
              role="owner")
     print("Done.")
     return 0
@@ -308,7 +307,7 @@ def _run(args, st, cfg, info, changes, by):
 
 def cmd_set(args, reset=False):
     cfg = _cfg_path(args)
-    st = MS.load(cfg, PLUGINS)
+    st = MS.load(cfg)
     info = _info(cfg)
     place = _place(args, info)
     key = MS.key_from_text(st, args.key)
@@ -335,7 +334,7 @@ def cmd_reset(args):
 
 def cmd_preset(args):
     cfg = _cfg_path(args)
-    st = MS.load(cfg, PLUGINS)
+    st = MS.load(cfg)
     info = _info(cfg)
     place = _place(args, info)
     changes = MS.preset_changes(st, args.name, place, info)
@@ -348,7 +347,7 @@ def cmd_preset(args):
 
 def cmd_pause(args, resume=False):
     cfg = _cfg_path(args)
-    st = MS.load(cfg, PLUGINS)
+    st = MS.load(cfg)
     info = _info(cfg)
     place = _place(args, info)
     names = MS.names_from(info, st)
@@ -369,7 +368,7 @@ def cmd_resume(args):
 
 def cmd_undo(args):
     cfg = _cfg_path(args)
-    st = MS.load(cfg, PLUGINS)
+    st = MS.load(cfg)
     info = _info(cfg)
     place = _place(args, info)
     names = MS.names_from(info, st)
@@ -384,7 +383,7 @@ def cmd_undo(args):
         print("Warning: " + w)
     if risk.risky and not args.yes:
         raise NeedsYes()
-    MS.undo_changes(cfg, place, args.by, PLUGINS, children=children,
+    MS.undo_changes(cfg, place, args.by, children=children,
                     role="owner", expect=ident)
     print("Done.")
     return 0
@@ -392,7 +391,7 @@ def cmd_undo(args):
 
 def cmd_explain(args):
     cfg = _cfg_path(args)
-    st = MS.load(cfg, PLUGINS)
+    st = MS.load(cfg)
     info = _info(cfg)
     place = _place(args, info)
     names = MS.names_from(info, st)

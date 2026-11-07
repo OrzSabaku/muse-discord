@@ -233,7 +233,7 @@ class ConnectDiscord(unittest.TestCase):
                 self.assertNotIn(TOKEN.encode(), f.read(), path)
         # The config validates, names the owner, and the monitor loads it.
         ms = load_ms(self.pkg)
-        st = ms.load(self.cfg, os.path.join(self.pkg, "plugins"))
+        st = ms.load(self.cfg)
         self.assertEqual(st.owners, [OWNER_ID])
         self.assertEqual(st.token_sources(),
                          [("file", "~/.config/muse-discord/bot_token")])
@@ -284,8 +284,7 @@ class ConnectDiscord(unittest.TestCase):
         self.assertEqual(len(baks), 1)
         with open(os.path.join(self.pkg, baks[0])) as f:
             self.assertEqual(f.read(), mine)
-        st = load_ms(self.pkg).load(self.cfg,
-                                    os.path.join(self.pkg, "plugins"))
+        st = load_ms(self.pkg).load(self.cfg)
         self.assertEqual(set(st.owners), {OWNER_ID, "1100000000000000009"})
         # Run again: the config already lists the owner, so it is kept
         # as is, with no further backup.
@@ -501,7 +500,7 @@ class MediaDefault(unittest.TestCase):
         with open(cfg, "w") as f:
             f.write('version: 1\nowners: ["1"]\n')
         ms = load_ms(pkg)
-        st = ms.load(cfg, os.path.join(pkg, "plugins"))
+        st = ms.load(cfg)
         self.assertIs(st.resolve(ms.Scope.everywhere())["media.enabled"],
                       True)
 

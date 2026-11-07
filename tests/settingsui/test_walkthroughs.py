@@ -137,8 +137,7 @@ class Owner(Base):
         """Undo on a server page undoes the newest group there, all of it:
         when that would open DMs to anyone again it asks first."""
         def apply(*changes):
-            MS.apply(self.ctx.cfg, list(changes), OWNER,
-                     plugins_dir=H.PLUGINS, role="owner")
+            MS.apply(self.ctx.cfg, list(changes), OWNER, role="owner")
         apply(MS.Change(DMS, "who.dms_from", "anyone"))
         apply(MS.Change(DMS, "who.dms_from", "owners"),
               MS.Change(S1, "style.length", "brief"))
@@ -215,7 +214,7 @@ class Admin(Base):
         turned back on from the panel, without undoing the admins'
         later changes first, and only as far as the owners' value."""
         MS.apply(self.ctx.cfg, [MS.Change(S1, "media.enabled", "on")],
-                 OWNER, plugins_dir=H.PLUGINS, role="owner")
+                 OWNER, role="owner")
         self.admin(f"{P}val:s{G1}:~media.enabled:off")
         self.admin(f"{P}ppl:s{G1}:ig", [KAI],
                    resolved=H.resolved_for(7, [KAI]))
@@ -235,7 +234,7 @@ class Category(Base):
         GEN = MS.Place.channel(G1, GENERAL, CAT)
         MS.apply(self.ctx.cfg, [MS.Change(GEN, "who.replies",
                                           "when-addressed")],
-                 OWNER, plugins_dir=H.PLUGINS, role="owner")
+                 OWNER, role="owner")
         r = self.h(command(OWNER, G1, "0", GENERAL))
         sel = control(r, f"{P}set:c{G1}.{GENERAL}:r")
         self.assertIn("=", [o["value"] for o in sel["options"]])

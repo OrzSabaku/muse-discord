@@ -19,7 +19,7 @@ from harness import (ADMIN, G1, G2, G3, MANAGE, MS, OWNER, SAM,  # noqa: E402
 
 
 def apply(ctx, changes):
-    MS.apply(ctx.cfg, changes, OWNER, plugins_dir=H.PLUGINS, role="owner")
+    MS.apply(ctx.cfg, changes, OWNER, role="owner")
     ctx.refresh()
 
 

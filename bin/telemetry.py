@@ -36,7 +36,6 @@ import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
 from muse_discord import muse_settings as MS  # noqa: E402
 from muse_discord import telemetry as T  # noqa: E402
 
-PLUGINS = os.path.join(PKG, "plugins")
 DATA = os.path.join(PKG, "telemetry.json")
 ID_FILE = os.path.join(PKG, "telemetry_id")
 SEND_NOW = os.path.join(PKG, T.SEND_NOW_FILE)
@@ -49,7 +48,7 @@ def _cfg(args):
 
 def _settings(args):
     try:
-        return MS.load(_cfg(args), PLUGINS)
+        return MS.load(_cfg(args))
     except MS.SettingsError as e:
         print(f"settings: {e}", file=sys.stderr)
         return None
@@ -139,7 +138,7 @@ def cmd_status(args):
 def cmd_switch(args, value):
     cfg = _cfg(args)
     try:
-        st = MS.load(cfg, PLUGINS)
+        st = MS.load(cfg)
         place = MS.parse_place("defaults")
         changes = [MS.Change(place, T.SETTING, value)]
         rows = MS.plan_changes(st, changes)
@@ -147,8 +146,7 @@ def cmd_switch(args, value):
             print(f"Usage stats are already {value}.")
         else:
             MS.apply(cfg, changes, args.by,
-                     group=f"cli-{secrets.token_hex(4)}",
-                     plugins_dir=PLUGINS, role="owner")
+                     group=f"cli-{secrets.token_hex(4)}", role="owner")
             print(f"Usage stats are now {value}"
                   + (" (days it was off are never sent)." if value == "off"
                      else "."))

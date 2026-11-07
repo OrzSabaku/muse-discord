@@ -18,7 +18,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fake import (ADMIN, ADMIN2, ANN, BASE, CAT, CH, CH2,  # noqa: E402
                   CH_G2, G1, G2, G3, INFO, MS, MUT, NAMES, OWNER,
-                  PLUGINS, SAM, SPAM, config, doc, load,
+                  SAM, SPAM, config, doc, load,
                   load_monitor)
 
 P = MS.Place
@@ -33,7 +33,7 @@ KS_GEN = f'servers."{G1}".channels."{CH}".replies'
 
 def apply(cfg, changes, by=OWNER, **kw):
     kw.setdefault("role", "owner")
-    return MS.apply(cfg, changes, by, plugins_dir=PLUGINS, **kw)
+    return MS.apply(cfg, changes, by, **kw)
 
 
 def value(cfg, place, key):
@@ -202,7 +202,7 @@ class Groups(unittest.TestCase):
         names = MS.names_from(INFO, st)
         text, ident = MS.undo_preview(st, S1, True, names)
         self.assertEqual(ident, r.group)
-        done = MS.undo_changes(cfg, S1, OWNER, PLUGINS, children=True,
+        done = MS.undo_changes(cfg, S1, OWNER, children=True,
                                expect=ident)
         self.assertEqual(sorted(done), sorted([KS, KS_GEN]))
         st = load(cfg)
@@ -217,8 +217,8 @@ class Groups(unittest.TestCase):
         apply(cfg, [C(GEN, "who.replies", "off")])
         st = load(cfg)
         self.assertEqual(MS.undo_preview(st, S1), (None, None))
-        self.assertIsNone(MS.undo(cfg, f'servers."{G1}"', OWNER, PLUGINS))
-        self.assertEqual(MS.undo(cfg, f'servers."{G1}"', OWNER, PLUGINS,
+        self.assertIsNone(MS.undo(cfg, f'servers."{G1}"', OWNER))
+        self.assertEqual(MS.undo(cfg, f'servers."{G1}"', OWNER,
                                  children=True), KS_GEN)
 
     def test_group_reverted_wherever_it_landed(self):
@@ -229,7 +229,7 @@ class Groups(unittest.TestCase):
         st = load(cfg)
         self.assertTrue(MS.is_paused(st, DEF))
         self.assertEqual(len(MS.undo_plan(st, DEF)), 2)
-        MS.undo(cfg, "defaults", OWNER, PLUGINS)
+        MS.undo(cfg, "defaults", OWNER)
         self.assertFalse(MS.is_paused(load(cfg), DEF))
         self.assertEqual(value(cfg, DMS, "who.replies"), "conversational")
 
@@ -239,7 +239,7 @@ class Groups(unittest.TestCase):
         _t, ident = MS.undo_preview(load(cfg), S1)
         apply(cfg, [C(S1, "style.length", "brief")])
         with self.assertRaises(MS.SettingsError):
-            MS.undo(cfg, S1, OWNER, PLUGINS, expect=ident)
+            MS.undo(cfg, S1, OWNER, expect=ident)
         self.assertEqual(value(cfg, S1, "who.replies"), "off")
         # A group's undo skips keys changed since.
         cfg = config(self)
@@ -247,7 +247,7 @@ class Groups(unittest.TestCase):
                     C(S1, "style.length", "brief")])
         apply(cfg, [C(S1, "style.length", "detailed")])
         apply(cfg, [C(S1, "style.length", "brief")])   # same as the group
-        MS.undo(cfg, S1, OWNER, PLUGINS)   # the newest: back to detailed
+        MS.undo(cfg, S1, OWNER)   # the newest: back to detailed
         self.assertEqual(value(cfg, S1, "style.length"), "detailed")
         plan = MS.undo_plan(load(cfg), S1)
         self.assertEqual([c.key for c in plan], ["style.length"])
@@ -261,16 +261,16 @@ class Groups(unittest.TestCase):
         apply(cfg, [C(S1, "style.length", "detailed")])
         self.assertFalse(MS.group_current(load(cfg), r.group))
         with self.assertRaises(MS.SettingsError):
-            MS.undo_group(cfg, "nl-77", OWNER, PLUGINS, role="owner")
+            MS.undo_group(cfg, "nl-77", OWNER, role="owner")
         r2 = apply(cfg, [C(S2, "who.replies", "off")], group="nl-79")
-        self.assertEqual(MS.undo_group(cfg, "nl-79", OWNER, PLUGINS,
+        self.assertEqual(MS.undo_group(cfg, "nl-79", OWNER,
                                        role="owner"),
                          [f'servers."{G2}".who.replies'])
         self.assertFalse(MS.group_current(load(cfg), r2.group))
         with self.assertRaises(MS.SettingsError):   # undone already
-            MS.undo_group(cfg, "nl-79", OWNER, PLUGINS, role="owner")
+            MS.undo_group(cfg, "nl-79", OWNER, role="owner")
         with self.assertRaises(MS.SettingsError):
-            MS.undo_group(cfg, "nl-nope", OWNER, PLUGINS, role="owner")
+            MS.undo_group(cfg, "nl-nope", OWNER, role="owner")
         # group_undo_plan: what Undo of a settings request would do
         cfg = config(self)
         apply(cfg, [C(GEN, "who.replies", "off"),
@@ -283,11 +283,11 @@ class Groups(unittest.TestCase):
         # an undo's own group is not undoable
         apply(cfg, [C(S3, "who.replies", "off"),
                     C(S3, "style.length", "brief")])
-        MS.undo(cfg, S3, OWNER, PLUGINS)
+        MS.undo(cfg, S3, OWNER)
         ugroup = doc(cfg)["history"][-1]["group"]
         self.assertTrue(doc(cfg)["history"][-1]["undo"])
         with self.assertRaises(MS.SettingsError):
-            MS.undo_group(cfg, ugroup, OWNER, PLUGINS, role="owner")
+            MS.undo_group(cfg, ugroup, OWNER, role="owner")
 
     def test_old_ungrouped_history_loads_and_undoes(self):
         """A config.discord.yaml from before groups: entries and history
@@ -328,13 +328,13 @@ history:
         self.assertEqual(MS.place_value(st, S1, "who.replies"),
                          "when-addressed")
         text, ident = MS.undo_preview(st, S1)
-        self.assertEqual(MS.undo(cfg, S1, OWNER, PLUGINS, expect=ident), KS)
+        self.assertEqual(MS.undo(cfg, S1, OWNER, expect=ident), KS)
         self.assertEqual(value(cfg, S1, "who.replies"), "off")
         self.assertEqual(value(cfg, DMS, "style.length"), "brief")
-        self.assertEqual(MS.undo(cfg, S1, OWNER, PLUGINS), KS)
+        self.assertEqual(MS.undo(cfg, S1, OWNER), KS)
         self.assertEqual(value(cfg, S1, "who.replies"), "conversational")
-        self.assertIsNone(MS.undo(cfg, S1, OWNER, PLUGINS))
-        self.assertEqual(MS.undo(cfg, "dms", OWNER, PLUGINS),
+        self.assertIsNone(MS.undo(cfg, S1, OWNER))
+        self.assertEqual(MS.undo(cfg, "dms", OWNER),
                          "dms.style.length")
 
 
@@ -356,10 +356,9 @@ class NoOp(unittest.TestCase):
         # a reset where nothing is set
         self.assertFalse(apply(cfg, [C(S2, "who.replies",
                                        "inherit")]).changed)
-        self.assertIs(MS.reset(cfg, f'servers."{G2}".who.replies', OWNER,
-                               PLUGINS), MS.NO_CHANGE)
+        self.assertIs(MS.reset(cfg, f'servers."{G2}".who.replies', OWNER), MS.NO_CHANGE)
         self.assertIs(MS.set_value(cfg, f'servers."{G1}".style.length',
-                                   "brief", OWNER, PLUGINS), MS.NO_CHANGE)
+                                   "brief", OWNER), MS.NO_CHANGE)
         self.assertEqual(len(doc(cfg)["history"]), n)
         # mixed: only the real change is written
         r = apply(cfg, [C(S1, "style.length", "brief"),
@@ -374,10 +373,9 @@ class NoOp(unittest.TestCase):
         self.assertTrue(r.changed)
         self.assertEqual(doc(cfg)["values"][KS]["value"], "inherit")
         self.assertEqual(value(cfg, S1, "who.replies"), "conversational")
-        MS.set_value(cfg, f'servers."{G2}".who.replies', "off", OWNER,
-                     PLUGINS)
+        MS.set_value(cfg, f'servers."{G2}".who.replies', "off", OWNER)
         self.assertEqual(MS.reset(cfg, f'servers."{G2}".who.replies',
-                                  OWNER, PLUGINS), "inherit")
+                                  OWNER), "inherit")
         self.assertEqual(doc(cfg)["values"][f'servers."{G2}".who.replies']
                          ["value"], "inherit")
         # Setting the file's own value again drops the entry (undoable).
@@ -389,10 +387,10 @@ class NoOp(unittest.TestCase):
         self.assertTrue(doc(cfg)["history"][-1]["dropped"])
         self.assertEqual(value(cfg, S1, "who.replies"), "off")
         # still undoable
-        MS.undo(cfg, S1, OWNER, PLUGINS)
+        MS.undo(cfg, S1, OWNER)
         self.assertEqual(value(cfg, S1, "who.replies"), "when-addressed")
         # the same through set_value
-        MS.set_value(cfg, KS, "off", OWNER, PLUGINS)
+        MS.set_value(cfg, KS, "off", OWNER)
         self.assertNotIn(KS, doc(cfg)["values"])
 
     def test_channel_with_unknown_category_is_written(self):
@@ -433,10 +431,10 @@ class Admin(unittest.TestCase):
         self.assertEqual(e["below"], {})
         self.assertEqual(doc(self.cfg)["history"][-1]["role"], "admin")
         # The /settings set_value path marks an admin's write too.
-        MS.set_value(self.cfg, KS_GEN, "off", ADMIN, PLUGINS)
+        MS.set_value(self.cfg, KS_GEN, "off", ADMIN)
         self.assertEqual(doc(self.cfg)["values"][KS_GEN]["role"], "admin")
         MS.set_value(self.cfg, f'servers."{G1}".style.length', "brief",
-                     OWNER, PLUGINS)
+                     OWNER)
         self.assertNotIn("role", doc(self.cfg)["values"]
                          [f'servers."{G1}".style.length'])
 
@@ -536,7 +534,7 @@ class Admin(unittest.TestCase):
         apply(self.cfg, [C(S1, "who.replies", "off")], OWNER)
         st = load(self.cfg)
         self.assertEqual(MS.undo_plan(st, S1, admin_gid=G1), [])
-        self.assertIsNone(MS.undo(self.cfg, S1, ADMIN, PLUGINS,
+        self.assertIsNone(MS.undo(self.cfg, S1, ADMIN,
                                   admin_gid=G1, info=INFO))
         # back to the file's value: the owner's entry goes away
         apply(self.cfg, [C(S1, "who.replies", "when-addressed")], OWNER)
@@ -544,14 +542,14 @@ class Admin(unittest.TestCase):
         self.admin([C(GEN, "who.replies", "off")])
         apply(self.cfg, [C(S1, "style.length", "brief")], OWNER)
         st = load(self.cfg)
-        self.assertEqual(MS.undo(self.cfg, S1, ADMIN, PLUGINS, children=True,
+        self.assertEqual(MS.undo(self.cfg, S1, ADMIN, children=True,
                                  admin_gid=G1, info=INFO), KS_GEN)
         self.assertEqual(value(self.cfg, GEN, "who.replies"),
                          "when-addressed")
         self.assertEqual(doc(self.cfg)["history"][-1]["role"], "admin")
         # another server's admin cannot undo it
         self.admin([C(GEN, "who.replies", "off")])
-        self.assertIsNone(MS.undo(self.cfg, P.server(G2), ADMIN, PLUGINS,
+        self.assertIsNone(MS.undo(self.cfg, P.server(G2), ADMIN,
                                   admin_gid=G2, info=INFO))
 
     def test_admin_undo_never_reverts_an_owner_rewrite(self):
@@ -559,20 +557,20 @@ class Admin(unittest.TestCase):
         admin's Undo no longer reaches it."""
         self.admin([C(S1, "who.replies", "off")])
         apply(self.cfg, [C(S1, "who.replies", "off")], OWNER)
-        self.assertIsNone(MS.undo(self.cfg, S1, ADMIN, PLUGINS,
+        self.assertIsNone(MS.undo(self.cfg, S1, ADMIN,
                                   children=True, admin_gid=G1, info=INFO))
         self.assertTrue(MS.is_paused(load(self.cfg), S1))
 
     def test_fold_keeps_admin_entries_and_unquoted_ids(self):
         self.admin([C(S1, "who.replies", "off")])
         apply(self.cfg, [C(S1, "style.length", "brief")], OWNER)
-        MS.fold(self.cfg, PLUGINS)
+        MS.fold(self.cfg)
         # in config.yaml it would be the owners' own value
         self.assertEqual(doc(self.cfg)["values"][KS]["role"], "admin")
         self.cfg = config(self, BASE.replace(f'"{G1}"', G1)
                           + f'    who:\n      ignore: ["{SPAM}"]\n')
         apply(self.cfg, [C(S1, "who.ignore", "inherit")], OWNER)
-        MS.fold(self.cfg, PLUGINS)
+        MS.fold(self.cfg)
         self.assertEqual(value(self.cfg, S1, "who.ignore"), [])
 
 # ---------------------------------------------------------------------------
@@ -646,7 +644,7 @@ class Presets(unittest.TestCase):
         self.assertEqual(MS.matching_preset(load(cfg), S1), "Community")
         self.assertEqual(MS.preset_changes(load(cfg), "community", S1), [])
         self.assertEqual(len({h["group"] for h in doc(cfg)["history"]}), 1)
-        MS.undo(cfg, S1, OWNER, PLUGINS)
+        MS.undo(cfg, S1, OWNER)
         self.assertIsNone(MS.matching_preset(load(cfg), S1))
         self.assertFalse(MS.group_current(load(cfg), r.group))
         apply(cfg, MS.preset_changes(load(cfg), "work", S1))
@@ -740,7 +738,7 @@ class CLI(unittest.TestCase):
 # 12. Review findings (2026-10-19): one regression test each
 # ---------------------------------------------------------------------------
 def admin_apply(cfg, changes, gid=G1, info=INFO):
-    return MS.apply(cfg, changes, ADMIN, plugins_dir=PLUGINS, role="admin",
+    return MS.apply(cfg, changes, ADMIN, role="admin",
                     admin_gid=gid, info=info)
 
 
@@ -779,27 +777,26 @@ class ReviewHigh(unittest.TestCase):
         # the legacy set_value path (today's /settings)
         cfg = config(self, BASE + "all_servers:\n  who:\n    replies: "
                      "conversational\n")
-        MS.set_value(cfg, KS, "off", ADMIN, PLUGINS)
-        self.assertEqual(MS.set_value(cfg, KS, "off", OWNER, PLUGINS), "off")
+        MS.set_value(cfg, KS, "off", ADMIN)
+        self.assertEqual(MS.set_value(cfg, KS, "off", OWNER), "off")
         with self.assertRaises(MS.SettingsError):
             admin_apply(cfg, [C(S1, "who.replies", "inherit")])
         with self.assertRaises(MS.SettingsError):
-            MS.set_value(cfg, KS, "inherit", ADMIN, PLUGINS)
+            MS.set_value(cfg, KS, "inherit", ADMIN)
 
     def test_h3_roles_are_explicit(self):
         """poc2: who undoes is always stated; an admin never reverts an
         owners' group."""
         cfg = config(self, BASE + "dms:\n  who:\n    dms_from: anyone\n")
         with self.assertRaises(MS.SettingsError):
-            MS.apply(cfg, [C(S1, "style.length", "brief")], OWNER,
-                     plugins_dir=PLUGINS)
+            MS.apply(cfg, [C(S1, "style.length", "brief")], OWNER)
         res = apply(cfg, [C(DMS, "who.dms_from", "owners")])
         for role in (None, "admin"):
             with self.assertRaises(MS.SettingsError):
-                MS.undo_group(cfg, res.group, ADMIN, PLUGINS, role=role)
+                MS.undo_group(cfg, res.group, ADMIN, role=role)
         self.assertEqual(value(cfg, DMS, "who.dms_from"), "owners")
         with self.assertRaises(MS.SettingsError):
-            MS.undo_changes(cfg, DMS, ADMIN, PLUGINS, role="admin")
+            MS.undo_changes(cfg, DMS, ADMIN, role="admin")
 
     def test_h2_admin_cannot_drop_an_owners_pin(self):
         """poc4: resetting an owner's entry was allowed whenever it changed
@@ -834,7 +831,7 @@ class ReviewHigh(unittest.TestCase):
             admin_apply(cfg, [C(RND, "who.replies", "inherit")])
         admin_apply(cfg, [C(RND, "who.replies", "off")])
         apply(cfg, [C(DEF, "who.replies", "off")])
-        MS.undo(cfg, S1, ADMIN, PLUGINS, children=True, admin_gid=G1,
+        MS.undo(cfg, S1, ADMIN, children=True, admin_gid=G1,
                 info=INFO)
         self.assertEqual(value(cfg, RND, "who.replies"), "when-addressed")
 
@@ -864,9 +861,9 @@ class ReviewMedium(unittest.TestCase):
             st = load(cfg)       # still loads (the bot keeps running)
             self.assertEqual(st.overlay, {})
             for fn in (lambda: apply(cfg, [C(S1, "who.replies", "off")]),
-                       lambda: MS.set_value(cfg, KS, "off", OWNER, PLUGINS),
-                       lambda: MS.undo(cfg, S1, OWNER, PLUGINS),
-                       lambda: MS.undo_group(cfg, "g1", OWNER, PLUGINS,
+                       lambda: MS.set_value(cfg, KS, "off", OWNER),
+                       lambda: MS.undo(cfg, S1, OWNER),
+                       lambda: MS.undo_group(cfg, "g1", OWNER,
                                              role="owner")):
                 with self.assertRaises(MS.SettingsError):
                     fn()
@@ -887,7 +884,7 @@ class ReviewMedium(unittest.TestCase):
         admin_apply(cfg, [C(GEN, "who.replies", "when-addressed")])
         apply(cfg, MS.pause_changes(S1))
         self.assertEqual(value(cfg, GEN, "who.replies"), "off")
-        MS.undo(cfg, S1, OWNER, PLUGINS)
+        MS.undo(cfg, S1, OWNER)
         self.assertEqual(value(cfg, GEN, "who.replies"), "when-addressed")
         # an admin's server entry does not outlive Pause everywhere
         admin_apply(cfg, [C(S1, "who.replies", "when-addressed")])
@@ -953,8 +950,7 @@ class ReviewMedium(unittest.TestCase):
 
 def _writer(cfg, gid, n):
     for i in range(n):
-        MS.apply(cfg, [C(P.server(gid), "limits.per_day", 1000 + i)], OWNER,
-                 plugins_dir=PLUGINS, role="owner")
+        MS.apply(cfg, [C(P.server(gid), "limits.per_day", 1000 + i)], OWNER, role="owner")
 
 
 class ReviewLow(unittest.TestCase):
@@ -1033,7 +1029,7 @@ class FuzzAdmin(unittest.TestCase):
                         admin_apply(real, ch)
                     else:
                         ch = "undo"
-                        MS.undo(real, S1, ADMIN, PLUGINS, children=True,
+                        MS.undo(real, S1, ADMIN, children=True,
                                 admin_gid=G1, info=INFO)
                     log.append(f"{kind} {ch}")
                 except MS.SettingsError:

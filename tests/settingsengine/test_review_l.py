@@ -9,7 +9,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fake import G1, MS, OWNER, PLUGINS, SPAM, config, load  # noqa: E402
+from fake import G1, MS, OWNER, SPAM, config, load  # noqa: E402
 
 P = MS.Place
 C = MS.Change
@@ -32,9 +32,8 @@ class Fold(unittest.TestCase):
         cfg = config(self, TWO_SPELLINGS)
         sc = MS.Scope.server(G1)
         self.assertEqual(load(cfg).get("who.ignore", sc), [SPAM])
-        MS.apply(cfg, [C(S1, "limits.per_day", 5)], OWNER,
-                 plugins_dir=PLUGINS, role="owner")
-        MS.fold(cfg, PLUGINS)
+        MS.apply(cfg, [C(S1, "limits.per_day", 5)], OWNER, role="owner")
+        MS.fold(cfg)
         st = load(cfg)
         self.assertEqual(st.get("limits.per_day", sc), 5)
         # The spammer the file ignored is still ignored after a fold.

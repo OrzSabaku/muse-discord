@@ -614,7 +614,6 @@ class Runner:
         the reload was seen."""
         ms = self.settings_module()
         config_path = os.path.join(self.sut.pkg_dir, "config.yaml")
-        plugins_dir = os.path.join(self.sut.pkg_dir, "plugins")
         by = str(self.ids["A"])
         op = next(k for k in ("set", "reset", "undo") if k in arg)
         scope = arg["undo"] if op == "undo" else arg["scope"]
@@ -622,15 +621,14 @@ class Runner:
         mark = self.sut.log_size()
         if op == "set":
             key = ms.format_key(path, arg["set"])
-            ms.set_value(config_path, key, arg["value"], by, plugins_dir)
+            ms.set_value(config_path, key, arg["value"], by)
             what = f"set {key} = {arg['value']!r}"
         elif op == "reset":
             key = ms.format_key(path, arg["reset"])
-            ms.reset(config_path, key, by, plugins_dir)
+            ms.reset(config_path, key, by)
             what = f"reset {key}"
         else:
-            key = ms.undo(config_path, ms.scope_prefix(path), by,
-                          plugins_dir)
+            key = ms.undo(config_path, ms.scope_prefix(path), by)
             if key is None:
                 note = f"settings undo at {scope}: nothing to undo"
                 log(note)

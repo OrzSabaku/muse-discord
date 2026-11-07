@@ -53,8 +53,6 @@ def make_pkg(prefix):
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copy(os.path.join(REPO, f), target)
     shutil.copytree(os.path.join(REPO, "src"), os.path.join(pkg, "src"))
-    shutil.copytree(os.path.join(REPO, "plugins"),
-                    os.path.join(pkg, "plugins"))
     with open(os.path.join(pkg, "config.yaml"), "w") as f:
         f.write(f'owners: ["{A_ID}"]\n')
     return pkg

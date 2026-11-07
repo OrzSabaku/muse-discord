@@ -104,7 +104,7 @@ class Broker:
 
     def context(self, for_id, nonce):
         try:
-            settings = MS.load(str(self.config), str(self.root / 'plugins'))
+            settings = MS.load(str(self.config))
             level = settings.resolve(MS.Scope.everywhere())['abilities.external_apps']
         except (MS.SettingsError, OSError, ValueError):
             raise Refused('INVALID_SETTINGS') from None

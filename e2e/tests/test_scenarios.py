@@ -85,7 +85,7 @@ class Shipped(unittest.TestCase):
                 path = os.path.join(tmp, "config.yaml")
                 with open(path, "w") as f:
                     yaml.safe_dump(cfg, f)
-                st = muse_settings.load(path, os.path.join(REPO, "plugins"))
+                st = muse_settings.load(path)
                 self.assertEqual(st.owners, [A])
                 self.assertFalse(st.updates_notify)
                 self.assertFalse(st.presence_enabled)

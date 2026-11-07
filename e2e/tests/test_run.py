@@ -322,8 +322,6 @@ class SettingsSUT(FakeSUT):
         super().__init__(tree, run_dir, base_config, token)
         shutil.copytree(os.path.join(REPO, "src"),
                         os.path.join(self.pkg_dir, "src"))
-        shutil.copytree(os.path.join(REPO, "plugins"),
-                        os.path.join(self.pkg_dir, "plugins"))
         self.log = ""
         self.overlays = []  # the overlay doc at each logged reload
         self.react = self.reload_line

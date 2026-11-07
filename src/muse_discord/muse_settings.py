@@ -298,111 +298,21 @@ TOP_DISCORD_EDITABLE = ("presence.status", "presence.kind",
 
 
 # ---------------------------------------------------------------------------
-# Plugin manifests (plugins/<folder>/plugin.yaml)
+# Legacy media configuration
 # ---------------------------------------------------------------------------
-class Manifest:
-    def __init__(self, pid, folder, specs, safe_in_new_servers,
-                 legacy_names=(), core_group=None):
-        self.id = pid
-        self.core_group = core_group  # a plugin that is core now
-        self.folder = folder
+class LegacyMediaSettings:
+    """Old media_generation parameter names mapped to core media settings."""
+    def __init__(self, group, specs):
+        self.core_group = group
         self.specs = specs
-        self.safe_in_new_servers = safe_in_new_servers
-        self.legacy_names = tuple(legacy_names)
 
     def spec_for(self, key):
-        """The spec for a settings key or an old param name."""
         if key in self.specs:
             return key, self.specs[key]
-        for k, s in self.specs.items():
-            if s.legacy == key:
-                return k, s
+        for k, spec in self.specs.items():
+            if spec.legacy == key:
+                return k, spec
         return None, None
-
-
-_MANIFEST_TYPES = ("on-off", "choice", "number", "text", "channel",
-                   "people", "phrases", "any")
-
-
-def load_manifests(plugins_dir):
-    """{plugin id: Manifest} for every plugins/<folder>/plugin.yaml. A
-    manifest with a `settings:` block is used as is; an old one with only
-    `params:` ({default, per_guild} shapes included) gets a derived,
-    untyped manifest so its config keeps loading."""
-    if not plugins_dir or not os.path.isdir(plugins_dir):
-        return {}
-    sig = []
-    for folder in sorted(os.listdir(plugins_dir)):
-        try:
-            st_ = os.stat(os.path.join(plugins_dir, folder, "plugin.yaml"))
-            sig.append((folder, st_.st_mtime_ns, st_.st_size, st_.st_ino))
-        except OSError:
-            continue
-    key = os.path.abspath(plugins_dir)
-    hit = _MANIFEST_CACHE.get(key)
-    if hit is not None and hit[0] == sig:
-        return dict(hit[1])
-    out = _load_manifests(plugins_dir)
-    _MANIFEST_CACHE[key] = (sig, out)
-    return dict(out)
-
-
-_MANIFEST_CACHE = {}   # plugins dir -> (file signature, manifests)
-
-
-def _load_manifests(plugins_dir):
-    out = {}
-    for folder in sorted(os.listdir(plugins_dir)):
-        path = os.path.join(plugins_dir, folder, "plugin.yaml")
-        if not os.path.isfile(path):
-            continue
-        try:
-            with open(path) as f:
-                meta = _yload(f) or {}
-        except (OSError, yaml.YAMLError) as e:
-            raise SettingsError(f"plugins/{folder}/plugin.yaml: unreadable "
-                                f"({e})")
-        pid = str(meta.get("id") or folder)
-        if {pid, folder} & (set(MOVED_PLUGINS) | set(RETIRED_PLUGINS)):
-            continue  # a leftover copy of a plugin that is gone now
-        specs = {}
-        raw = meta.get("settings")
-        if isinstance(raw, dict):
-            for key, s in raw.items():
-                if not isinstance(s, dict) \
-                        or s.get("type") not in _MANIFEST_TYPES:
-                    raise SettingsError(
-                        f"plugins/{folder}/plugin.yaml: settings.{key}: "
-                        f"type must be one of {', '.join(_MANIFEST_TYPES)}")
-                default = s.get("default")
-                if s["type"] == "on-off":
-                    default = _norm_onoff(default)
-                elif s["type"] == "number" and default == "none":
-                    default = None
-                specs[str(key)] = Spec(
-                    s["type"], default,
-                    s.get("scopes") or ["everywhere", "dms", "all_servers",
-                                        "server", "channel"],
-                    values=s.get("values") or (),
-                    min=s.get("min", 0 if s["type"] == "number" else None),
-                    max=s.get("max"), none=bool(s.get("none")),
-                    maxlen=s.get("maxlen"), risky=bool(s.get("risky")),
-                    discord_editable=s.get("discord_editable", True)
-                    is not False,
-                    allow_names=bool(s.get("allow_names")),
-                    hidden=bool(s.get("hidden")), legacy=s.get("legacy"))
-        else:
-            for key, p in (meta.get("params") or {}).items():
-                default = p.get("default") if isinstance(p, dict) else None
-                specs[str(key)] = Spec("any", copy.deepcopy(default),
-                                       "EDASC")
-        if "enabled" not in specs:
-            specs["enabled"] = Spec("on-off", False, "EDASC")
-        safe = meta.get("safe_in_new_servers")
-        out[pid] = Manifest(pid, folder, specs,
-                            True if safe is None else bool(safe),
-                            legacy_names=[folder] if folder != pid else [])
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -745,7 +655,7 @@ def _old_cap(v, name):
     return max(0, int(n)) if n == int(n) or n < 0 else int(n) + 1
 
 
-def map_old(raw, manifests):
+def map_old(raw):
     """Map an old-layout config dict onto the new schema. Returns
     (new-layout dict, aliases, respond_to, lines). aliases maps a server
     key that is not an id (old per_guild keys could be server names) to
@@ -873,27 +783,13 @@ def map_old(raw, manifests):
         man = None
         if name in MOVED_PLUGINS:
             man = _moved_manifest(name)
-        else:
-            for m in manifests.values():
-                if name == m.id or name in m.legacy_names:
-                    man = m
         if man is None or not isinstance(block, dict):
             continue  # the old loader ignored config for absent plugins
-        pid = man.id
         label = f"plugins.{name}"
-        dest = man.core_group or f"plugins.{pid}"
+        dest = man.core_group
         if block.get("enabled"):
             put(out, f"everywhere.{dest}.enabled", "on")
             lines.append(f"{label}.enabled -> everywhere.{dest}.enabled")
-            if not man.safe_in_new_servers:
-                # Off in every server (built in for all_servers) except
-                # the old active ones: such a plugin ran only there.
-                for gid in active:
-                    put(server_block(gid), f"plugins.{pid}.enabled", "on")
-                lines.append(f"behavior.active_guild_ids -> servers.<id>."
-                             f"plugins.{pid}.enabled: on for each of "
-                             f"{len(active)} active server(s); other "
-                             f"servers stay off (all_servers)")
         for key, val in block.items():
             if key in ("enabled", "per_guild"):
                 continue
@@ -937,7 +833,7 @@ def _moved_manifest(name):
     group = MOVED_PLUGINS[name]
     specs = {k.split(".", 1)[1]: s for k, s in CORE.items()
              if k.startswith(group + ".")}
-    return Manifest(group, name, specs, True, core_group=group)
+    return LegacyMediaSettings(group, specs)
 
 
 def _put_plugin(block, man, key, spec, value):
@@ -953,31 +849,19 @@ def _put_plugin(block, man, key, spec, value):
         return  # null meant "the default" for these
     if value is None and spec.type == "number":
         value = "none"
-    if man.core_group:
-        block.setdefault(man.core_group, {})[key] = value
-    else:
-        block.setdefault("plugins", {}).setdefault(man.id, {})[key] = value
+    block.setdefault(man.core_group, {})[key] = value
 
 
 # ---------------------------------------------------------------------------
 # Parsing a new-layout dict into layer values
 # ---------------------------------------------------------------------------
 CHANNEL_ONLY = ("a channel or category may set only replies, notes, "
-                "media.enabled, proactive.enabled and "
-                "plugins.<plugin>.enabled")
+                "media.enabled and proactive.enabled")
 
 
-def spec_of(key, manifests):
-    """The Spec of a settings key (core, bot-wide or a plugin's in
-    manifests), else None."""
-    if key in CORE:
-        return CORE[key]
-    if key in TOP:
-        return TOP[key]
-    parts = key.split(".", 2)
-    if len(parts) == 3 and parts[0] == "plugins" and parts[1] in manifests:
-        return manifests[parts[1]].specs.get(parts[2])
-    return None
+def spec_of(key):
+    """The Spec of a core or bot-wide settings key, else None."""
+    return CORE.get(key) or TOP.get(key)
 
 
 def _settable_at(spec, kind, key):
@@ -989,9 +873,8 @@ def _settable_at(spec, kind, key):
 
 
 class _Parser:
-    def __init__(self, file_label, manifests, old=False):
+    def __init__(self, file_label, old=False):
         self.file = file_label
-        self.manifests = manifests
         self.old = old
         self.errors = []
         self.values = {}       # (path, key) -> value
@@ -1003,7 +886,7 @@ class _Parser:
         self.errors.append(f"{self.file}: {where}: {msg}")
 
     def spec(self, key):
-        return spec_of(key, self.manifests)
+        return spec_of(key)
 
     def set(self, path, key, value, where, old_name=False):
         """old_name: key came from a moved setting's old spelling, which
@@ -1015,18 +898,7 @@ class _Parser:
             return
         if spec is None:
             if key.startswith("plugins."):
-                parts = key.split(".", 2)
-                if len(parts) < 3:
-                    self.err(where, "expected plugins.<plugin>.<setting>")
-                elif parts[1] not in self.manifests:
-                    self.err(where, f"unknown plugin \"{parts[1]}\"; "
-                             f"installed: "
-                             f"{', '.join(sorted(self.manifests)) or 'none'}")
-                else:
-                    m = self.manifests[parts[1]]
-                    self.err(where, f"plugin {parts[1]} has no setting "
-                             f"\"{parts[2]}\"; valid: "
-                             f"{', '.join(k for k, s in m.specs.items() if not s.hidden)}")
+                self.err(where, f"unknown setting {key}: plugin support was removed")
             else:
                 group = key.split(".")[0]
                 valid = sorted(k for k in CORE if k.startswith(group + "."))
@@ -1170,7 +1042,6 @@ class Settings:
         self.raw = {}
         self.server_files = {}
         self.mapping = []
-        self.manifests = {}
         self.file_values = {}
         self.overlay = {}         # (path, key) -> entry dict (active ones)
         self.overlay_doc = {}
@@ -1235,11 +1106,6 @@ class Settings:
                 default = "when-addressed"
             return True, copy.deepcopy(default), ("built-in",)
         if path == ("builtin_all_servers",):
-            if key.startswith("plugins.") and key.endswith(".enabled"):
-                pid = key.split(".")[1]
-                m = self.manifests.get(pid)
-                if m is not None and not m.safe_in_new_servers:
-                    return True, False, ("built-in", "all_servers")
             return False, None, None
         ov = self.overlay.get((path, key))
         if ov is not None:
@@ -1251,13 +1117,10 @@ class Settings:
         return False, None, None
 
     def spec(self, key):
-        return spec_of(key, self.manifests)
+        return spec_of(key)
 
     def keys(self):
-        out = list(CORE)
-        for pid, m in sorted(self.manifests.items()):
-            out += [f"plugins.{pid}.{k}" for k in m.specs]
-        return out
+        return list(CORE)
 
     def chain(self, scope):
         """The layer paths for a scope, least specific first, each with a
@@ -1285,7 +1148,7 @@ class Settings:
         return out
 
     def resolve(self, scope):
-        """{key: value} for every core and plugin key at this scope."""
+        """{key: value} for every core key at this scope."""
         ck = scope.key()
         if ck in self._cache:
             return self._cache[ck]
@@ -1444,30 +1307,6 @@ class Settings:
         if scope.guild_id:
             return ["everywhere", f"server:{scope.guild_id}"]
         return ["everywhere"]
-
-    def plugin_enabled(self, pid, scope):
-        return bool(self.get(f"plugins.{pid}.enabled", scope))
-
-    def plugin_values(self, pid, scope):
-        m = self.manifests.get(pid)
-        if m is None:
-            return {}
-        res = self.resolve(scope)
-        return {k: res.get(f"plugins.{pid}.{k}") for k in m.specs}
-
-    def plugin_enabled_anywhere(self, pid):
-        """True when some layer turns the plugin on (it must be loaded)."""
-        key = f"plugins.{pid}.enabled"
-        m = self.manifests.get(pid)
-        if m is not None and m.specs["enabled"].default:
-            return True
-        for (path, k), v in self.file_values.items():
-            if k == key and v and (path, k) not in self.overlay:
-                return True
-        for (path, k), e in self.overlay.items():
-            if k == key and e.get("value") != "inherit" and e["_norm"]:
-                return True
-        return False
 
     def servers_listed(self):
         """{server id: label} for every server the files mention."""
@@ -1719,7 +1558,7 @@ def _write_overlay_doc(path, doc):
     atomic_write_text(path, OVERLAY_HEADER + body)
 
 
-def load(config_path, plugins_dir=None, overlay_path=None,
+def load(config_path, overlay_path=None,
          legacy_defaults=False, text=None):
     """Load and validate config.yaml (+ its overlay). Raises SettingsError
     on an invalid hand-written file; overlay problems never raise (the
@@ -1729,10 +1568,6 @@ def load(config_path, plugins_dir=None, overlay_path=None,
     st.path = config_path
     st.overlay_path = overlay_path or overlay_path_for(config_path)
     st.legacy_defaults = legacy_defaults
-    if plugins_dir is None:
-        plugins_dir = os.path.join(os.path.dirname(os.path.abspath(
-            __file__)), "plugins")
-    st.manifests = load_manifests(plugins_dir)
     label = os.path.basename(config_path)
     try:
         raw = _yload(text) if text is not None \
@@ -1751,12 +1586,11 @@ def load(config_path, plugins_dir=None, overlay_path=None,
     data = raw
     if st.layout == "old":
         st.notice = NOTICE
-        data, aliases, st.respond_to, st.mapping = map_old(raw,
-                                                           st.manifests)
+        data, aliases, st.respond_to, st.mapping = map_old(raw)
         label += " (old layout, mapped)"
     else:
         aliases = {}
-    p = _Parser(label, st.manifests, old=st.layout == "old")
+    p = _Parser(label, old=st.layout == "old")
     # Server names the bot has seen (state.json), for "did you mean".
     p.known = lambda: _known_guilds(os.path.join(os.path.dirname(
         os.path.abspath(config_path)), "state.json"))
@@ -2150,7 +1984,7 @@ def _write_entry(st, doc, path, key, spec, value, by, now, group=None,
     return keystr
 
 
-def set_value(config_path, keystr, value, by, plugins_dir=None, group=None,
+def set_value(config_path, keystr, value, by, group=None,
               role=None):
     """Record a Discord-side change: overlay entry {value, base, by, at}
     plus a history line (last HISTORY_CAP kept). value "inherit" resets
@@ -2161,7 +1995,7 @@ def set_value(config_path, keystr, value, by, plugins_dir=None, group=None,
     owner); group: a history group id (see apply)."""
     group = _check_group(group)
     with overlay_lock(overlay_path_for(config_path)):
-        st = load(config_path, plugins_dir)
+        st = load(config_path)
         try:
             path, key = parse_key(keystr)
         except ValueError as e:
@@ -2190,10 +2024,10 @@ def set_value(config_path, keystr, value, by, plugins_dir=None, group=None,
     return value
 
 
-def reset(config_path, keystr, by, plugins_dir=None, group=None, role=None):
+def reset(config_path, keystr, by, group=None, role=None):
     """Act as if this scope did not set the key (writes inherit; nothing
     when the scope sets nothing there already: NO_CHANGE)."""
-    return set_value(config_path, keystr, "inherit", by, plugins_dir, group,
+    return set_value(config_path, keystr, "inherit", by, group,
                      role)
 
 
@@ -2386,7 +2220,7 @@ def undo_plan(st, prefix, children=False, admin_gid=None):
             for _i, _ks, path, key, target in picks]
 
 
-def undo_changes(config_path, prefix, by, plugins_dir=None, children=False,
+def undo_changes(config_path, prefix, by, children=False,
                  admin_gid=None, info=None, role=None, expect=None,
                  undo_id=None):
     """Revert the newest change still in effect at one place, and with
@@ -2402,7 +2236,7 @@ def undo_changes(config_path, prefix, by, plugins_dir=None, children=False,
     strings reverted, newest first ([]: nothing to undo)."""
     undo_id = _check_group(undo_id)
     with overlay_lock(overlay_path_for(config_path)):
-        st = load(config_path, plugins_dir)
+        st = load(config_path)
         doc = _read_overlay_doc(st.overlay_path, strict=True)
         accept = _admin_accept(st.owners, admin_gid) if admin_gid else None
         picks = _undo_group(doc, _undo_match(prefix, children), accept)
@@ -2423,14 +2257,14 @@ def undo_changes(config_path, prefix, by, plugins_dir=None, children=False,
     return done
 
 
-def undo(config_path, prefix, by, plugins_dir=None, children=False,
+def undo(config_path, prefix, by, children=False,
          admin_gid=None, info=None, expect=None):
     """Revert the newest Discord change made at one scope (prefix as
     scope_prefix gives; "everywhere" includes the bot-wide settings) that
     is still in effect, with the rest of its group (see undo_changes).
     Repeated calls step further back. Returns the key string of the
     newest change reverted, or None when there is nothing to undo."""
-    done = undo_changes(config_path, prefix, by, plugins_dir, children,
+    done = undo_changes(config_path, prefix, by, children,
                         admin_gid, info, expect=expect)
     return done[0] if done else None
 
@@ -2452,17 +2286,17 @@ def dump_config(data):
                           allow_unicode=True, width=78)
 
 
-def fold(config_path, plugins_dir=None):
+def fold(config_path):
     """Copy the overlay's values (not server admins' entries) into
     config.yaml and clear them. The file is rewritten (comments are
     lost); a timestamped backup is kept. Returns (backup path, [folded
     keys]), or (None, []) when there is nothing to fold."""
     with overlay_lock(overlay_path_for(config_path)):
-        return _fold(config_path, plugins_dir)
+        return _fold(config_path)
 
 
-def _fold(config_path, plugins_dir):
-    st = load(config_path, plugins_dir)
+def _fold(config_path):
+    st = load(config_path)
     if st.layout == "old":
         raise SettingsError("config.yaml uses the old layout; run "
                             "`bin/settings.py migrate` first")
@@ -2608,10 +2442,10 @@ def _known_guilds(state_path):
         return {}
 
 
-def build_migrated(config_path, plugins_dir=None, state_path=None):
+def build_migrated(config_path, state_path=None):
     """(new config text, mapping lines, notes) for an old-layout file, or
     raise SettingsError explaining why it cannot be converted as is."""
-    st = load(config_path, plugins_dir)
+    st = load(config_path)
     if st.layout != "old":
         raise SettingsError("config.yaml already uses the new layout")
     if st.respond_to != {"mention", "reply_to_bot"}:
@@ -2620,7 +2454,7 @@ def build_migrated(config_path, plugins_dir=None, state_path=None):
             "new layout always answers both an @mention and a reply to the "
             "bot. Remove behavior.respond_to (accepting that) and run "
             "migrate again.")
-    data, aliases, _r, lines = map_old(st.raw, st.manifests)
+    data, aliases, _r, lines = map_old(st.raw)
     known = _known_guilds(state_path or os.path.join(
         os.path.dirname(os.path.abspath(config_path)), "state.json"))
     by_name = {}
@@ -2726,16 +2560,16 @@ def compare(old_st, new_st, known=None):
     return diffs
 
 
-def migrate(config_path, plugins_dir=None, state_path=None, write=True):
+def migrate(config_path, state_path=None, write=True):
     """Convert an old-layout config.yaml. Verifies (by resolving both for
     every known scope) that nothing but the announced who.replies default
     changes, refusing otherwise. Writes a timestamped backup, then the new
     file. Returns (backup path or None, text, lines, notes)."""
-    text, lines, notes, _st = build_migrated(config_path, plugins_dir,
+    text, lines, notes, _st = build_migrated(config_path,
                                              state_path)
-    legacy = load(config_path, plugins_dir, legacy_defaults=True)
+    legacy = load(config_path, legacy_defaults=True)
     try:
-        new = load(config_path, plugins_dir, text=text)
+        new = load(config_path, text=text)
     except SettingsError as e:
         raise SettingsError("the converted file would not validate (a bug; "
                             "nothing was written):\n" + str(e))
@@ -2775,7 +2609,7 @@ class Place:
     """Where a change applies, in the words people use: defaults (every
     server and DM that does not set its own), dms, a server, or a
     channel. Defaults maps each key to its real layer: who.replies,
-    media.enabled and plugins.*.enabled to all_servers, who.dms_from
+    media.enabled and proactive.enabled to all_servers, who.dms_from
     to dms, bot-wide keys to the top level, everything else to
     everywhere. A channel may carry its category (category_id) so values
     resolve as they do for messages there."""
@@ -2853,10 +2687,8 @@ class Place:
 
 
 def _is_enabled_key(key):
-    """An Extras on/off key: media.enabled, proactive.enabled or a
-    plugin's enabled."""
-    return key in ("media.enabled", "proactive.enabled") or (
-        key.startswith("plugins.") and key.endswith(".enabled"))
+    """A core Extras on/off key."""
+    return key in ("media.enabled", "proactive.enabled")
 
 
 def format_place(place):
@@ -2987,25 +2819,14 @@ def place_keys(st, place, tier):
     Replies per person per day, Extras on/off), "more", or "hidden"
     (valid in config.yaml and still Discord-editable as far as the
     overlay goes, but not offered: owner requests, status kind, never
-    share, a plugin's hidden settings). The UI may show a hidden key
+    share, hidden settings). The UI may show a hidden key
     read only."""
     if tier not in ("basics", "more", "hidden"):
         raise ValueError(tier)
-    plugins = sorted(st.manifests)
     basics = [k for k in BASIC_KEYS
               if k != "who.dms_from" or place.kind in ("defaults", "dms")]
-    basics += [f"plugins.{p}.enabled" for p in plugins]
     more = list(MORE_KEYS)
     hidden = list(HIDDEN_KEYS)
-    for p in plugins:
-        for k, spec in st.manifests[p].specs.items():
-            if k == "enabled":
-                continue
-            key = f"plugins.{p}.{k}"
-            if spec.hidden or not spec.discord_editable:
-                hidden.append(key)
-            else:
-                more.append(key)
     if place.kind == "defaults":
         more += list(BOT_WIDE_KEYS)
     if place.kind == "channel":
@@ -3115,12 +2936,6 @@ def label(key):
     """A setting's name in plain words (raw key only for unknown ones)."""
     if key in LABELS:
         return LABELS[key]
-    if key.startswith("plugins."):
-        parts = key.split(".", 2)
-        if len(parts) == 3:
-            name = parts[1].replace("_", " ").capitalize()
-            return f"{name} (on/off)" if parts[2] == "enabled" \
-                else f"{name}: {parts[2].replace('_', ' ')}"
     return key
 
 
@@ -3620,7 +3435,7 @@ class ApplyResult:
         return [p.describe(names) for p in self.written]
 
 
-def apply(config_path, changes, by, group=None, plugins_dir=None,
+def apply(config_path, changes, by, group=None,
           role=None, admin_gid=None, info=None):
     """Write several changes atomically: one overlay file write, one
     history group id (group, or a fresh one; 24 characters at most) on
@@ -3636,7 +3451,7 @@ def apply(config_path, changes, by, group=None, plugins_dir=None,
     if role not in ("owner", "admin"):
         raise SettingsError(f"role {role!r}: say owner or admin")
     with overlay_lock(overlay_path_for(config_path)):
-        st = load(config_path, plugins_dir)
+        st = load(config_path)
         if role == "admin":
             if not admin_gid:
                 raise SettingsError("an admin change needs the admin's "
@@ -3786,7 +3601,7 @@ def _revert(st, doc, picks, by, role=None, ugroup=None):
     return done
 
 
-def undo_group(config_path, group, by, plugins_dir=None, role=None,
+def undo_group(config_path, group, by, role=None,
                undo_id=None):
     """Undo one specific group (an "[Undo]" under a "Done: ..." reply),
     as an owner (role "owner"; server admins undo through undo() with
@@ -3800,7 +3615,7 @@ def undo_group(config_path, group, by, plugins_dir=None, role=None,
                             "Undo goes through undo(..., admin_gid=...)")
     undo_id = _check_group(undo_id)
     with overlay_lock(overlay_path_for(config_path)):
-        st = load(config_path, plugins_dir)
+        st = load(config_path)
         doc = _read_overlay_doc(st.overlay_path, strict=True)
         lines = _group_lines(doc, group)
         if not lines:
@@ -4195,7 +4010,7 @@ def preset_changes(st, name, place, info=None, big="refuse"):
     sc = Scope.server(place.guild_id)
     for key, value in values.items():
         if st.spec(key) is None or key in skip:
-            continue  # a plugin that is not installed, or skipped
+            continue  # a setting omitted by this preset
         if isinstance(value, tuple):
             cond, value = value
             if cond == _IF_MEDIA and not st.get("media.enabled", sc):
@@ -4559,21 +4374,6 @@ def assess(st, changes, info=None, names=None, named=()):
                             f"{BOT_EXCHANGE_RISKY} in a row), each answer "
                             f"a Muse turn.")
 
-    # Plugin settings their manifest marks risky.
-    for ch in changes:
-        spec = st.spec(ch.key)
-        if ch.key in CORE or ch.key in TOP \
-                or spec is None or not spec.risky:
-            continue
-        path = change_path(st, ch)
-        sc = _scope_for(ch.place, ch.key, path)
-        if sc is None:
-            continue
-        if loosens(ch.key, st.get(ch.key, sc), after.get(ch.key, sc),
-                   spec) is not False:
-            out.warnings.append(f"{label(ch.key)} is marked risky by its "
-                                f"plugin.")
-
     # Notes.
     def allow_ineffective(s):
         r = s.resolve(Scope.dm())
@@ -4594,12 +4394,11 @@ class Watcher:
     overlay changes (an mtime/size/inode check per call; no reading).
     A reload that fails validation keeps the previous settings."""
 
-    def __init__(self, config_path, plugins_dir=None):
+    def __init__(self, config_path):
         self.config_path = config_path
-        self.plugins_dir = plugins_dir
         self.overlay_path = overlay_path_for(config_path)
         self._sig = self._signature()
-        self.current = load(config_path, plugins_dir)
+        self.current = load(config_path)
         self.error = None
 
     def _signature(self):
@@ -4619,7 +4418,7 @@ class Watcher:
             return False, None
         self._sig = sig
         try:
-            new = load(self.config_path, self.plugins_dir)
+            new = load(self.config_path)
         except SettingsError as e:
             self.error = str(e)
             return False, self.error

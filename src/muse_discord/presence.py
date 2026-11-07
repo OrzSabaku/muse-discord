@@ -78,7 +78,7 @@ def open_settings():
     if len(sys.argv) > 2 and sys.argv[1] == "--config":
         path = sys.argv[2]
     try:
-        return muse_settings.Watcher(path, os.path.join(BASE_DIR, "plugins"))
+        return muse_settings.Watcher(path)
     except muse_settings.SettingsError as e:
         print(f"CONFIG ERROR: config.yaml is invalid; not starting.\n{e}",
               flush=True)

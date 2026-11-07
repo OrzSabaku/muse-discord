@@ -57,18 +57,6 @@
 - CLIの既読位置はモニターの配信状態から独立する。[CLI・MCP](TOOLS.md) を参照。
 - 外部アプリは `plan`→`execute`。本人DM・現在の権限・5分の期限を確認し、同じ計画を再実行しない。[設定と承認](EXTERNAL_APPS.md) を参照。
 
-## Plugin hooks
-
-[plugins/README.md](../plugins/README.md) が最小例です。プラグインはモニターと同じ権限で動くため、信頼するコードだけを導入します。
-
-| hook | 関数 | タイミング |
-| --- | --- | --- |
-| `gate_message` | `(ctx, msg, guild_id) -> dict \| None` | キュー投入時。返り値を項目へ追加するが、生成許可や外部アプリ権限は付与できない |
-| `generation_sent` | `(ctx, outbox_item)` | 生成添付の送信後 |
-
-`ctx` は `state`・`scope`・解決済み `settings`・上限情報を持ち、`gate_message` では `owners`・`author_matches` も使えます。
-`api` は `log` と `setting` を提供します。宣言する設定の型・範囲は `muse_settings.load_manifests` を参照してください。
-
 ## 検証
 
 ```bash

@@ -18,7 +18,6 @@ sys.dont_write_bytecode = True
 from muse_discord import muse_settings as MS  # noqa: E402
 from common import redirect_files  # noqa: E402
 
-PLUGINS = os.path.join(MUT, "plugins")
 
 OWNER = "11100000000000000001"
 OWNER2 = "11100000000000000002"
@@ -77,7 +76,7 @@ def config(test, text=BASE, overlay=None, state=None):
 
 
 def load(cfg):
-    return MS.load(cfg, PLUGINS)
+    return MS.load(cfg)
 
 
 def doc(cfg):

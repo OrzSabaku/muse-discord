@@ -124,7 +124,6 @@ def invite_url(app_id):
     return f"https://discord.com/oauth2/authorize?{q}"
 
 
-PLUGINS_DIR = os.path.join(PKG_DIR, "plugins")
 
 
 def settings_module():
@@ -137,7 +136,7 @@ def settings_module():
 def load_settings(config_path):
     """config.yaml through muse_settings, as the bot loads it. Raises
     muse_settings.SettingsError."""
-    return settings_module().load(config_path, PLUGINS_DIR)
+    return settings_module().load(config_path)
 
 
 def token_path(where):

@@ -395,8 +395,8 @@ class Ctx(unittest.TestCase):
         c = self.ctx()
         seen = []
 
-        def fake_undo(config_path, prefix, by, plugins_dir=None):
-            seen.append((config_path, prefix, by, plugins_dir,
+        def fake_undo(config_path, prefix, by):
+            seen.append((config_path, prefix, by,
                          self.mod._OVERLAY_LOCK._is_owned()))
             return f"{prefix}.style.length"
         had = getattr(self.mod.MS, "undo", None)
@@ -412,7 +412,7 @@ class Ctx(unittest.TestCase):
         self.assertEqual(r, f'servers."{G1}".style.length')
         self.assertEqual(seen, [(self.mod._SETTINGS.config_path,
                                  f'servers."{G1}"', OWNER,
-                                 self.mod.PLUGINS_DIR, True)])
+                                 True)])
 
     def test_reload_hooks_run_on_main_thread_only(self):
         ran = []

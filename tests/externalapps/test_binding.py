@@ -50,8 +50,6 @@ everywhere:
         module = load_monitor(config)
         state, queue = module.load_state(), []
         msg = dmsg(OWNER, 'read my calendar')
-        # Plugins cannot attach a wider grant: monitor overwrites their card.
-        module.call_hook = lambda *args, **kwargs: [{'external_apps': {'eligible': True, 'level': 'write'}}]
         with quiet():
             self.assertTrue(module.enqueue_message(msg, 'owner DM', state, queue, dm=True))
         self.assertEqual(queue[0]['external_apps'], {'eligible': True, 'level': 'read-only'})

@@ -143,7 +143,7 @@ class OwnerMemory(Base):
         with open(path, "w") as f:
             f.write(f'bot:\n  owners:\n    user_ids: ["{OWNER2}"]\n'
                     f'memory:\n  save_dms: off\n')
-        st = self.mod.MS.load(path, self.mod.PLUGINS_DIR)
+        st = self.mod.MS.load(path)
         self.assertFalse(st.top("memory.save_dms"))
 
 
