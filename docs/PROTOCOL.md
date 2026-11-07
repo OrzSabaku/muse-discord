@@ -1,6 +1,6 @@
 # 開発仕様
 
-実行用指示は `prompts/`、設定の定義は `src/muse_discord/muse_settings.py`、各機能の詳細は実装とテストを正とします。
+実行用指示は `prompts/`、設定の型・初期値・制約の定義は `src/muse_discord/settings_schema.py`、各機能の詳細は実装とテストを正とします。
 この文書では、変更時に守る契約だけを扱います。
 
 ## 構成
@@ -8,6 +8,7 @@
 | 処理 | 主な実装 |
 | --- | --- |
 | 受信・キュー・返信・認可 | `src/muse_discord/monitor.py` |
+| 設定の型・検証 | `src/muse_discord/settings_schema.py`（Pydantic） |
 | 設定の解決・画面 | `src/muse_discord/muse_settings.py`・`src/muse_discord/settings_ui.py` |
 | プロセス監視・プレゼンス | `bin/watchdog.sh`・`src/muse_discord/presence.py` |
 | 通知・自発メッセージ | `src/muse_discord/muse_watches.py`・`src/muse_discord/proactive.py` |
@@ -77,7 +78,7 @@ node --test telemetry/worker/test/worker.test.js
 2. 最新で変更のない `main` から `bin/release.sh X.Y.Z` を実行する。確認後にタグをpushし、Releaseを作る。
 3. 不具合は新しいパッチ版で修正する。公開済みタグを移動・削除しない。
 
-既存設定の互換性とデフォルトを保ち、所有者の `persona.md` を変更しません。
+設定形式を変えた場合は設定例とテストを更新し、所有者の `persona.md` は変更しません。
 詳細は `bin/release.sh` と `.github/workflows/release.yml` にあります。
 
 ## 出典

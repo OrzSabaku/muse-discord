@@ -64,7 +64,7 @@ python3 bin/render-worker-prompt.py --media none
 生成メディアを使っている場合は、`--media` を従来の値に合わせます。個別に変更したseamも反映します。
 `CHANGELOG.md` の **Action needed**、`config.example.yaml` の差分、[フック登録](SETUP.md#4-museのフック登録) を確認します。
 フックをコピーして登録している場合はコピーも更新します。MCP・外部アプリの依存は [CLI・MCP](TOOLS.md) を参照してください。
-旧形式の設定はそのまま読めます。変換する場合は `bin/settings.py migrate --dry-run` で差分を確認してから実行し、生成されたバックアップを保持します。
+設定は現行形式のみ対応します。`config.example.yaml` に合わせて編集し、`validate` で確認します。
 
 起動コマンドは `bash bin/watchdog.sh` です。cronなどに旧パスを登録している場合は更新します。
 

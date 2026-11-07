@@ -77,6 +77,7 @@ Museの記憶・接続済みサービス・承認画面の動作も導入先で�
 
 設定の見本は [config.example.yaml](../config.example.yaml)。ファイル編集後は `bin/settings.py validate` で確認します。
 Discordの `/settings` や設定CLIによる変更は `config.discord.yaml` に保存され、同じ箇所のファイル変更が優先します。
+旧形式の自動変換はありません。整数は数値、無制限は `null`、ユーザーIDは引用符で囲んだ文字列のリストで指定します。
 DMの会話による設定変更はできません。Discordの `/settings`、設定CLI、YAMLファイルのいずれかを使います。
 
 ```bash
