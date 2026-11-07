@@ -110,7 +110,7 @@ def make_pkg():
     # Keep the shipped placeholder in the test fixtures, independent of
     # the real install's missing or owner-customized persona.md.
     shutil.copy2(os.path.join(HERE, "fixtures", "persona.md"), pkg)
-    for d in ("bin", "plugins", "src"):
+    for d in ("bin", "src"):
         shutil.copytree(os.path.join(MUT_DIR, d), os.path.join(pkg, d))
     home = os.path.join(root, "home")
     os.makedirs(home)
