@@ -38,7 +38,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
         # is attempted directly and dies, so Connection must hand the
         # environment's proxy over.
         with patch.dict(
-            os.environ, {"HTTPS_PROXY": "http://proxy.example:3128"}
+            os.environ, {"HTTPS_PROXY": "http://proxy.example:3128"}, clear=True
         ):
             client = DC.Connection(
                 self.inbox,
@@ -55,9 +55,28 @@ class Connection(unittest.IsolatedAsyncioTestCase):
                 await client.close()
 
     async def test_no_proxy_environment_means_no_proxy(self):
-        with patch.dict(os.environ):
-            os.environ.pop("HTTPS_PROXY", None)
-            os.environ.pop("https_proxy", None)
+        with patch.dict(os.environ, {}, clear=True):
+            client = DC.Connection(
+                self.inbox,
+                self.status,
+                lambda: self.ctx,
+                lambda *a: None,
+                33281,
+            )
+            try:
+                self.assertIsNone(client.http.proxy)
+            finally:
+                await client.close()
+
+    async def test_no_proxy_bypass_for_discord_hosts_disables_proxy(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HTTPS_PROXY": "http://proxy.example:3128",
+                "NO_PROXY": ".discord.com,.discord.gg",
+            },
+            clear=True,
+        ):
             client = DC.Connection(
                 self.inbox,
                 self.status,
