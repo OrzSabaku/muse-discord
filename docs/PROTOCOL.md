@@ -9,9 +9,9 @@
 | --- | --- |
 | 受信・キュー・返信・認可 | `src/muse_discord/monitor.py` |
 | 設定の型・検証 | `src/muse_discord/settings_schema.py`（Pydantic） |
-| Discord接続・UI操作受付 | `src/muse_discord/discord_connection.py`（discord.py） |
+| Discord接続・プレゼンス・UI操作受付 | `src/muse_discord/discord_connection.py`（discord.py） |
 | 設定の解決・画面 | `src/muse_discord/muse_settings.py`・`src/muse_discord/settings_ui.py` |
-| プロセス監視・プレゼンス | `bin/watchdog.sh`・`src/muse_discord/presence.py` |
+| プロセス監視 | `bin/watchdog.sh` |
 | 通知・自発メッセージ | `src/muse_discord/muse_watches.py`・`src/muse_discord/proactive.py` |
 | 単発CLI・MCP | `bin/discord-api.py`・`src/muse_discord/discord_tools/` |
 | 外部アプリのポリシー・承認・実行 | `src/muse_discord/external_apps/` |
@@ -51,7 +51,7 @@
 設定の階層・上書き判定は `src/muse_discord/muse_settings.py` に従います。同一階層のDiscord上書きは、元ファイルが変更されると退役します。
 サーバー管理者の設定変更は、そのサーバーを静かにする範囲だけです。Bot権限から所有者の権限を付与しません。
 `/settings` はdiscord.pyの部品・コールバックを使い、変更を下書きにまとめて保存します。操作のたびに所有者・管理者の権限を再確認し、編集中に対象の設定が変わった場合は上書きしません。
-Gatewayの再接続はdiscord.pyに任せ、メッセージは既存の受信キューへ渡します。RESTポーリングによる受信漏れの補完と重複排除は維持します。
+Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセージは既存の受信キューへ渡します。RESTポーリングによる受信漏れの補完と重複排除は維持します。
 
 ## 追加機能の契約
 
