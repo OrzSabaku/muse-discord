@@ -1,6 +1,7 @@
 """Offline harness for the locking suite: imports $MUT_DIR's monitor.py
 with every network call stubbed and every state file pointed at a fresh
 scratch package dir."""
+
 import importlib.util
 import io
 import json
@@ -11,11 +12,12 @@ import sys
 import time
 import contextlib
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "_lib"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 from common import MUT_DIR as WORKTREE, redirect_files, scratch  # noqa: E402
 
-ARGV = list(sys.argv)   # before the monitor import overwrites it
+ARGV = list(sys.argv)  # before the monitor import overwrites it
 SCRATCH = scratch("muse-locking-")
 CFG = os.path.join(SCRATCH, "config.yaml")
 with open(CFG, "w") as f:
@@ -27,7 +29,8 @@ os.environ["MUSE_DISCORD_CONFIG"] = CFG
 sys.argv = ["x", "dummy-token"]
 
 spec = importlib.util.spec_from_file_location(
-    "monitor", os.path.join(WORKTREE, "src/muse_discord/monitor.py"))
+    "monitor", os.path.join(WORKTREE, "src/muse_discord/monitor.py")
+)
 monitor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(monitor)
 redirect_files(monitor, SCRATCH)
@@ -53,8 +56,9 @@ def fake_get(path):
 
 monitor.api_post = fake_post
 monitor.api_get = fake_get
-monitor.add_reaction = lambda cid, mid, emoji: CALLS.append(
-    (time.time(), "react", mid, emoji)) or True
+monitor.add_reaction = lambda cid, mid, emoji: (
+    CALLS.append((time.time(), "react", mid, emoji)) or True
+)
 monitor.collect_media = lambda msg: ([], [], [])
 
 
@@ -64,20 +68,19 @@ def fresh_pkg():
     package dir from its own location)."""
     d = scratch("muse-locking-pkg-")
     os.makedirs(os.path.join(d, "bin"))
-    shutil.copy(os.path.join(WORKTREE, "bin", "outbox-append.py"),
-                os.path.join(d, "bin"))
+    shutil.copy(os.path.join(WORKTREE, "bin", "outbox-append.py"), os.path.join(d, "bin"))
     shutil.copytree(os.path.join(WORKTREE, "src"), os.path.join(d, "src"))
-    for attr, name in [("STATE_FILE", "state.json"),
-                       ("QUEUE_FILE", "reply_queue.json"),
-                       ("OUTBOX_FILE", "reply_outbox.json"),
-                       ("QUARANTINE_FILE", "quarantine.json"),
-                       ("LEDGER_FILE", "mention_ledger.json"),
-                       ("PIDFILE", "monitor.pid"),
-                       ("LOCK_FILE", "reply.lock"),
-                       ("OUTBOX_PROCESSING_FILE",
-                        "reply_outbox.processing.json"),
-                       ("OUTBOX_REJECTED_FILE",
-                        "reply_outbox.rejected.json")]:
+    for attr, name in [
+        ("STATE_FILE", "state.json"),
+        ("QUEUE_FILE", "reply_queue.json"),
+        ("OUTBOX_FILE", "reply_outbox.json"),
+        ("QUARANTINE_FILE", "quarantine.json"),
+        ("LEDGER_FILE", "mention_ledger.json"),
+        ("PIDFILE", "monitor.pid"),
+        ("LOCK_FILE", "reply.lock"),
+        ("OUTBOX_PROCESSING_FILE", "reply_outbox.processing.json"),
+        ("OUTBOX_REJECTED_FILE", "reply_outbox.rejected.json"),
+    ]:
         setattr(monitor, attr, os.path.join(d, name))
     monitor.MEDIA_DIR = os.path.join(d, "media")
     monitor.GENERATED_DIR = os.path.join(d, "generated")
@@ -92,9 +95,13 @@ def fresh_pkg():
 
 
 def new_state():
-    st = {"last_seen": {}, "replied_to": [],
-          "rate": {"day": "", "day_count": 0, "users": {}},
-          "history": {}, "guild_joined": {"G": 0}}
+    st = {
+        "last_seen": {},
+        "replied_to": [],
+        "rate": {"day": "", "day_count": 0, "users": {}},
+        "history": {},
+        "guild_joined": {"G": 0},
+    }
     return st
 
 
@@ -104,12 +111,24 @@ def snowflake(t=None):
     return str(((ms - 1420070400000) << 22) + snowflake.n)
 
 
-def msg(mid=None, cid="101", author="U1", name="alice", content="hi @pip",
-        mention=True, bot=False, gid="G"):
-    m = {"id": mid or snowflake(), "channel_id": cid,
-         "author": {"id": author, "username": name, "bot": bot},
-         "content": content, "timestamp": "2026-10-17T00:00:00+00:00",
-         "mentions": [{"id": "999"}] if mention else []}
+def msg(
+    mid=None,
+    cid="101",
+    author="U1",
+    name="alice",
+    content="hi @pip",
+    mention=True,
+    bot=False,
+    gid="G",
+):
+    m = {
+        "id": mid or snowflake(),
+        "channel_id": cid,
+        "author": {"id": author, "username": name, "bot": bot},
+        "content": content,
+        "timestamp": "2026-10-17T00:00:00+00:00",
+        "mentions": [{"id": "999"}] if mention else [],
+    }
     if gid:
         m["guild_id"] = gid
     return m
@@ -140,8 +159,7 @@ def capture():
 
 
 def sent_texts():
-    return [c[3]["content"] for c in CALLS
-            if c[1] == "post" and c[2].endswith("/messages")]
+    return [c[3]["content"] for c in CALLS if c[1] == "post" and c[2].endswith("/messages")]
 
 
 def typing_calls():

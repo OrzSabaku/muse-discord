@@ -52,6 +52,7 @@ Gateway off. start(gateway=False) injects a child-only sitecustomize that
 replaces discord.Client.connect. The real SDK HTTP transport remains usable,
 so REST fallback is tested without disabling Discord REST or editing the SUT.
 """
+
 import copy
 import json
 import os
@@ -74,38 +75,75 @@ REST_POLL_SECONDS = 10
 # Not copied from the tree: VCS data, the developer's own config and
 # runtime files, and harness output.
 COPY_IGNORE = shutil.ignore_patterns(
-    ".git", "__pycache__", "config.yaml", OVERLAY_NAME, "config.yaml.bak-*",
-    "state.json", "reply_queue.json",
-    "reply_outbox*.json", "reply.lock", ".*.tmp", "quarantine.json",
-    "mention_ledger.json", "monitor.pid", "monitor.heartbeat",
-    "watchdog_state.json", "watchdog.lock", "update_check.json",
-    "update_request.json", "directory.json", "owner_dm_nonces.json",
-    "owner_items.json", "item_nonces.json", "prompt_outdated.json",
-    "proactive.json", "proactive.json.bad-*", "proactive_nonce.json",
-    "nl_journal.json", "telemetry.json", "telemetry_id", "telemetry.wakes",
-    "watches.json", "watches.json.bad-*", "watches.lock",
-    "web_watches_due.json", "web_watch_results.json",
-    "*.log", "*.log.1", "media", "generated", "out", ".venv", ".seen-*",
-    "worker-prompt.md", "watchdog-hook.out.*")
+    ".git",
+    "__pycache__",
+    "config.yaml",
+    OVERLAY_NAME,
+    "config.yaml.bak-*",
+    "state.json",
+    "reply_queue.json",
+    "reply_outbox*.json",
+    "reply.lock",
+    ".*.tmp",
+    "quarantine.json",
+    "mention_ledger.json",
+    "monitor.pid",
+    "monitor.heartbeat",
+    "watchdog_state.json",
+    "watchdog.lock",
+    "update_check.json",
+    "update_request.json",
+    "directory.json",
+    "owner_dm_nonces.json",
+    "owner_items.json",
+    "item_nonces.json",
+    "prompt_outdated.json",
+    "proactive.json",
+    "proactive.json.bad-*",
+    "proactive_nonce.json",
+    "nl_journal.json",
+    "telemetry.json",
+    "telemetry_id",
+    "telemetry.wakes",
+    "watches.json",
+    "watches.json.bad-*",
+    "watches.lock",
+    "web_watches_due.json",
+    "web_watch_results.json",
+    "*.log",
+    "*.log.1",
+    "media",
+    "generated",
+    "out",
+    ".venv",
+    ".seen-*",
+    "worker-prompt.md",
+    "watchdog-hook.out.*",
+)
 READY_IDENTITY = "Bot user id: "
 READY_DISCOVERY = "muse-discord monitor starting."
 READY_GATEWAY_ON = "Gateway READY: realtime ingest live"
 READY_GATEWAY_OFF = "GATEWAY DISABLED"
 # Lines after which the monitor will not become ready.
-FATAL_MARKERS = ("TOKEN REJECTED", "Another monitor holds the pidfile",
-                 "No bot token")
+FATAL_MARKERS = ("TOKEN REJECTED", "Another monitor holds the pidfile", "No bot token")
 # Secrets the monitor never needs in its environment.
-SECRET_ENV = ("E2E_SUT_TOKEN", "E2E_DRIVER_A_TOKEN", "E2E_DRIVER_B_TOKEN",
-              "CLAUDE_CODE_OAUTH_TOKEN", "MUSE_DISCORD_CONFIG")
+SECRET_ENV = (
+    "E2E_SUT_TOKEN",
+    "E2E_DRIVER_A_TOKEN",
+    "E2E_DRIVER_B_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "MUSE_DISCORD_CONFIG",
+)
 STUB_GATEWAY = (
-    'try:\n'
-    '    import discord\n'
-    'except Exception:\n'
-    '    discord = None\n'
-    'if discord is not None:\n'
-    '    async def _gateway_disabled(self, *args, **kwargs):\n'
+    "try:\n"
+    "    import discord\n"
+    "except Exception:\n"
+    "    discord = None\n"
+    "if discord is not None:\n"
+    "    async def _gateway_disabled(self, *args, **kwargs):\n"
     '        raise RuntimeError("Gateway disabled by the e2e harness")\n'
-    '    discord.Client.connect = _gateway_disabled\n')
+    "    discord.Client.connect = _gateway_disabled\n"
+)
 
 
 class SUTError(Exception):
@@ -136,6 +174,7 @@ def render_config(template, values):
     placeholder has no value (missing or None) are dropped; any other
     unresolved placeholder value becomes None (an unresolved key stays
     as written)."""
+
     def render_key(k):
         ph = _placeholder(k)
         if ph and values.get(ph) is not None:
@@ -146,20 +185,22 @@ def render_config(template, values):
         if isinstance(node, dict):
             return {render_key(k): walk(v) for k, v in node.items()}
         if isinstance(node, list):
-            return [walk(v) for v in node
-                    if not (_placeholder(v)
-                            and values.get(_placeholder(v)) is None)]
+            return [
+                walk(v)
+                for v in node
+                if not (_placeholder(v) and values.get(_placeholder(v)) is None)
+            ]
         key = _placeholder(node)
         if key:
             val = values.get(key)
             return str(val) if val is not None else None
         return node
+
     return walk(template)
 
 
 def _placeholder(node):
-    if isinstance(node, str) and node.startswith("{{") \
-            and node.endswith("}}"):
+    if isinstance(node, str) and node.startswith("{{") and node.endswith("}}"):
         return node[2:-2].strip()
     return None
 
@@ -176,8 +217,7 @@ def base_config(guild_id, a_id, b_id, template=None):
     filled in by SUT)."""
     if template is None:
         template = load_template(DEFAULT_TEMPLATE)
-    return render_config(template, {"GUILD_ID": guild_id, "A_ID": a_id,
-                                    "B_ID": b_id})
+    return render_config(template, {"GUILD_ID": guild_id, "A_ID": a_id, "B_ID": b_id})
 
 
 def scenario_config(base, scenario, a_id, b_id, channel_id=None):
@@ -187,9 +227,10 @@ def scenario_config(base, scenario, a_id, b_id, channel_id=None):
     driver B left out of testing.treat_as_human when the scenario sets
     b_is_bot (unless the overrides set treat_as_human themselves)."""
     guild_id = guild_of(base)
-    over = render_config(scenario.get("config") or {},
-                         {"GUILD_ID": guild_id, "A_ID": a_id,
-                          "B_ID": b_id, "CHANNEL_ID": channel_id})
+    over = render_config(
+        scenario.get("config") or {},
+        {"GUILD_ID": guild_id, "A_ID": a_id, "B_ID": b_id, "CHANNEL_ID": channel_id},
+    )
     cfg = deep_merge(base, over)
     if "treat_as_human" not in (over.get("testing") or {}):
         humans = [str(a_id)]
@@ -203,8 +244,7 @@ class SUT:
     """One monitor.py process tree under <run_dir>/pkg. Not thread-safe;
     the runner drives it from one thread."""
 
-    def __init__(self, tree, run_dir, base_config, token=None,
-                 python=sys.executable):
+    def __init__(self, tree, run_dir, base_config, token=None, python=sys.executable):
         self.tree = os.path.abspath(tree)
         self.run_dir = os.path.abspath(run_dir)
         self.pkg_dir = os.path.join(self.run_dir, "pkg")
@@ -218,10 +258,8 @@ class SUT:
         if os.path.exists(self.pkg_dir):
             shutil.rmtree(self.pkg_dir)
         shutil.copytree(self.tree, self.pkg_dir, ignore=COPY_IGNORE)
-        token = token if token is not None \
-            else os.environ.get("E2E_SUT_TOKEN", "")
-        fd = os.open(self.token_file,
-                     os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        token = token if token is not None else os.environ.get("E2E_SUT_TOKEN", "")
+        fd = os.open(self.token_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(token.strip() + "\n")
         os.chmod(self.token_file, 0o600)
@@ -246,14 +284,16 @@ class SUT:
 
     def effective_config(self, cfg):
         """cfg plus the fields the harness always controls."""
-        cfg = deep_merge(cfg, {
-            "token_from": self.token_file,
-            "presence": {"enabled": "off"},
-            "updates": {"notify": "off"},
-            "persona": self.persona_file,
-        })
-        cfg.setdefault("engine", {})["rest_poll_seconds"] = \
-            REST_POLL_SECONDS
+        cfg = deep_merge(
+            cfg,
+            {
+                "token_from": self.token_file,
+                "presence": {"enabled": "off"},
+                "updates": {"notify": "off"},
+                "persona": self.persona_file,
+            },
+        )
+        cfg.setdefault("engine", {})["rest_poll_seconds"] = REST_POLL_SECONDS
         return cfg
 
     def write_config(self, cfg):
@@ -278,31 +318,37 @@ class SUT:
             self.write_config(config)
         self.gateway = gateway
         env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
-        env["MUSE_DISCORD_CONFIG"] = os.path.join(self.pkg_dir,
-                                                  "config.yaml")
+        env["MUSE_DISCORD_CONFIG"] = os.path.join(self.pkg_dir, "config.yaml")
         env["PYTHONUNBUFFERED"] = "1"
         # Never send usage stats from a test run (telemetry.py).
         env["MUSE_DISCORD_TELEMETRY"] = "off"
-        env["MUSE_DISCORD_TELEMETRY_URL"] = ""   # "" = no endpoint at all
+        env["MUSE_DISCORD_TELEMETRY_URL"] = ""  # "" = no endpoint at all
         if not gateway:
             env["PYTHONPATH"] = os.pathsep.join(
-                p for p in (self._stub_dir, env.get("PYTHONPATH")) if p)
+                p for p in (self._stub_dir, env.get("PYTHONPATH")) if p
+            )
         try:
             self._log_offset = os.path.getsize(self.log_path)
         except OSError:
             self._log_offset = 0
         log = open(self.log_path, "a")
         try:
-            log.write(f"===== e2e: start monitor (gateway="
-                      f"{'on' if gateway else 'off'}) "
-                      f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"
-                      f" =====\n")
+            log.write(
+                f"===== e2e: start monitor (gateway="
+                f"{'on' if gateway else 'off'}) "
+                f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}"
+                f" =====\n"
+            )
             log.flush()
             self.proc = subprocess.Popen(
                 [self.python, os.path.join(self.pkg_dir, "bin/monitor.py")],
-                cwd=self.pkg_dir, env=env, stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT,
-                start_new_session=True)
+                cwd=self.pkg_dir,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
         finally:
             log.close()
 
@@ -330,15 +376,17 @@ class SUT:
     def restart(self, gateway=None, config=None, kill=False):
         """stop() then start(); gateway None keeps the current mode."""
         self.stop(kill=kill)
-        self.start(gateway=self.gateway if gateway is None else gateway,
-                   config=config)
+        self.start(gateway=self.gateway if gateway is None else gateway, config=config)
 
     def wait_ready(self, timeout=180, poll=0.5):
         """Block until this start's log shows the ready signal (see the
         module docstring). Raises SUTError when the monitor exits, logs
         a fatal marker, or times out."""
-        want = [READY_IDENTITY, READY_DISCOVERY,
-                READY_GATEWAY_ON if self.gateway else READY_GATEWAY_OFF]
+        want = [
+            READY_IDENTITY,
+            READY_DISCOVERY,
+            READY_GATEWAY_ON if self.gateway else READY_GATEWAY_OFF,
+        ]
         deadline = time.time() + timeout
         while True:
             text = self._log_since_start()
@@ -349,12 +397,12 @@ class SUT:
                 return True
             if self.proc is None or self.proc.poll() is not None:
                 code = None if self.proc is None else self.proc.returncode
-                raise SUTError(f"monitor exited before ready (code "
-                               f"{code})")
+                raise SUTError(f"monitor exited before ready (code {code})")
             if time.time() >= deadline:
                 missing = [w for w in want if w not in text]
-                raise SUTError(f"monitor not ready after {timeout}s "
-                               f"(missing: {', '.join(missing)})")
+                raise SUTError(
+                    f"monitor not ready after {timeout}s (missing: {', '.join(missing)})"
+                )
             time.sleep(poll)
 
     def _log_since_start(self):
@@ -388,7 +436,7 @@ class SUT:
         try:
             with open(os.path.join(self.pkg_dir, name)) as f:
                 return json.load(f)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return None
 
     def read_yaml(self, name):
@@ -397,7 +445,7 @@ class SUT:
         try:
             with open(os.path.join(self.pkg_dir, name)) as f:
                 return yaml.safe_load(f)
-        except (OSError, yaml.YAMLError):
+        except OSError, yaml.YAMLError:
             return None
 
     def log_tail(self, n=200):

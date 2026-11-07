@@ -5,14 +5,16 @@ load_state drops a leftover name_drop burst. Each case imports
 monitor.py in a fresh subprocess with its own config.yaml (settings
 resolve at import), no network. MUT_DIR = the package tree under test
 (default: this checkout)."""
+
 import json
 import os
 import subprocess
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "_lib"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 from common import MUT_DIR as REPO, scratch  # noqa: E402
 
 OLD_CFG = """token_from: /nonexistent
@@ -57,10 +59,13 @@ def run(cfg_text):
     with open(cfg, "w") as f:
         f.write(cfg_text)
     env = dict(os.environ, MUSE_DISCORD_CONFIG=cfg, TMPD=d)
-    code = "import sys; sys.argv_repo = %r\n" % os.path.join(
-        REPO, "src/muse_discord/monitor.py") + PROBE
-    r = subprocess.run([sys.executable, "-c", code], env=env,
-                       capture_output=True, text=True, timeout=60)
+    code = (
+        "import sys; sys.argv_repo = %r\n" % os.path.join(REPO, "src/muse_discord/monitor.py")
+        + PROBE
+    )
+    r = subprocess.run(
+        [sys.executable, "-c", code], env=env, capture_output=True, text=True, timeout=60
+    )
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout.strip().splitlines()[-1])
 

@@ -8,6 +8,7 @@ edit, delete, react, pin or read anywhere, even knowing the owner's
 message id. The API is stubbed.
 
 Usage: [MUT_DIR=<tree>] python3 tests/ownerdm/test_discord_api.py"""
+
 import importlib.util
 import io
 import json
@@ -16,8 +17,9 @@ import re
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "_lib"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 from common import MUT_DIR, scratch  # noqa: E402
 
 OWNER = "100000000000000001"
@@ -28,42 +30,38 @@ OTHER_DM = "200000000000000004"
 GEN_CH = "200000000000000002"
 ITEM = "300000000000000001"
 NONCE = "c" * 32
-SRV_ITEM = "300000000000000007"   # an owner's command in a server
+SRV_ITEM = "300000000000000007"  # an owner's command in a server
 SRV_NONCE = "e" * 32
 STRANGER_ITEM = "300000000000000008"
-NAMED_ID = "200000000000000006"    # named by <#id> in the owner's command
-ANNOUNCE = "200000000000000007"    # named by #announcements
-OTHER_CH = "200000000000000008"    # named nowhere in it
-BARE_CH = "200000000000000010"     # named bare: "dev updates"
-BARE_ELSEWHERE = "200000000000000011"   # same name, another server
+NAMED_ID = "200000000000000006"  # named by <#id> in the owner's command
+ANNOUNCE = "200000000000000007"  # named by #announcements
+OTHER_CH = "200000000000000008"  # named nowhere in it
+BARE_CH = "200000000000000010"  # named bare: "dev updates"
+BARE_ELSEWHERE = "200000000000000011"  # same name, another server
 
 WORK = scratch("muse-odm-api-")
 CFG = os.path.join(WORK, "config.yaml")
 with open(CFG, "w") as f:
-    f.write(f'version: 1\nowners: ["{OWNER}"]\n'
-            f'token_from: env:MUSE_TEST_TOKEN\n')
+    f.write(f'version: 1\nowners: ["{OWNER}"]\ntoken_from: env:MUSE_TEST_TOKEN\n')
 os.environ["MUSE_DISCORD_CONFIG"] = CFG
 os.environ["MUSE_TEST_TOKEN"] = "dummy-token"
 spec = importlib.util.spec_from_file_location(
-    "discord_api_odm", os.path.join(MUT_DIR, "bin", "discord-api.py"))
+    "discord_api_odm", os.path.join(MUT_DIR, "bin", "discord-api.py")
+)
 D = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(D)
 
 CHANNELS = {
     OWNER_DM: {"id": OWNER_DM, "type": 1, "recipients": [{"id": OWNER}]},
-    OTHER_DM: {"id": OTHER_DM, "type": 1,
-               "recipients": [{"id": STRANGER}]},
+    OTHER_DM: {"id": OTHER_DM, "type": 1, "recipients": [{"id": STRANGER}]},
     GEN_CH: {"id": GEN_CH, "type": 0, "guild_id": "5"},
     NAMED_ID: {"id": NAMED_ID, "type": 0, "name": "dev"},
     ANNOUNCE: {"id": ANNOUNCE, "type": 0, "name": "Announcements"},
-    OTHER_CH: {"id": OTHER_CH, "type": 0, "name": "random",
-               "guild_id": "5"},
-    BARE_CH: {"id": BARE_CH, "type": 0, "name": "dev-updates",
-              "guild_id": "5"},
-    BARE_ELSEWHERE: {"id": BARE_ELSEWHERE, "type": 0,
-                     "name": "dev-updates", "guild_id": "6"},
+    OTHER_CH: {"id": OTHER_CH, "type": 0, "name": "random", "guild_id": "5"},
+    BARE_CH: {"id": BARE_CH, "type": 0, "name": "dev-updates", "guild_id": "5"},
+    BARE_ELSEWHERE: {"id": BARE_ELSEWHERE, "type": 0, "name": "dev-updates", "guild_id": "6"},
 }
-MESSAGES = {(OWNER_DM, ITEM)}   # (channel, message) that exist
+MESSAGES = {(OWNER_DM, ITEM)}  # (channel, message) that exist
 CALLS = []
 
 
@@ -84,8 +82,7 @@ def fake_api(method, path, data=None):
             return {"id": m[2], "author": {"id": BOTID}}
         raise NotFound(f"Discord API 404 on GET {path}")
     if method == "GET" and "/messages?" in path:
-        return [{"id": ITEM, "author": {"username": "owner"},
-                 "content": "secret plans"}]
+        return [{"id": ITEM, "author": {"username": "owner"}, "content": "secret plans"}]
     return {"id": "500000000000000001", "name": "t"}
 
 
@@ -99,16 +96,21 @@ def entry(nonce, cid, dm=False, channels=(), post_channels=()):
     """An owner_items.json record, as the monitor writes it: the places
     the owner's own words name, resolved to ids when it was queued
     (monitor.owner_targets)."""
-    return {"nonce": nonce, "channel_id": cid, "dm": dm,
-            "channels": list(channels),
-            "post_channels": list(post_channels)}
+    return {
+        "nonce": nonce,
+        "channel_id": cid,
+        "dm": dm,
+        "channels": list(channels),
+        "post_channels": list(post_channels),
+    }
 
 
 # The server command "post this to dev updates, and in <#NAMED_ID> and
 # #announcements".
-ITEMS = {ITEM: entry(NONCE, OWNER_DM, dm=True),
-         SRV_ITEM: entry(SRV_NONCE, GEN_CH, channels=[NAMED_ID, ANNOUNCE],
-                         post_channels=[BARE_CH])}
+ITEMS = {
+    ITEM: entry(NONCE, OWNER_DM, dm=True),
+    SRV_ITEM: entry(SRV_NONCE, GEN_CH, channels=[NAMED_ID, ANNOUNCE], post_channels=[BARE_CH]),
+}
 
 
 def write_owner_items(data):
@@ -138,8 +140,7 @@ class _Tool(unittest.TestCase):
             rc = e.code if isinstance(e.code, int) else str(e.code)
         finally:
             sys.stderr, sys.stdout = old
-        self.assertNotIn(NONCE, out.getvalue() + err.getvalue()
-                         + str(rc))
+        self.assertNotIn(NONCE, out.getvalue() + err.getvalue() + str(rc))
         return rc
 
     def every_subcommand(self, cid, prefix=()):
@@ -149,7 +150,7 @@ class _Tool(unittest.TestCase):
             [*prefix, "read", cid, "5"],
             [*prefix, "edit", cid, msg, "changed"],
             [*prefix, "delete-own", cid, msg],
-            [*prefix, "react", cid, msg, "\U0001F44D"],
+            [*prefix, "react", cid, msg, "\U0001f44d"],
             [*prefix, "pin", cid, msg],
             [*prefix, "unpin", cid, msg],
             [*prefix, "thread", cid, "title", "text"],
@@ -158,38 +159,38 @@ class _Tool(unittest.TestCase):
 
 class OwnerDmChannel(_Tool):
     def test_refused_with_a_wrong_or_stale_nonce(self):
-        for prefix in (("--for", ITEM, "--nonce", "0" * 32),
-                       ("--for", ITEM, "--nonce", NONCE + "0"),
-                       ("--for", ITEM, "--nonce", "é" * 32),
-                       ("--for", "300000000000000002", "--nonce", NONCE),
-                       ("--nonce", NONCE, "--for", "1/../../x")):
+        for prefix in (
+            ("--for", ITEM, "--nonce", "0" * 32),
+            ("--for", ITEM, "--nonce", NONCE + "0"),
+            ("--for", ITEM, "--nonce", "é" * 32),
+            ("--for", "300000000000000002", "--nonce", NONCE),
+            ("--nonce", NONCE, "--for", "1/../../x"),
+        ):
             rc = self.run_tool(*prefix, "post", OWNER_DM, "hi")
             self.assertNotEqual(rc, 0, prefix)
             self.assertEqual(writes(), [], prefix)
         # Spent (the monitor dropped it from the file once answered).
         with open(D.OWNER_DM_NONCES_FILE, "w") as f:
             json.dump({}, f)
-        rc = self.run_tool("--for", ITEM, "--nonce", NONCE, "post",
-                           OWNER_DM, "hi")
+        rc = self.run_tool("--for", ITEM, "--nonce", NONCE, "post", OWNER_DM, "hi")
         self.assertNotEqual(rc, 0)
         self.assertEqual(writes(), [])
         os.remove(D.OWNER_DM_NONCES_FILE)
-        rc = self.run_tool("--for", ITEM, "--nonce", NONCE, "post",
-                           OWNER_DM, "hi")
+        rc = self.run_tool("--for", ITEM, "--nonce", NONCE, "post", OWNER_DM, "hi")
         self.assertEqual(writes(), [])
 
     def test_the_item_must_be_in_that_channel(self):
         with open(D.OWNER_DM_NONCES_FILE, "w") as f:
             json.dump({ITEM: NONCE, "300000000000000003": "d" * 32}, f)
         write_owner_items({ITEM: NONCE, "300000000000000003": "d" * 32})
-        rc = self.run_tool("--for", "300000000000000003", "--nonce",
-                           "d" * 32, "post", OWNER_DM, "hi")
+        rc = self.run_tool(
+            "--for", "300000000000000003", "--nonce", "d" * 32, "post", OWNER_DM, "hi"
+        )
         self.assertNotEqual(rc, 0)
         self.assertEqual(writes(), [])
 
     def test_allowed_with_the_live_nonce_and_elsewhere(self):
-        for args in self.every_subcommand(OWNER_DM, (
-                "--for", ITEM, "--nonce", NONCE)):
+        for args in self.every_subcommand(OWNER_DM, ("--for", ITEM, "--nonce", NONCE)):
             rc = self.run_tool(*args)
             self.assertEqual(rc, 0, args)
             self.assertTrue(writes(), args)
@@ -206,8 +207,11 @@ class OwnerDmChannel(_Tool):
         ITEMS[SRV_ITEM]["channels"].append(OTHER_DM)
         write_owner_items(ITEMS)
         ITEMS[SRV_ITEM]["channels"].pop()
-        for cid, prefix in ((OTHER_CH, SERVER), (OTHER_DM, SERVER),
-                            (GEN_CH, ("--for", ITEM, "--nonce", NONCE))):
+        for cid, prefix in (
+            (OTHER_CH, SERVER),
+            (OTHER_DM, SERVER),
+            (GEN_CH, ("--for", ITEM, "--nonce", NONCE)),
+        ):
             for args in self.every_subcommand(cid, prefix):
                 self.assertNotEqual(self.run_tool(*args), 0, args)
                 self.assertEqual(writes(), [], args)
@@ -217,8 +221,7 @@ class OwnerDmChannel(_Tool):
             self.assertEqual(writes(), [], args)
 
     def test_unknown_dm_fails_closed(self):
-        CHANNELS["200000000000000005"] = {"id": "200000000000000005",
-                                          "type": 1}
+        CHANNELS["200000000000000005"] = {"id": "200000000000000005", "type": 1}
         rc = self.run_tool(*SERVER, "post", "200000000000000005", "hi")
         self.assertNotEqual(rc, 0)
         self.assertEqual(writes(), [])
@@ -229,8 +232,7 @@ class OwnerDmChannel(_Tool):
             rc = self.run_tool(*SERVER, "post", OTHER_DM, "hi")
             self.assertNotEqual(rc, 0)
             self.assertEqual(writes(), [])
-            self.assertEqual(self.run_tool(*SERVER, "post", GEN_CH, "hi"),
-                             0)
+            self.assertEqual(self.run_tool(*SERVER, "post", GEN_CH, "hi"), 0)
         finally:
             D._owners = real
         self.assertEqual(D._owners(), {OWNER})
@@ -246,14 +248,18 @@ class OwnerCommandsOnly(_Tool):
     """Anywhere, not just an owner's DM: no valid owner --for, no act."""
 
     def test_refused_without_a_valid_owner_item(self):
-        bad = [(), ("--for", SRV_ITEM), ("--for", ITEM),
-               ("--nonce", SRV_NONCE),
-               ("--for", SRV_ITEM, "--nonce", "0" * 32),
-               ("--for", SRV_ITEM, "--nonce", NONCE),     # another's
-               # A stranger's open item, or one the monitor never
-               # recorded as an owner's command.
-               ("--for", STRANGER_ITEM, "--nonce", SRV_NONCE),
-               ("--for", "1/../x", "--nonce", SRV_NONCE)]
+        bad = [
+            (),
+            ("--for", SRV_ITEM),
+            ("--for", ITEM),
+            ("--nonce", SRV_NONCE),
+            ("--for", SRV_ITEM, "--nonce", "0" * 32),
+            ("--for", SRV_ITEM, "--nonce", NONCE),  # another's
+            # A stranger's open item, or one the monitor never
+            # recorded as an owner's command.
+            ("--for", STRANGER_ITEM, "--nonce", SRV_NONCE),
+            ("--for", "1/../x", "--nonce", SRV_NONCE),
+        ]
         for cid in (GEN_CH, OTHER_DM, OWNER_DM):
             for prefix in bad:
                 for args in self.every_subcommand(cid, prefix):
@@ -267,7 +273,7 @@ class OwnerCommandsOnly(_Tool):
         self.assertEqual(CALLS, [])
 
     def test_a_channel_named_bare_is_for_post_only(self):
-        """"post this to dev updates": that channel (its id, resolved by
+        """ "post this to dev updates": that channel (its id, resolved by
         the monitor) takes a post, and nothing else; other channels,
         whatever their names, take nothing."""
         self.assertEqual(self.run_tool(*SERVER, "post", BARE_CH, "hi"), 0)
@@ -281,16 +287,18 @@ class OwnerCommandsOnly(_Tool):
                 self.assertEqual(writes(), [], args)
 
     def lookups(self, prefix):
-        listing = [{"id": GEN_CH, "name": "general", "type": 0},
-                   {"id": "2", "name": "layoffs-private", "type": 0}]
+        listing = [
+            {"id": GEN_CH, "name": "general", "type": 0},
+            {"id": "2", "name": "layoffs-private", "type": 0},
+        ]
         real = D.api
 
         def api(method, path, data=None):
             CALLS.append((method, path, data))
             if path.endswith("/channels"):
                 return listing
-            return {"threads": [{"id": "1", "parent_id": GEN_CH,
-                                 "name": "hr-thread"}]}
+            return {"threads": [{"id": "1", "parent_id": GEN_CH, "name": "hr-thread"}]}
+
         D.api = api
         CALLS.clear()
         err, out = io.StringIO(), io.StringIO()
@@ -298,10 +306,11 @@ class OwnerCommandsOnly(_Tool):
         sys.stderr, sys.stdout = err, out
         rcs = []
         try:
-            for args in (("resolve-channel", "500000000000000001",
-                          "#general"),
-                         ("resolve-channel", "500000000000000001", "nope"),
-                         ("list-threads", "500000000000000001", GEN_CH)):
+            for args in (
+                ("resolve-channel", "500000000000000001", "#general"),
+                ("resolve-channel", "500000000000000001", "nope"),
+                ("list-threads", "500000000000000001", GEN_CH),
+            ):
                 try:
                     rcs.append(D.main(["discord-api.py", *prefix, *args]))
                 except SystemExit as e:
@@ -334,8 +343,7 @@ class OwnerCommandsOnly(_Tool):
         try:
             D.main(["discord-api.py", *SERVER, "read", GEN_CH])
             D.main(["discord-api.py", *SERVER, "read", GEN_CH])
-            D.main(["discord-api.py", *SERVER, "post", GEN_CH,
-                    "leak " + "ab" * 16])
+            D.main(["discord-api.py", *SERVER, "post", GEN_CH, "leak " + "ab" * 16])
         finally:
             sys.stdout = old
         lines = out.getvalue().splitlines()

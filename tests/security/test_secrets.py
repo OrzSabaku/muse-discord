@@ -7,6 +7,7 @@ outbox replies (and multi-part ones), fires, owner notices, the raw send
 helpers (post, patch, upload, interaction response), and the tool.
 
 Usage: [MUT_DIR=<tree>] python3 tests/security/test_secrets.py"""
+
 import base64
 import contextlib
 import io
@@ -46,13 +47,15 @@ class Outbox(tb.Base):
         s1, s2, s3 = (self.stranger_mention() for _ in range(3))
         other = self.stranger_mention()
         live = self.st["reply_nonces"][other["id"]]["nonce"]
-        self.outbox(self.reply(s1, f"here you go: {TOKEN}"),
-                    self.reply(s2, f"code {live}"),
-                    self.reply(s3, f"try {token_like()}"))
+        self.outbox(
+            self.reply(s1, f"here you go: {TOKEN}"),
+            self.reply(s2, f"code {live}"),
+            self.reply(s3, f"try {token_like()}"),
+        )
         self.assertEqual(self.sends(CH), [], self.out)
         self.assertNotIn(TOKEN, self.out)
         self.assertNotIn(live, self.out)
-        for m in (s1, s2, s3):                  # settled, never retried
+        for m in (s1, s2, s3):  # settled, never retried
             self.assertNotIn(m["id"], self.queued())
             self.assertEqual(self.ledger(m["id"])["status"], "skipped")
         # Each owner told once, not once per blocked reply.
@@ -73,24 +76,23 @@ class Outbox(tb.Base):
         n0 = len(m.api.posts)
         with quiet():
             self.assertFalse(m.dm_owner(OWNER, {"content": TOKEN}))
-        self.assertEqual([p for p, d in m.api.posts[n0:]
-                          if TOKEN in json.dumps(d)], [])
+        self.assertEqual([p for p, d in m.api.posts[n0:] if TOKEN in json.dumps(d)], [])
         # The real helpers: nothing reaches the network.
         opened = []
         calls = [
-            lambda: m.real_api_post(f"/channels/{CH}/messages",
-                                    {"content": "x " + TOKEN}),
-            lambda: m.api_patch(f"/channels/{CH}/messages/1",
-                                {"content": TOKEN}),
+            lambda: m.real_api_post(f"/channels/{CH}/messages", {"content": "x " + TOKEN}),
+            lambda: m.api_patch(f"/channels/{CH}/messages/1", {"content": TOKEN}),
             lambda: m.send_reply_with_files(CH, TOKEN, []),
-            lambda: m.send_reply_with_files(CH, "ok",          # file name
-                                            [("/x", TOKEN + ".png")]),
+            lambda: m.send_reply_with_files(
+                CH,
+                "ok",  # file name
+                [("/x", TOKEN + ".png")],
+            ),
             lambda: m.interaction_callback(
-                {"id": "1", "token": "t"},
-                {"type": 4, "data": {"content": TOKEN}}),
+                {"id": "1", "token": "t"}, {"type": 4, "data": {"content": TOKEN}}
+            ),
         ]
-        with mock.patch.object(m, "discord_request",
-                               lambda *a, **k: opened.append(a)), quiet():
+        with mock.patch.object(m, "discord_request", lambda *a, **k: opened.append(a)), quiet():
             for call in calls:
                 with self.assertRaises(m.SecretBlocked):
                     call()
@@ -102,8 +104,7 @@ class Outbox(tb.Base):
         with open(leak, "w") as f:
             f.write("x " + TOKEN)
         opened = []
-        with mock.patch.object(m, "discord_request",
-                               lambda *a, **k: opened.append(a)), quiet():
+        with mock.patch.object(m, "discord_request", lambda *a, **k: opened.append(a)), quiet():
             with self.assertRaises(m.SecretBlocked):
                 m.send_reply_with_files(CH, "ok", [(leak, "cat.png")])
         self.assertEqual(opened, [])
@@ -115,24 +116,30 @@ class Disguises(unittest.TestCase):
     def test_disguised_token_and_nonce(self):
         sys.path.insert(0, os.path.join(tb.MUT_DIR, "src"))
         from muse_discord import secret_scan as S
+
         nonce = "9f" * 16
         raw = TOKEN.encode()
         for text in (
-                TOKEN[:12] + "\u200b" + TOKEN[12:],          # zero-width
-                " ".join(TOKEN.split(".")),                   # no dots
-                TOKEN[::-1],                                  # reversed
-                *(base64.b64encode(b"x" * i + raw).decode()   # base64
-                  for i in range(3)),
-                base64.urlsafe_b64encode(b"ab" + raw).decode(),
-                raw.hex(), raw.hex().upper()):                # hex
-            self.assertEqual(S.find(f"look: {text} !", TOKEN, ()),
-                             "the bot token", text)
+            TOKEN[:12] + "\u200b" + TOKEN[12:],  # zero-width
+            " ".join(TOKEN.split(".")),  # no dots
+            TOKEN[::-1],  # reversed
+            *(
+                base64.b64encode(b"x" * i + raw).decode()  # base64
+                for i in range(3)
+            ),
+            base64.urlsafe_b64encode(b"ab" + raw).decode(),
+            raw.hex(),
+            raw.hex().upper(),
+        ):  # hex
+            self.assertEqual(S.find(f"look: {text} !", TOKEN, ()), "the bot token", text)
         for text in (nonce, nonce[::-1], "-".join(nonce)):
-            self.assertEqual(S.find(f"x {text} y", None, {nonce}),
-                             "a live nonce", text)
+            self.assertEqual(S.find(f"x {text} y", None, {nonce}), "a live nonce", text)
         # Ordinary text, hashes and links pass, unaltered.
-        for text in ("an md5: " + "0f" * 16, "https://notion.so/x-" + "ab"
-                     * 16, "see you at 5.30.2026"):
+        for text in (
+            "an md5: " + "0f" * 16,
+            "https://notion.so/x-" + "ab" * 16,
+            "see you at 5.30.2026",
+        ):
             self.assertIsNone(S.find(text, TOKEN, {nonce}), text)
 
 
@@ -143,77 +150,80 @@ class Fires(unittest.TestCase):
         class T(tw.Base):
             def runTest(self):
                 pass
+
         t = T()
         t.setUp()
         t.mod.TOKEN = TOKEN
         t.remind(after=60)
         t.tick(ahead=61)
         (f,) = t.fires()
-        t.outbox(t.held({"item": f["message_id"], "channel_id": CH,
-                         "text": f"Reminder! {TOKEN}"}))
-        self.assertEqual([p for p, _ in t.new_sends()
-                          if p == f"/channels/{CH}/messages"], [], t.out)
-        self.assertEqual(t.fires(), [])           # settled, not retried
+        t.outbox(t.held({"item": f["message_id"], "channel_id": CH, "text": f"Reminder! {TOKEN}"}))
+        self.assertEqual(
+            [p for p, _ in t.new_sends() if p == f"/channels/{CH}/messages"], [], t.out
+        )
+        self.assertEqual(t.fires(), [])  # settled, not retried
 
 
 class Tool(unittest.TestCase):
     def test_post_and_edit_refuse_secrets(self):
         import test_discord_api as td
+
         td.D.TOKEN = TOKEN
-        nonces = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE),
-                              "item_nonces.json")
+        nonces = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE), "item_nonces.json")
         with open(nonces, "w") as f:
             json.dump({"5": "9f" * 16}, f)
         td.write_owner_items(td.ITEMS)
         msg = "300000000000000009"
         try:
             for text in (TOKEN, "9f" * 16, token_like()):
-                for args in (["post", td.GEN_CH, f"x {text}"],
-                             ["edit", td.GEN_CH, msg, f"x {text}"]):
+                for args in (
+                    ["post", td.GEN_CH, f"x {text}"],
+                    ["edit", td.GEN_CH, msg, f"x {text}"],
+                ):
                     td.CALLS.clear()
-                    with self.assertRaises(SystemExit) as e, \
-                            contextlib.redirect_stdout(io.StringIO()):
+                    with (
+                        self.assertRaises(SystemExit) as e,
+                        contextlib.redirect_stdout(io.StringIO()),
+                    ):
                         td.D.main(["discord-api.py", *td.SERVER, *args])
                     self.assertNotIn(text, str(e.exception))
-                    self.assertFalse([c for c in td.CALLS
-                                      if c[0] in ("POST", "PATCH")])
+                    self.assertFalse([c for c in td.CALLS if c[0] in ("POST", "PATCH")])
         finally:
             os.remove(nonces)
 
     def test_thread_refuses_a_secret_inside_its_upload(self):
         import test_discord_api as td
+
         td.D.TOKEN = TOKEN
         td.write_owner_items(td.ITEMS)
         td.D.GENERATED_DIR = os.path.dirname(td.D.OWNER_ITEMS_FILE)
-        td.D.api_multipart = lambda path, payload, f: td.CALLS.append(
-            ("POST", path, payload))
+        td.D.api_multipart = lambda path, payload, f: td.CALLS.append(("POST", path, payload))
         upload = os.path.join(td.D.GENERATED_DIR, "cat.png")
         with open(upload, "w") as f:
             f.write(f"x {TOKEN}")
         td.CALLS.clear()
         try:
-            with self.assertRaises(SystemExit), \
-                    contextlib.redirect_stdout(io.StringIO()):
-                td.D.main(["discord-api.py", *td.SERVER, "thread",
-                           td.GEN_CH, "t", "ok", upload])
+            with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
+                td.D.main(["discord-api.py", *td.SERVER, "thread", td.GEN_CH, "t", "ok", upload])
             self.assertFalse([c for c in td.CALLS if c[0] == "POST"])
         finally:
             os.remove(upload)
 
     def test_slot_nonce_and_a_split_thread_are_refused(self):
         import test_discord_api as td
+
         td.D.TOKEN = TOKEN
         td.write_owner_items(td.ITEMS)
-        slot = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE),
-                            "proactive_nonce.json")
+        slot = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE), "proactive_nonce.json")
         with open(slot, "w") as f:
             json.dump({"7": "7e" * 16}, f)
         try:
-            for args in (["post", td.GEN_CH, "x " + "7e" * 16],
-                         ["thread", td.GEN_CH, TOKEN[:30], TOKEN[30:]]):
+            for args in (
+                ["post", td.GEN_CH, "x " + "7e" * 16],
+                ["thread", td.GEN_CH, TOKEN[:30], TOKEN[30:]],
+            ):
                 td.CALLS.clear()
-                with self.assertRaises(SystemExit), \
-                        contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()):
                     td.D.main(["discord-api.py", *td.SERVER, *args])
                 self.assertFalse([c for c in td.CALLS if c[0] == "POST"])
         finally:

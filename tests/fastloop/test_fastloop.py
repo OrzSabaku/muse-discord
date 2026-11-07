@@ -3,6 +3,7 @@ reads) must not block the main loop. Each main() scenario runs in its
 own process (run_fast.py); they all start at once, so the suite takes
 as long as the longest one. MUT_DIR = the package tree under test
 (default: this checkout). Run: python3 tests/fastloop/test_fastloop.py"""
+
 import collections
 import contextlib
 import io
@@ -26,9 +27,12 @@ _results = {}
 def setUpModule():
     for name, secs in SCENARIOS.items():
         _procs[name] = subprocess.Popen(
-            [sys.executable, os.path.join(HERE, "run_fast.py"), name,
-             str(secs)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=os.environ.copy())
+            [sys.executable, os.path.join(HERE, "run_fast.py"), name, str(secs)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=os.environ.copy(),
+        )
 
 
 def tearDownModule():
@@ -40,8 +44,7 @@ def tearDownModule():
 
 def run(scenario):
     if scenario not in _results:
-        out, err = _procs[scenario].communicate(
-            timeout=SCENARIOS[scenario] + 60)
+        out, err = _procs[scenario].communicate(timeout=SCENARIOS[scenario] + 60)
         last = (out.strip().splitlines() or ["{}"])[-1]
         try:
             _results[scenario] = json.loads(last)
@@ -79,8 +82,7 @@ class Scenarios(unittest.TestCase):
         self.assertEqual(len(r["put"]), 4, r["out"][-2000:])
         for mid, t in r["put"]:
             self.assertIn(mid, st, f"never staged: {mid}")
-            self.assertLess(st[mid] - t, 2.0,
-                            f"put at {t}, staged at {st[mid]}")
+            self.assertLess(st[mid] - t, 2.0, f"put at {t}, staged at {st[mid]}")
         self.assertLess(max_gap(r["drains"]), 1.2)
         polls = polls_by_channel(r)
         self.assertEqual(len(polls), 15)
@@ -90,22 +92,20 @@ class Scenarios(unittest.TestCase):
 
     def test_sweep_recovers_and_loop_stays_responsive(self):
         r = run("sweep")
-        self.assertIn(r["lost"], [m for m, _t, ok in r["enqueued"] if ok],
-                      r["out"][-2000:])
+        self.assertIn(r["lost"], [m for m, _t, ok in r["enqueued"] if ok], r["out"][-2000:])
         self.assertLess(max_gap(r["drains"]), 1.0)
         st = staged_at(r)
         for mid, t in r["put"]:
             self.assertLess(st[mid] - t, 1.0)
         # the sweep pass read every channel
-        swept = {p.split("/")[2] for p, _ in r["gets"]
-                 if p.endswith("?limit=20")}
+        swept = {p.split("/")[2] for p, _ in r["gets"] if p.endswith("?limit=20")}
         self.assertGreaterEqual(len(swept - {"DM1"}), 20)
         for cid, ts in polls_by_channel(r).items():
             self.assertGreaterEqual(len(ts), 2, (cid, ts))
 
     def test_hung_read_stalls_at_most_the_read_timeout(self):
         r = run("hung")
-        (mid, t), = r["put"]
+        ((mid, t),) = r["put"]
         st = staged_at(r)
         self.assertIn(mid, st, r["out"])
         self.assertLess(st[mid] - t, 1 + 1.5)  # READ_TIMEOUT_SECS + 1.5
@@ -124,24 +124,32 @@ class SlicedJobs(unittest.TestCase):
 
     def setUp(self):
         import monitor_harness as H
+
         self.H = H
         mod = self.mod = H.load_monitor()
-        mod.api.routes.update({
-            "/users/@me/guilds": [{"id": H.G1, "name": "Srv"}],
-            f"/guilds/{H.G1}?with_counts=true": {"roles": []},
-            f"/guilds/{H.G1}/members/{H.BOT}": {"roles": [],
-                                                 "joined_at": None},
-            f"/guilds/{H.G1}/channels": [
-                {"id": "C1", "type": 0, "name": "general"},
-                {"id": "C2", "type": 0, "name": "new"}],
-            f"/guilds/{H.G1}/threads/active": {"threads": [
-                {"id": "T1", "parent_id": "C1", "name": "post"}]},
-        })
+        mod.api.routes.update(
+            {
+                "/users/@me/guilds": [{"id": H.G1, "name": "Srv"}],
+                f"/guilds/{H.G1}?with_counts=true": {"roles": []},
+                f"/guilds/{H.G1}/members/{H.BOT}": {"roles": [], "joined_at": None},
+                f"/guilds/{H.G1}/channels": [
+                    {"id": "C1", "type": 0, "name": "general"},
+                    {"id": "C2", "type": 0, "name": "new"},
+                ],
+                f"/guilds/{H.G1}/threads/active": {
+                    "threads": [{"id": "T1", "parent_id": "C1", "name": "post"}]
+                },
+            }
+        )
         mod.CHANNELS = {"C1": H.chan(), "OLD": H.chan("old")}
-        self.st = {"last_seen": {"C1": "5", "OLD": "5"}, "replied_to": [],
-                   "history": {}, "guild_joined": {H.G1: 0},
-                   "known_guilds": {H.G1: "Srv"},
-                   "rate": {"day": "", "day_count": 0, "users": {}}}
+        self.st = {
+            "last_seen": {"C1": "5", "OLD": "5"},
+            "replied_to": [],
+            "history": {},
+            "guild_joined": {H.G1: 0},
+            "known_guilds": {H.G1: "Srv"},
+            "rate": {"day": "", "day_count": 0, "users": {}},
+        }
 
     def _run(self, job, between=None):
         steps = 0
@@ -160,6 +168,7 @@ class SlicedJobs(unittest.TestCase):
 
         def gateway_registers():
             mod.CHANNELS["GW"] = H.chan("gw")
+
         steps = self._run(job, gateway_registers)
         self.assertGreaterEqual(steps, 6)
         self.assertEqual(set(mod.CHANNELS), {"C1", "C2", "T1", "GW"})
@@ -169,7 +178,7 @@ class SlicedJobs(unittest.TestCase):
     def test_thread_refresh_job_and_backoff(self):
         mod = self.mod
         job = mod.GenJob("Thread refresh", mod.thread_refresh_iter(self.st))
-        mod._rl_until = time.time() + 60    # REST back-off: the job waits
+        mod._rl_until = time.time() + 60  # REST back-off: the job waits
         self.assertEqual(job.run_slice(self.st, time.time() + 1, True), 0)
         self.assertFalse(job.done())
         mod._rl_until = 0

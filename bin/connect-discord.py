@@ -49,6 +49,7 @@ object instead of sentences ("problem" is the kind, "owner_steps" the
 portal steps). The token is never printed, logged, or written anywhere but the
 token file.
 """
+
 import argparse
 import base64
 import hashlib
@@ -94,46 +95,55 @@ their Discord servers you are also talking with other people, so:
   first, a bot second.
 """
 
-TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{17,40}\.[A-Za-z0-9_-]{4,10}"
-                      r"\.[A-Za-z0-9_-]{25,}")
+TOKEN_RE = re.compile(
+    r"[A-Za-z0-9_-]{17,40}\.[A-Za-z0-9_-]{4,10}"
+    r"\.[A-Za-z0-9_-]{25,}"
+)
 
-AGAIN = ("In the Developer Portal, open your app, click **Bot** in the "
-         "left menu, then **Reset Token**, then **Copy**, and paste it "
-         "here.")
+AGAIN = (
+    "In the Developer Portal, open your app, click **Bot** in the "
+    "left menu, then **Reset Token**, then **Copy**, and paste it "
+    "here."
+)
 WRONG_PASTE = {
     "empty": "Nothing came through.",
     "id": "That's the Application ID (just a number), not the token.",
-    "public_key": "That's the Public Key from the General Information "
-                  "page, not the token.",
-    "client_secret": "That's the Client Secret from the OAuth2 page, not "
-                     "the bot's token.",
+    "public_key": "That's the Public Key from the General Information page, not the token.",
+    "client_secret": "That's the Client Secret from the OAuth2 page, not the bot's token.",
     "url": "That's a link, not the token.",
     "user_token": "That looks like a token for a personal Discord account, "
-                  "not a bot. Don't share that one with anyone.",
+    "not a bot. Don't share that one with anyone.",
     "unknown": "That doesn't look like a bot token.",
     "rejected": "Discord didn't accept that token. Either it was reset "
-                "after you copied it, or it's your own account's token "
-                "rather than the bot's (never share that one).",
+    "after you copied it, or it's your own account's token "
+    "rather than the bot's (never share that one).",
 }
 
 OWNER_STEPS = {
-    "intent": ("Turn on Message Content: in the Developer Portal, open "
-               "your app and click **Bot** in the left menu. Scroll down "
-               "to **Privileged Gateway Intents**, switch on **Message "
-               "Content Intent**, then click **Save Changes** in the bar "
-               "that appears at the bottom."),
-    "code_grant": ("On the **Bot** page, switch off **Requires OAuth2 "
-                   "Code Grant**, then click **Save Changes** at the "
-                   "bottom. (With it on, the invite link fails.)"),
-    "interactions_url": ("On the **General Information** page, empty the "
-                         "**Interactions Endpoint URL** box, then click "
-                         "**Save Changes** at the bottom. (With it set, "
-                         "the bot's buttons and /settings go elsewhere.)"),
+    "intent": (
+        "Turn on Message Content: in the Developer Portal, open "
+        "your app and click **Bot** in the left menu. Scroll down "
+        "to **Privileged Gateway Intents**, switch on **Message "
+        "Content Intent**, then click **Save Changes** in the bar "
+        "that appears at the bottom."
+    ),
+    "code_grant": (
+        "On the **Bot** page, switch off **Requires OAuth2 "
+        "Code Grant**, then click **Save Changes** at the "
+        "bottom. (With it on, the invite link fails.)"
+    ),
+    "interactions_url": (
+        "On the **General Information** page, empty the "
+        "**Interactions Endpoint URL** box, then click "
+        "**Save Changes** at the bottom. (With it set, "
+        "the bot's buttons and /settings go elsewhere.)"
+    ),
 }
 
 # ---------------------------------------------------------------------------
 # What was pasted
 # ---------------------------------------------------------------------------
+
 
 def clean_paste(raw):
     s = (raw or "").strip().strip("`'\"").strip()
@@ -143,7 +153,7 @@ def clean_paste(raw):
 
 
 def classify(s):
-    """"token" for something shaped like a bot token, else the kind of
+    """ "token" for something shaped like a bot token, else the kind of
     wrong paste (a WRONG_PASTE key)."""
     if not s:
         return "empty"
@@ -161,7 +171,7 @@ def classify(s):
         head = s.split(".", 1)[0]
         try:
             uid = base64.urlsafe_b64decode(head + "=" * (-len(head) % 4))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return "unknown"
         if re.fullmatch(rb"\d{15,21}", uid):
             return "token"
@@ -171,6 +181,7 @@ def classify(s):
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
+
 
 class Report:
     def __init__(self, as_json):
@@ -183,8 +194,7 @@ class Report:
             print(text, flush=True)
 
     def step(self, kind):
-        self.data["owner_steps"].append({"kind": kind,
-                                         "text": OWNER_STEPS[kind]})
+        self.data["owner_steps"].append({"kind": kind, "text": OWNER_STEPS[kind]})
         if not self.as_json:
             print(f"OWNER STEP: {OWNER_STEPS[kind]}", flush=True)
 
@@ -202,6 +212,7 @@ class Report:
 # ---------------------------------------------------------------------------
 # Files
 # ---------------------------------------------------------------------------
+
 
 def write_private(path, text):
     """Write text to path, mode 600 from the start, atomically."""
@@ -224,8 +235,7 @@ def write_private(path, text):
 def fresh_config_text(owner_id):
     with open(os.path.join(PKG, "config.example.yaml")) as f:
         text = f.read()
-    new, n = re.subn(r"^owners: \[\]", f'owners: ["{owner_id}"]', text,
-                     count=1, flags=re.M)
+    new, n = re.subn(r"^owners: \[\]", f'owners: ["{owner_id}"]', text, count=1, flags=re.M)
     if n != 1:
         raise RuntimeError("config.example.yaml has no 'owners: []' line")
     return new
@@ -245,26 +255,30 @@ def write_config(cfg, owner_id, rep):
         if st is None:  # checked before anything was written
             raise MS.SettingsError("config.yaml is not valid")
         if owner_id in st.owners:
-            rep.line("OK: Kept the existing config.yaml (it already "
-                     "lists the app's owner).")
+            rep.line("OK: Kept the existing config.yaml (it already lists the app's owner).")
             return MS, st
         bak = MS.backup(cfg)
         import yaml
+
         with open(cfg) as f:
             raw = yaml.safe_load(f) or {}
         before = [str(o) for o in raw.get("owners") or []]
         raw["owners"] = before + [owner_id]
         text = MS.dump_config(raw)
-        rep.line(f"NOTE: config.yaml listed {', '.join(before) or 'no owner'}"
-                 f"; added Discord user {owner_id} (this app's owner) as an "
-                 f"owner too. Tell the owner, and remove whoever shouldn't "
-                 f"be there. The old file is saved as "
-                 f"{os.path.basename(bak)}.")
+        rep.line(
+            f"NOTE: config.yaml listed {', '.join(before) or 'no owner'}"
+            f"; added Discord user {owner_id} (this app's owner) as an "
+            f"owner too. Tell the owner, and remove whoever shouldn't "
+            f"be there. The old file is saved as "
+            f"{os.path.basename(bak)}."
+        )
     if text is None:
         text = fresh_config_text(owner_id)
         if not os.path.exists(cfg):
-            rep.line(f"OK: Wrote config.yaml (owner: Discord user "
-                     f"{owner_id}); everything else is the default.")
+            rep.line(
+                f"OK: Wrote config.yaml (owner: Discord user "
+                f"{owner_id}); everything else is the default."
+            )
     # Check it exactly as the bot will, before it replaces anything.
     MS.load(cfg, text=text)
     MS.atomic_write_text(cfg, text)
@@ -280,8 +294,7 @@ def name_persona(st, name, rep):
             raw = f.read()
     except OSError:
         raw = None
-    if raw is not None and hashlib.sha256(raw).hexdigest() \
-            not in SHIPPED_PERSONAS:
+    if raw is not None and hashlib.sha256(raw).hexdigest() not in SHIPPED_PERSONAS:
         rep.line("OK: Left persona.md as it is (it is already yours).")
         return
     safe = " ".join(name.split())[:80]
@@ -296,14 +309,20 @@ def name_persona(st, name, rep):
 # Connect
 # ---------------------------------------------------------------------------
 
+
 def app_owner(app):
     """(owner user id, their username or None, owned by a team?)."""
     team = app.get("team")
     if isinstance(team, dict) and team.get("owner_user_id"):
         uid = str(team["owner_user_id"])
-        name = next((((m.get("user") or {}).get("username"))
-                     for m in team.get("members") or []
-                     if str((m.get("user") or {}).get("id")) == uid), None)
+        name = next(
+            (
+                ((m.get("user") or {}).get("username"))
+                for m in team.get("members") or []
+                if str((m.get("user") or {}).get("id")) == uid
+            ),
+            None,
+        )
         return uid, name, True
     owner = app.get("owner") or {}
     return str(owner.get("id") or ""), owner.get("username"), False
@@ -325,9 +344,11 @@ def read_token_file(path):
     private_file = not st.st_mode & 0o077
     private_dir = dst.st_uid == uid and not dst.st_mode & 0o077
     if not (private_file or private_dir):
-        return None, (f"{path} is readable by other accounts; write the "
-                      f"token into ~/.config/muse-discord/incoming/ "
-                      f"(bash bin/install.sh makes it) instead.")
+        return None, (
+            f"{path} is readable by other accounts; write the "
+            f"token into ~/.config/muse-discord/incoming/ "
+            f"(bash bin/install.sh makes it) instead."
+        )
     with open(path) as f:
         token = f.read()
     os.unlink(path)
@@ -351,10 +372,12 @@ def get_token(args, rep):
             saved = C.token_file(C.load_settings(args.config))
         except Exception:
             pass
-        if saved and os.path.realpath(os.path.expanduser(args.token_file)) \
-                == os.path.realpath(saved):
-            return None, rep.fail("usage", "That is the saved token file; "
-                                  "use --saved to reuse it.", 2)
+        if saved and os.path.realpath(os.path.expanduser(args.token_file)) == os.path.realpath(
+            saved
+        ):
+            return None, rep.fail(
+                "usage", "That is the saved token file; use --saved to reuse it.", 2
+            )
         token, problem = read_token_file(args.token_file)
         if problem:
             return None, rep.fail("token_file", problem, 2)
@@ -384,44 +407,51 @@ def connect(args, rep):
         return rep.fail(kind, f"{WRONG_PASTE[kind]} {AGAIN}", 2)
     bad = config_problem(args.config)
     if bad:
-        return rep.fail("config", f"config.yaml has a problem, so nothing "
-                        f"was changed. Fix config.yaml first (python3 "
-                        f"bin/settings.py validate names each problem), "
-                        f"then run this again. {bad}", 6)
+        return rep.fail(
+            "config",
+            f"config.yaml has a problem, so nothing "
+            f"was changed. Fix config.yaml first (python3 "
+            f"bin/settings.py validate names each problem), "
+            f"then run this again. {bad}",
+            6,
+        )
     try:
         me = C.call("GET", "/users/@me", token)
         if not (me or {}).get("bot"):
-            return rep.fail("user_token",
-                            f"{WRONG_PASTE['user_token']} {AGAIN}", 2)
+            return rep.fail("user_token", f"{WRONG_PASTE['user_token']} {AGAIN}", 2)
         app = C.call("GET", "/applications/@me", token) or {}
     except C.ApiError as e:
         if e.status == 401:
-            return rep.fail("rejected", f"{WRONG_PASTE['rejected']} "
-                            f"{AGAIN}", 2)
-        return rep.fail("unreachable", f"Could not reach Discord ({e}). "
-                        f"Try again in a minute.", 3)
+            return rep.fail("rejected", f"{WRONG_PASTE['rejected']} {AGAIN}", 2)
+        return rep.fail("unreachable", f"Could not reach Discord ({e}). Try again in a minute.", 3)
     app_id = str(app.get("id") or "")
     owner_id, owner_name, team = app_owner(app)
     if not app_id or not owner_id:
-        return rep.fail("unreachable", "Discord did not say which app this "
-                        "is. Try again in a minute.", 3)
+        return rep.fail(
+            "unreachable", "Discord did not say which app this is. Try again in a minute.", 3
+        )
     bot_name = me.get("username") or "the bot"
     name = args.name or bot_name
     rep.data.update(app_id=app_id, owner_id=owner_id, bot_name=bot_name)
-    rep.line(f"OK: This is the bot {bot_name} (app {app_id}); its owner "
-             f"is Discord user {owner_id}"
-             + (f" (@{owner_name})." if owner_name else "."))
+    rep.line(
+        f"OK: This is the bot {bot_name} (app {app_id}); its owner "
+        f"is Discord user {owner_id}" + (f" (@{owner_name})." if owner_name else ".")
+    )
     if team:
         rep.data["team"] = True
-        rep.line("NOTE: This app belongs to a Discord team, so the owner "
-                 "set here is the team's owner, "
-                 + (f"@{owner_name}" if owner_name else f"user {owner_id}")
-                 + ". Ask the owner whether that is their Discord account; "
-                 "if not, change owners in config.yaml.")
+        rep.line(
+            "NOTE: This app belongs to a Discord team, so the owner "
+            "set here is the team's owner, "
+            + (f"@{owner_name}" if owner_name else f"user {owner_id}")
+            + ". Ask the owner whether that is their Discord account; "
+            "if not, change owners in config.yaml."
+        )
     if args.name and args.name.casefold() != bot_name.casefold():
-        rep.line(f"NOTE: The app is named {bot_name!r}, not {args.name!r}. "
-                 f"The bot still calls itself {args.name}; to change the "
-                 f"name people see, rename it on the Bot page.")
+        rep.line(
+            f"NOTE: The app is named {bot_name!r}, not {args.name!r}. "
+            f"The bot still calls itself {args.name}; to change the "
+            f"name people see, rename it on the Bot page."
+        )
 
     # Message Content: GATEWAY_MESSAGE_CONTENT_LIMITED (an unverified
     # app's form of the intent) is one of the few flags the API lets an
@@ -431,20 +461,27 @@ def connect(args, rep):
     if not intent_ok:
         try:
             try:
-                C.call("PATCH", "/applications/@me", token,
-                       {"flags": flags | C.MESSAGE_CONTENT_LIMITED})
+                C.call(
+                    "PATCH",
+                    "/applications/@me",
+                    token,
+                    {"flags": flags | C.MESSAGE_CONTENT_LIMITED},
+                )
             except C.ApiError as e:
                 if e.status != 400:
                     raise
                 # Some flags in the app's value may not be ours to send
                 # back: send only the editable ones.
-                C.call("PATCH", "/applications/@me", token,
-                       {"flags": (flags & C.EDITABLE_FLAGS)
-                        | C.MESSAGE_CONTENT_LIMITED})
+                C.call(
+                    "PATCH",
+                    "/applications/@me",
+                    token,
+                    {"flags": (flags & C.EDITABLE_FLAGS) | C.MESSAGE_CONTENT_LIMITED},
+                )
             again = C.call("GET", "/applications/@me", token) or {}
-            intent_ok = bool(int(again.get("flags") or 0)
-                             & (C.MESSAGE_CONTENT
-                                | C.MESSAGE_CONTENT_LIMITED))
+            intent_ok = bool(
+                int(again.get("flags") or 0) & (C.MESSAGE_CONTENT | C.MESSAGE_CONTENT_LIMITED)
+            )
         except C.ApiError as e:
             rep.data["intent_error"] = str(e)
     rep.data["message_content"] = intent_ok
@@ -468,16 +505,13 @@ def connect(args, rep):
             path = None
     path = path or os.path.expanduser(DEFAULT_TOKEN_FILE)
     write_private(path, token + "\n")
-    rep.line(f"OK: Saved the token in {path} (only this account can read "
-             f"it).")
+    rep.line(f"OK: Saved the token in {path} (only this account can read it).")
     try:
         MS, st = write_config(cfg, owner_id, rep)
     except (MS.SettingsError, RuntimeError, OSError) as e:
-        return rep.fail("config", f"Could not write config.yaml (the token "
-                        f"is saved): {e}", 6)
+        return rep.fail("config", f"Could not write config.yaml (the token is saved): {e}", 6)
     if C.token_file(st) != path:
-        rep.line(f"NOTE: config.yaml reads the token from "
-                 f"{st.token_sources()}, not {path}.")
+        rep.line(f"NOTE: config.yaml reads the token from {st.token_sources()}, not {path}.")
     name_persona(st, name, rep)
 
     url = C.invite_url(app_id)
@@ -491,6 +525,7 @@ def connect(args, rep):
 # ---------------------------------------------------------------------------
 # Wait for the invite
 # ---------------------------------------------------------------------------
+
 
 def channel_perms(base, everyone_id, member_roles, bot_id, overwrites):
     """Discord's permission overwrite rules, for one channel."""
@@ -515,8 +550,10 @@ def channel_perms(base, everyone_id, member_roles, bot_id, overwrites):
 
 def describe_guild(token, bot_id, g):
     gid = g["id"]
-    roles = {r["id"]: int(r.get("permissions") or 0)
-             for r in C.call("GET", f"/guilds/{gid}/roles", token) or []}
+    roles = {
+        r["id"]: int(r.get("permissions") or 0)
+        for r in C.call("GET", f"/guilds/{gid}/roles", token) or []
+    }
     member = C.call("GET", f"/guilds/{gid}/members/{bot_id}", token) or {}
     mine = list(member.get("roles") or [])
     base = roles.get(gid, 0)
@@ -526,8 +563,7 @@ def describe_guild(token, bot_id, g):
     for ch in C.call("GET", f"/guilds/{gid}/channels", token) or []:
         if ch.get("type") not in (0, 5, 15):  # text, announcement, forum
             continue
-        p = channel_perms(base, gid, mine, bot_id,
-                          ch.get("permission_overwrites"))
+        p = channel_perms(base, gid, mine, bot_id, ch.get("permission_overwrites"))
         if p != -1 and not p & C.VIEW_CHANNEL:
             continue
         read += 1
@@ -535,8 +571,13 @@ def describe_guild(token, bot_id, g):
             post += 1
         else:
             read_only.append("#" + str(ch.get("name")))
-    return {"id": gid, "name": g.get("name"), "can_read": read,
-            "can_post": post, "read_only": read_only}
+    return {
+        "id": gid,
+        "name": g.get("name"),
+        "can_read": read,
+        "can_post": post,
+        "read_only": read_only,
+    }
 
 
 def wait(args, rep):
@@ -546,8 +587,7 @@ def wait(args, rep):
     except MS.SettingsError as e:
         return rep.fail("config", f"config.yaml: {e}", 6)
     if not token:
-        return rep.fail("no_token", "No saved token yet: run this script "
-                        "with the token first.", 2)
+        return rep.fail("no_token", "No saved token yet: run this script with the token first.", 2)
     deadline = time.time() + args.wait
     try:
         bot_id = C.call("GET", "/users/@me", token)["id"]
@@ -557,28 +597,34 @@ def wait(args, rep):
                 break
             time.sleep(args.poll)
         if not guilds:
-            return rep.fail("timeout", "The bot hasn't joined a server yet. "
-                            "Ask the owner to open the invite link, pick "
-                            "their server and click Authorize.", 5)
+            return rep.fail(
+                "timeout",
+                "The bot hasn't joined a server yet. "
+                "Ask the owner to open the invite link, pick "
+                "their server and click Authorize.",
+                5,
+            )
         found = [describe_guild(token, bot_id, g) for g in guilds[:10]]
     except C.ApiError as e:
         code = 2 if e.status == 401 else 3
-        return rep.fail("rejected" if code == 2 else "unreachable",
-                        f"Discord: {e}", code)
+        return rep.fail("rejected" if code == 2 else "unreachable", f"Discord: {e}", code)
     rep.data["servers"] = found
     for g in found:
         if not g["can_read"]:
-            rep.line(f"PROBLEM: The bot is in {g['name']} but can't see "
-                     f"any channels there. In Discord: Server Settings, "
-                     f"Roles, the bot's role: switch on View Channels and "
-                     f"Send Messages.")
+            rep.line(
+                f"PROBLEM: The bot is in {g['name']} but can't see "
+                f"any channels there. In Discord: Server Settings, "
+                f"Roles, the bot's role: switch on View Channels and "
+                f"Send Messages."
+            )
             continue
-        text = (f"OK: The bot is in {g['name']}. It can read "
-                f"{g['can_read']} channels and post in {g['can_post']} of "
-                f"them.")
+        text = (
+            f"OK: The bot is in {g['name']}. It can read "
+            f"{g['can_read']} channels and post in {g['can_post']} of "
+            f"them."
+        )
         if g["read_only"]:
-            text += (" It can read but not post in "
-                     + ", ".join(g["read_only"][:10]) + ".")
+            text += " It can read but not post in " + ", ".join(g["read_only"][:10]) + "."
         rep.line(text)
     rep.finish()
     return 0 if any(g["can_post"] for g in found) else 4
@@ -587,31 +633,40 @@ def wait(args, rep):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Connect a Discord app to muse-discord (token on "
-                    "stdin), or --wait for the bot to join a server.")
+        "stdin), or --wait for the bot to join a server."
+    )
     ap.add_argument("--name", help="the bot's name (your Muse's name)")
-    ap.add_argument("--token-file", metavar="PATH",
-                    help="read the pasted token from this file (in "
-                         "~/.config/muse-discord/incoming/), then delete it")
-    ap.add_argument("--saved", action="store_true",
-                    help="use the token already saved (re-check after a "
-                         "portal step)")
-    ap.add_argument("--wait", nargs="?", type=float, const=600.0,
-                    metavar="SECONDS",
-                    help="wait for the bot to be in a server (default "
-                         "600 s), then report what it can see")
-    ap.add_argument("--poll", type=float, default=5.0,
-                    help=argparse.SUPPRESS)
-    ap.add_argument("--config", default=os.environ.get(
-        "MUSE_DISCORD_CONFIG") or os.path.join(PKG, "config.yaml"))
-    ap.add_argument("--json", action="store_true",
-                    help="one JSON object instead of sentences")
+    ap.add_argument(
+        "--token-file",
+        metavar="PATH",
+        help="read the pasted token from this file (in "
+        "~/.config/muse-discord/incoming/), then delete it",
+    )
+    ap.add_argument(
+        "--saved",
+        action="store_true",
+        help="use the token already saved (re-check after a portal step)",
+    )
+    ap.add_argument(
+        "--wait",
+        nargs="?",
+        type=float,
+        const=600.0,
+        metavar="SECONDS",
+        help="wait for the bot to be in a server (default 600 s), then report what it can see",
+    )
+    ap.add_argument("--poll", type=float, default=5.0, help=argparse.SUPPRESS)
+    ap.add_argument(
+        "--config",
+        default=os.environ.get("MUSE_DISCORD_CONFIG") or os.path.join(PKG, "config.yaml"),
+    )
+    ap.add_argument("--json", action="store_true", help="one JSON object instead of sentences")
     args = ap.parse_args(argv)
     rep = Report(args.json)
     if args.wait is not None:
         return wait(args, rep)
     if not (args.token_file or args.saved) and sys.stdin.isatty():
-        print("Use --token-file PATH (see docs/SETUP.md).",
-              file=sys.stderr)
+        print("Use --token-file PATH (see docs/SETUP.md).", file=sys.stderr)
         return 2
     return connect(args, rep)
 

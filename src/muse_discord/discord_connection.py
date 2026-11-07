@@ -5,6 +5,9 @@ forward decoded dispatch events without changing ingestion/dedup semantics.
 Legacy approval/update buttons still use the monitor's interaction worker.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 import asyncio
 import json
 import os
@@ -27,8 +30,7 @@ class Connection(discord.Client):
         # Honor NO_PROXY/no_proxy so Discord endpoints can stay direct when
         # operators intentionally bypass the proxy for them.
         if proxy and any(
-            urllib.request.proxy_bypass_environment(host)
-            for host in ("discord.com", "gateway.discord.gg")
+            urllib.request.proxy_bypass(host) for host in ("discord.com", "gateway.discord.gg")
         ):
             proxy = None
         super().__init__(
@@ -42,7 +44,8 @@ class Connection(discord.Client):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         self.inbox, self.gateway_status = inbox, status
-        self.settings_context, self.settings_guard = context_factory, guard
+        self.settings_context: Callable[[], Any] = context_factory
+        self.settings_guard: Callable[[Any, str], None] = guard
         self.settings_log = lambda message: print(message, flush=True)
         self._presence_sent = (False, "", "")
         self._presence_at = float("-inf")
@@ -119,9 +122,7 @@ class Connection(discord.Client):
             return
         event, data = packet.get("t"), packet.get("d") or {}
         if event == "READY":
-            self.gateway_status.update(
-                user=data.get("user"), application=data.get("application")
-            )
+            self.gateway_status.update(user=data.get("user"), application=data.get("application"))
             print("Gateway READY: realtime ingest live (discord.py).", flush=True)
         elif event == "RESUMED":
             print("Gateway session resumed.", flush=True)
@@ -187,24 +188,16 @@ class Connection(discord.Client):
                 ctx = await asyncio.to_thread(self.settings_context)
                 if name in ("Why no reply?", "Why no reply"):
                     await settings_ui.why_message(interaction, ctx)
-                elif custom.startswith("mdset:") and not custom.startswith(
-                    "mdset:open:server:"
-                ):
+                elif custom.startswith("mdset:") and not custom.startswith("mdset:open:server:"):
                     await interaction.edit_original_response(
                         content="この設定画面は古い形式です。/settingsを開き直してください。"
                     )
                 else:
                     place = None
                     if custom.startswith("mdset:open:server:"):
-                        if str(interaction.user.id) not in set(
-                            map(str, ctx.settings.owners)
-                        ):
-                            raise ms.SettingsError(
-                                "この操作はBotの所有者のみ利用できます。"
-                            )
-                        place = ms.parse_place(
-                            "server:" + custom.rsplit(":", 1)[1], ctx
-                        )
+                        if str(interaction.user.id) not in set(map(str, ctx.settings.owners)):
+                            raise ms.SettingsError("この操作はBotの所有者のみ利用できます。")
+                        place = ms.parse_place("server:" + custom.rsplit(":", 1)[1], ctx)
                     await settings_ui.open_settings(interaction, ctx, place)
             elif (
                 custom.startswith(settings_ui.PREFIX)

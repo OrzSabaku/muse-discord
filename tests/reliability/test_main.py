@@ -2,6 +2,7 @@
 401 mid-run, the heartbeat, a failing outbox, identity pending, a
 same-batch follow-up), each in its own process (run_main.py); they all
 start at once."""
+
 import json
 import os
 import subprocess
@@ -12,8 +13,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # Each stops once it has seen enough (run_main.py); this alarm only
 # bounds a failing one.
 SECS = 20
-SCENARIOS = ["boot401", "boot429", "gw4004", "rest401", "phases",
-             "identity_pending", "ready_identity", "batch_fold"]
+SCENARIOS = [
+    "boot401",
+    "boot429",
+    "gw4004",
+    "rest401",
+    "phases",
+    "identity_pending",
+    "ready_identity",
+    "batch_fold",
+]
 _procs = {}
 _results = {}
 
@@ -21,9 +30,12 @@ _results = {}
 def setUpModule():
     for name in SCENARIOS:
         _procs[name] = subprocess.Popen(
-            [sys.executable, os.path.join(HERE, "run_main.py"), name,
-             str(SECS)], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=os.environ.copy())
+            [sys.executable, os.path.join(HERE, "run_main.py"), name, str(SECS)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=os.environ.copy(),
+        )
 
 
 def tearDownModule():
@@ -48,7 +60,7 @@ class Main(unittest.TestCase):
     def test_boot_401_exits_with_marker(self):
         r = run("boot401")
         self.assertEqual(r["exit"], 3, r["out"])
-        self.assertIn("TOKEN REJECTED", r["out"])   # the watchdog's marker
+        self.assertIn("TOKEN REJECTED", r["out"])  # the watchdog's marker
         self.assertNotIn("Bot user id", r["out"])
 
     def test_boot_429_prints_pending_not_identity_marker(self):

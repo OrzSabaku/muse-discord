@@ -28,9 +28,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length)
         with self.server.lock:
-            self.server.requests.append(
-                (self.command, self.path, dict(self.headers), body)
-            )
+            self.server.requests.append((self.command, self.path, dict(self.headers), body))
             count = sum(p == self.path for _, p, _, _ in self.server.requests)
         path = self.path.split("?")[0]
         status, data, headers = 200, {"path": self.path}, {}
@@ -128,9 +126,7 @@ class Transport(unittest.TestCase):
         self.assertNotIn("Authorization", self.server.requests[0][2])
 
     def test_bucket_keys_keep_major_parameters_and_escape_emoji(self):
-        a, _ = route_for(
-            "PUT", "/channels/123/messages/456/reactions/%F0%9F%91%8D%2F/@me"
-        )
+        a, _ = route_for("PUT", "/channels/123/messages/456/reactions/%F0%9F%91%8D%2F/@me")
         b, _ = route_for("PUT", "/channels/123/messages/789/reactions/x/@me")
         self.assertEqual(a.key, b.key)
         self.assertEqual(a.major_parameters, "123")
@@ -143,13 +139,9 @@ class Transport(unittest.TestCase):
 
     def test_sdk_handles_short_global_limits_and_server_retries(self):
         self.rest.request("GET", "/short-limit")
-        self.assertEqual(
-            sum(p == "/short-limit" for _, p, _, _ in self.server.requests), 2
-        )
+        self.assertEqual(sum(p == "/short-limit" for _, p, _, _ in self.server.requests), 2)
         self.rest.request("GET", "/server-error", timeout=3)
-        self.assertEqual(
-            sum(p == "/server-error" for _, p, _, _ in self.server.requests), 2
-        )
+        self.assertEqual(sum(p == "/server-error" for _, p, _, _ in self.server.requests), 2)
         self.rest.request("GET", "/after-limit")
 
     def test_long_limits_return_to_the_caller_without_blocking(self):
@@ -176,9 +168,7 @@ class Transport(unittest.TestCase):
     def test_timed_out_session_recovers_and_does_not_send_late_requests(self):
         with self.assertRaises(TimeoutError):
             self.rest.request("GET", "/slow", timeout=0.03)
-        self.assertEqual(
-            self.rest.request("GET", "/after-timeout")["path"], "/after-timeout"
-        )
+        self.assertEqual(self.rest.request("GET", "/after-timeout")["path"], "/after-timeout")
         time.sleep(0.2)
         self.assertEqual(sum(p == "/slow" for _, p, _, _ in self.server.requests), 1)
 
@@ -197,26 +187,18 @@ class Transport(unittest.TestCase):
             )
             _, _, headers, body = self.server.requests[-1]
             msg = BytesParser(policy=email.policy.default).parsebytes(
-                ("Content-Type: " + headers["Content-Type"] + "\r\n\r\n").encode()
-                + body
+                ("Content-Type: " + headers["Content-Type"] + "\r\n\r\n").encode() + body
             )
-            parts = {
-                p.get_param("name", header="content-disposition"): p
-                for p in msg.iter_parts()
-            }
+            parts = {p.get_param("name", header="content-disposition"): p for p in msg.iter_parts()}
             actual = json.loads(parts["payload_json"].get_payload(decode=True))
             target = actual.get("message", actual)
             self.assertEqual(target.pop("attachments")[0]["filename"], "cat.png")
             self.assertEqual(actual, payload)
-            self.assertEqual(
-                parts["files[0]"].get_payload(decode=True), b"\x00\xffimage"
-            )
+            self.assertEqual(parts["files[0]"].get_payload(decode=True), b"\x00\xffimage")
 
     def test_concurrent_sync_callers_share_one_async_client(self):
         with concurrent.futures.ThreadPoolExecutor(4) as pool:
-            result = list(
-                pool.map(lambda i: self.rest.request("GET", f"/parallel/{i}"), range(8))
-            )
+            result = list(pool.map(lambda i: self.rest.request("GET", f"/parallel/{i}"), range(8)))
         self.assertEqual(len(result), 8)
         self.assertEqual(len(self.server.requests), 8)
 
@@ -224,9 +206,7 @@ class Transport(unittest.TestCase):
         with self.assertRaises(DiscordError):
             self.rest.request("POST", "/server-error", {"name": "thread"})
         self.assertEqual(len(self.server.requests), 1)
-        self.rest.request(
-            "POST", "/channels/123/messages", {"content": "retry"}, timeout=3
-        )
+        self.rest.request("POST", "/channels/123/messages", {"content": "retry"}, timeout=3)
         sent = [
             json.loads(body)
             for _, path, _, body in self.server.requests
@@ -244,9 +224,7 @@ class ProxyFor(unittest.TestCase):
     # egress goes through a proxy the transport must hand it over,
     # but a loopback API override (tests, local relays) is direct.
     def test_environment_proxy_reaches_remote_api_only(self):
-        with patch.dict(
-            os.environ, {"HTTPS_PROXY": "http://proxy.example:3128"}
-        ):
+        with patch.dict(os.environ, {"HTTPS_PROXY": "http://proxy.example:3128"}):
             self.assertEqual(
                 _proxy_for("https://discord.com/api/v10"),
                 "http://proxy.example:3128",

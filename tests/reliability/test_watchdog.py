@@ -3,6 +3,7 @@ in its own user+PID namespace (unshare), so the watchdog's pgrep/pkill
 can only ever see the fakes, and every fake dies with the namespace;
 they all run at once. The watchdog's output lines are what the owners
 get as alerts, so they are checked as written."""
+
 import concurrent.futures
 import os
 import shutil
@@ -10,13 +11,13 @@ import subprocess
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "_lib"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 from common import FAKE_PROC, copy_watchdog, scratch  # noqa: E402
 
 
-def scenario(steps, env=None, token_file=True, token_env=None,
-             presence=False, old_log=None):
+def scenario(steps, env=None, token_file=True, token_env=None, presence=False, old_log=None):
     d = scratch("muse-wd-")
     copy_watchdog(d)
     shutil.copy(FAKE_PROC, os.path.join(d, "bin", "monitor.py"))
@@ -26,34 +27,56 @@ def scenario(steps, env=None, token_file=True, token_env=None,
             f.write("dummy\n")
     with open(os.path.join(d, "config.yaml"), "w") as f:
         import yaml
-        yaml.safe_dump({"token_from": [f"env:{token_env}", tok] if token_env else tok,
-                        "presence": {"enabled": presence},
-                        "updates": {"notify": False}}, f)
+
+        yaml.safe_dump(
+            {
+                "token_from": [f"env:{token_env}", tok] if token_env else tok,
+                "presence": {"enabled": presence},
+                "updates": {"notify": False},
+            },
+            f,
+        )
     if old_log:
         with open(os.path.join(d, "monitor.log"), "w") as f:
             f.write(old_log)
     e = os.environ.copy()
     e.update(env or {})
     p = subprocess.run(
-        ["unshare", "--user", "--map-root-user", "--pid", "--fork",
-         "--mount-proc", "bash", "-c", f"cd '{d}' && {steps}"],
-        capture_output=True, text=True, timeout=400, env=e)
+        [
+            "unshare",
+            "--user",
+            "--map-root-user",
+            "--pid",
+            "--fork",
+            "--mount-proc",
+            "bash",
+            "-c",
+            f"cd '{d}' && {steps}",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=400,
+        env=e,
+    )
     return p.stdout + p.stderr, d
 
 
 WD = "bash bin/watchdog.sh"
 # name -> scenario() arguments; they all run at once (setUpModule).
 SCENARIOS = {
-    "token_env_only": (WD, dict(env={"MY_BOT_TOKEN": "x"},
-                                token_file=False, token_env="MY_BOT_TOKEN")),
+    "token_env_only": (
+        WD,
+        dict(env={"MY_BOT_TOKEN": "x"}, token_file=False, token_env="MY_BOT_TOKEN"),
+    ),
     "missing_token": (WD, dict(token_file=False, token_env="MY_BOT_TOKEN")),
     "log_rotated": (WD, dict(old_log="Traceback: the crash we need\n")),
     "identity_pending": (WD, dict(env={"FAKE_MODE": "pending"})),
     "token_rejected": (f"time -p {WD}", dict(env={"FAKE_MODE": "token"})),
-    "stale_heartbeat": (f"{WD}; touch -d '20 minutes ago' monitor.heartbeat;"
-                        f" {WD}; echo; {WD}", dict(env={"FAKE_MODE": "hung"})),
-    "gateway_disabled": (f"{WD}; {WD}; {WD}", dict(env={"FAKE_MODE":
-                                                         "gwoff"})),
+    "stale_heartbeat": (
+        f"{WD}; touch -d '20 minutes ago' monitor.heartbeat; {WD}; echo; {WD}",
+        dict(env={"FAKE_MODE": "hung"}),
+    ),
+    "gateway_disabled": (f"{WD}; {WD}; {WD}", dict(env={"FAKE_MODE": "gwoff"})),
     "healthy": (f"{WD}; {WD}", dict(presence=True)),
 }
 _results = {}
@@ -61,8 +84,7 @@ _results = {}
 
 def setUpModule():
     with concurrent.futures.ThreadPoolExecutor(len(SCENARIOS)) as pool:
-        futs = {name: pool.submit(scenario, steps, **kw)
-                for name, (steps, kw) in SCENARIOS.items()}
+        futs = {name: pool.submit(scenario, steps, **kw) for name, (steps, kw) in SCENARIOS.items()}
         for name, fut in futs.items():
             _results[name] = fut.result()
 
@@ -101,8 +123,7 @@ class Watchdog(unittest.TestCase):
 
     def test_gateway_disabled_alerts_once(self):
         out, _ = _results["gateway_disabled"]
-        self.assertEqual(out.count("ALERT: monitor degraded: GATEWAY "
-                                   "DISABLED (code 4014)"), 1, out)
+        self.assertEqual(out.count("ALERT: monitor degraded: GATEWAY DISABLED (code 4014)"), 1, out)
         self.assertIn("OK already alerted", out)
 
     def test_healthy_run_is_quiet(self):

@@ -16,6 +16,7 @@ times out, fails, or answers with something unparseable. judge() never
 raises. $CLAUDE_BIN overrides the CLI path (tests use a fake);
 $E2E_CLAUDE_MODEL picks a model.
 """
+
 import datetime
 import json
 import os
@@ -80,9 +81,10 @@ def labels_for(scenario, transcript):
     line."""
     b_bot = bool((scenario or {}).get("b_is_bot"))
     labels = {"sut": "SUT", "a": "A", "b": "B", "other": "other"}
-    who = ("SUT = the bot under test; A = the server owner (a human); "
-           "B = " + ("another bot" if b_bot else "a human member")
-           + "; other = anyone else")
+    who = (
+        "SUT = the bot under test; A = the server owner (a human); "
+        "B = " + ("another bot" if b_bot else "a human member") + "; other = anyone else"
+    )
     return labels, who
 
 
@@ -94,10 +96,8 @@ def render_transcript(scenario, transcript):
     transcript = transcript or {}
     labels, who = labels_for(scenario, transcript)
     ids = transcript.get("ids") or {}
-    names = {str(v): k for k, v in ids.items()
-             if k in ("SUT", "A", "B") and v}
-    tags = {str(mid): lab for lab, mid in
-            (transcript.get("labels") or {}).items()}
+    names = {str(v): k for k, v in ids.items() if k in ("SUT", "A", "B") and v}
+    tags = {str(mid): lab for lab, mid in (transcript.get("labels") or {}).items()}
     messages = list(transcript.get("messages") or [])
     dropped = max(0, len(messages) - MAX_MESSAGES)
     messages = messages[:MAX_MESSAGES]
@@ -118,12 +118,10 @@ def render_transcript(scenario, transcript):
                 head += " +%ds" % (ts - t0).total_seconds()
             except TypeError:  # naive vs aware
                 pass
-        head += " " + labels.get(msg.get("author"),
-                                 str(msg.get("author") or "?"))
+        head += " " + labels.get(msg.get("author"), str(msg.get("author") or "?"))
         rt = msg.get("reply_to")
         if rt:
-            head += " -> " + ("[%d]" % index[str(rt)]
-                              if str(rt) in index else "(earlier message)")
+            head += " -> " + ("[%d]" % index[str(rt)] if str(rt) in index else "(earlier message)")
         if str(msg.get("id")) in tags:
             head += " (%s)" % tags[str(msg.get("id"))]
         if msg.get("thread"):
@@ -134,16 +132,16 @@ def render_transcript(scenario, transcript):
             text = text[:MAX_CONTENT] + " [...]"
         line = head + ": " + (text if text else "(no text)")
         if msg.get("attachments"):
-            line += "\n    attachments: " + ", ".join(
-                str(a) for a in msg["attachments"])
+            line += "\n    attachments: " + ", ".join(str(a) for a in msg["attachments"])
         lines.append(line)
     if not lines:
         lines.append("(no messages)")
     if dropped:
         lines.append("(%d later messages not shown)" % dropped)
     if transcript.get("converse_turns") is not None:
-        lines.append("SUT turns during the scripted conversation: %s"
-                     % transcript["converse_turns"])
+        lines.append(
+            "SUT turns during the scripted conversation: %s" % transcript["converse_turns"]
+        )
     return "\n".join(lines), who
 
 
@@ -151,15 +149,15 @@ def build_prompt(scenario, transcript, persona=None):
     if persona is None:
         try:
             with open(PERSONA) as f:
-                persona = re.sub(r"<!--.*?-->\s*", "", f.read(),
-                                 flags=re.S).strip()
+                persona = re.sub(r"<!--.*?-->\s*", "", f.read(), flags=re.S).strip()
         except OSError:
             persona = "(persona file missing)"
-    rubric = str(((scenario or {}).get("judge") or {}).get("rubric")
-                 or "").strip() or "(no rubric given)"
+    rubric = (
+        str(((scenario or {}).get("judge") or {}).get("rubric") or "").strip()
+        or "(no rubric given)"
+    )
     text, who = render_transcript(scenario, transcript)
-    return PROMPT.format(persona=persona, rubric=rubric, transcript=text,
-                         who=who)
+    return PROMPT.format(persona=persona, rubric=rubric, transcript=text, who=who)
 
 
 def extract_verdict(text):
@@ -176,9 +174,10 @@ def extract_verdict(text):
             continue
         verdict = str(obj.get("verdict") or "").strip().lower()
         if verdict in ("pass", "fail"):
-            return {"verdict": verdict,
-                    "reason": str(obj.get("reason") or "").strip()
-                    or "(no reason given)"}
+            return {
+                "verdict": verdict,
+                "reason": str(obj.get("reason") or "").strip() or "(no reason given)",
+            }
     return None
 
 
@@ -193,15 +192,17 @@ def parse_output(stdout):
         data = None
     if isinstance(data, dict) and "verdict" not in data:
         if data.get("is_error"):
-            return {"verdict": "error", "reason": "judge run failed: %s"
-                    % str(data.get("result") or data.get("subtype"))[:300]}
+            return {
+                "verdict": "error",
+                "reason": "judge run failed: %s"
+                % str(data.get("result") or data.get("subtype"))[:300],
+            }
         if isinstance(data.get("result"), str):
             text = data["result"]
     found = extract_verdict(text)
     if found:
         return found
-    return {"verdict": "error", "reason": "unparseable judge output: %r"
-            % text.strip()[:300]}
+    return {"verdict": "error", "reason": "unparseable judge output: %r" % text.strip()[:300]}
 
 
 def _kill_group(proc):
@@ -221,40 +222,53 @@ def judge(scenario, transcript, timeout=300):
     """Run the judge for one scenario. Never raises."""
     try:
         prompt = build_prompt(scenario, transcript)
-        args = [os.environ.get("CLAUDE_BIN") or "claude", "-p",
-                "--output-format", "json", "--no-session-persistence",
-                "--setting-sources", "", "--strict-mcp-config",
-                "--tools", ""]
+        args = [
+            os.environ.get("CLAUDE_BIN") or "claude",
+            "-p",
+            "--output-format",
+            "json",
+            "--no-session-persistence",
+            "--setting-sources",
+            "",
+            "--strict-mcp-config",
+            "--tools",
+            "",
+        ]
         if os.environ.get("E2E_CLAUDE_MODEL"):
             args += ["--model", os.environ["E2E_CLAUDE_MODEL"]]
         with tempfile.TemporaryDirectory(prefix="e2e-judge-") as cwd:
             try:
                 proc = subprocess.Popen(
-                    args, cwd=cwd, stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, start_new_session=True)
+                    args,
+                    cwd=cwd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
+                )
             except OSError as e:
-                return {"verdict": "error", "reason": "cannot run the "
-                        "claude CLI (%s): %s" % (args[0], e)}
+                return {
+                    "verdict": "error",
+                    "reason": "cannot run the claude CLI (%s): %s" % (args[0], e),
+                }
             try:
                 out, err = proc.communicate(prompt, timeout=timeout)
             except subprocess.TimeoutExpired:
                 _kill_group(proc)
-                return {"verdict": "error",
-                        "reason": "judge timed out after %ss" % timeout}
+                return {"verdict": "error", "reason": "judge timed out after %ss" % timeout}
         if proc.returncode != 0:
             detail = (err or out or "").strip()[-300:]
-            return {"verdict": "error", "reason": "judge exited %s: %s"
-                    % (proc.returncode, detail)}
+            return {"verdict": "error", "reason": "judge exited %s: %s" % (proc.returncode, detail)}
         return parse_output(out)
     except Exception as e:
-        return {"verdict": "error", "reason": "judge failed: %s: %s"
-                % (type(e).__name__, e)}
+        return {"verdict": "error", "reason": "judge failed: %s: %s" % (type(e).__name__, e)}
 
 
 if __name__ == "__main__":
     # Ad-hoc use: judge.py SCENARIO.yaml TRANSCRIPT.json
     import yaml
+
     with open(sys.argv[1]) as f:
         sc = yaml.safe_load(f)
     with open(sys.argv[2]) as f:

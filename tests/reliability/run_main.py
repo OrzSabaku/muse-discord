@@ -2,6 +2,7 @@
 {"exit": code|"stopped", "out": stdout, ...}. main() is stopped as soon
 as the scenario's `until` holds (checked at the end of each loop pass),
 or by the alarm."""
+
 import contextlib
 import io
 import json
@@ -10,8 +11,9 @@ import signal
 import sys
 import time
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "_lib"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 import monitor_harness as H  # noqa: E402
 from monitor_harness import G1, BOT, msg, chan, HTTPErr  # noqa: E402
 
@@ -59,9 +61,7 @@ me = {"id": BOT, "username": "musebot"}
 mod.api.routes["/users/@me"] = me
 mod.BOT_ID = mod.BOT_USER_ID = None  # main() fetches it
 until = None  # () -> True once the scenario has seen enough
-one_channel = ({"C1": chan()}, {G1: {"name": "Srv",
-                                     "system_channel_id": None,
-                                     "joined_at": None}})
+one_channel = ({"C1": chan()}, {G1: {"name": "Srv", "system_channel_id": None, "joined_at": None}})
 
 
 def write_state(st):
@@ -76,12 +76,14 @@ if scenario == "boot401":
 
     def stop_discovery(previous=None):
         raise Stop()
+
     mod.discover_channels = stop_discovery
 elif scenario == "boot429":
     mod.api.errors["/users/@me"] = HTTPErr(429, {"Retry-After": "1"})
 
     def stop_discovery(previous=None):
         raise Stop()
+
     mod.discover_channels = stop_discovery
 elif scenario == "gw4004":
     mod.discover_channels = lambda previous=None: one_channel
@@ -90,6 +92,7 @@ elif scenario == "gw4004":
         time.sleep(0.5)
         status["token_rejected"] = True
         status["wake"].set()
+
     gw_action["fn"] = act
 elif scenario == "rest401":
     mod.discover_channels = lambda previous=None: one_channel
@@ -99,6 +102,7 @@ elif scenario == "rest401":
     def act(inbox, status):
         time.sleep(0.5)  # an event wakes the loop after the poll's 401
         status["wake"].set()
+
     gw_action["fn"] = act
 elif scenario == "phases":
     mod.discover_channels = lambda previous=None: one_channel
@@ -106,6 +110,7 @@ elif scenario == "phases":
 
     def broken_outbox(state):
         raise RuntimeError("corrupt outbox")
+
     mod.process_outbox = broken_outbox
     until = lambda: calls["sweep_media"]  # noqa: E731  (a full cycle)
 elif scenario == "identity_pending":
@@ -123,6 +128,7 @@ elif scenario == "ready_identity":
         time.sleep(0.5)
         status["user"] = me
         status["wake"].set()
+
     gw_action["fn"] = act
     until = lambda: mod.BOT_USER_ID  # noqa: E731
 elif scenario == "batch_fold":

@@ -47,8 +47,10 @@ jobs:
         run: uv sync --locked
       - name: Compile every script
         run: git ls-files '*.py' | xargs uv run --no-sync python -m py_compile
-      - name: Lint for real bugs (syntax errors, undefined names, dead code)
-        run: uv run ruff check --select E9,F .
+      - name: Check Python lint and formatting
+        run: |
+          uv run --no-sync ruff check .
+          uv run --no-sync ruff format --check .
       - name: Parse every YAML file
         run: |
           git ls-files '*.yaml' '*.yml' | xargs uv run --no-sync python -c '
@@ -62,6 +64,8 @@ jobs:
         run: uv run --no-sync python -m unittest discover -s e2e/tests -t .
       - name: Install optional MCP dependencies
         run: uv sync --locked --group apps
+      - name: Check Python types
+        run: uv run --no-sync pyright
       - name: MCP stdio and image integration tests
         run: uv run --group apps python tests/discordtools/test_mcp.py
       - name: External app approvals and stdio integration tests

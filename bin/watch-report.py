@@ -23,6 +23,7 @@ the check is not live in web_watches_due.json (expired, already
 reported, or never issued), saying so. Never needs the bot token and
 never touches the network.
 """
+
 import fcntl
 import hmac
 import json
@@ -45,35 +46,46 @@ def live(rep):
     try:
         with open(DUE) as f:
             due = json.load(f)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
-    return any(isinstance(e, dict) and e.get("id") == rep["id"]
-               and hmac.compare_digest(str(e.get("nonce")).encode(),
-                                       rep["nonce"].encode())
-               for e in due if isinstance(due, list))
+    return any(
+        isinstance(e, dict)
+        and e.get("id") == rep["id"]
+        and hmac.compare_digest(str(e.get("nonce")).encode(), rep["nonce"].encode())
+        for e in due
+        if isinstance(due, list)
+    )
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 4:
-        print("usage: watch-report.py <id> <nonce> "
-              "met|not-met|unknown|refused --stdin|'<summary>'",
-              file=sys.stderr)
+        print(
+            "usage: watch-report.py <id> <nonce> met|not-met|unknown|refused --stdin|'<summary>'",
+            file=sys.stderr,
+        )
         return 2
     summary = sys.stdin.read(4096) if argv[3] == "--stdin" else argv[3]
-    rep = {"id": argv[0], "nonce": argv[1], "result": argv[2],
-           "summary": " ".join(summary.split()), "at": time.time()}
+    rep = {
+        "id": argv[0],
+        "nonce": argv[1],
+        "result": argv[2],
+        "summary": " ".join(summary.split()),
+        "at": time.time(),
+    }
     problems = W.report_problems(rep)
     if problems:
-        print("error: nothing reported; fix these and run it again:",
-              file=sys.stderr)
+        print("error: nothing reported; fix these and run it again:", file=sys.stderr)
         for p in problems:
             print(f"  {p}", file=sys.stderr)
         return 1
     if not live(rep):
-        print(f"error: check {rep['id']} is not live (it expired, was "
-              f"reported already, or the id or nonce is wrong); nothing "
-              f"reported. Move on to the next entry.", file=sys.stderr)
+        print(
+            f"error: check {rep['id']} is not live (it expired, was "
+            f"reported already, or the id or nonce is wrong); nothing "
+            f"reported. Move on to the next entry.",
+            file=sys.stderr,
+        )
         return 1
     fd = os.open(LOCK, os.O_RDWR | os.O_CREAT, 0o600)
     try:
@@ -83,12 +95,12 @@ def main(argv=None):
                 reps = json.load(f)
             if not isinstance(reps, list):
                 reps = []
-        except (OSError, ValueError):
+        except OSError, ValueError:
             reps = []
         reps = (reps + [rep])[-200:]
-        tfd, tmp = tempfile.mkstemp(dir=PACKAGE_DIR,
-                                    prefix=".web_watch_results.json.",
-                                    suffix=".tmp")
+        tfd, tmp = tempfile.mkstemp(
+            dir=PACKAGE_DIR, prefix=".web_watch_results.json.", suffix=".tmp"
+        )
         try:
             with os.fdopen(tfd, "w") as f:
                 os.fchmod(f.fileno(), 0o600)

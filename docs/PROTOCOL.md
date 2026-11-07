@@ -73,6 +73,22 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 - CLIの既読位置はモニターの配信状態から独立する。[CLI・MCP](TOOLS.md) を参照。
 - 外部アプリは `plan`→`execute`。本人DM・現在の権限・5分の期限を確認し、同じ計画を再実行しない。[設定と承認](EXTERNAL_APPS.md) を参照。
 
+## 型と静的検査
+
+Pyrightは全体をbasicで検査し、`paths.py`・`secret_scan.py`・`reply_protocol.py` はstrictにする。
+型は関数やモジュールの境界から付け、形が決まった辞書には `TypedDict` を使う。外部入力の検証はPydanticが担う。
+Discord SDKの型変換は通信・権限・UIの各窓口に限定する。既存の大きなモジュールは、責務を整理しながら段階的に型を付ける。
+
+```bash
+uv sync --locked --group apps
+uv run --group apps ruff check .
+uv run --group apps ruff format --check .
+uv run --group apps pyright
+```
+
+MCPを含めた型検査にはオプション依存も必要。CIとpre-commitもこの環境で検査する。
+実行ファイルとテストには、ソースの探索先を追加した後にimportする箇所がある。そこの `E402` だけを行単位で除外する。
+
 ## 検証
 
 ```bash

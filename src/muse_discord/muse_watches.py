@@ -34,6 +34,7 @@ Security properties (docs/PROTOCOL.md, Reminders and watches):
   spent on use, expiring after WEB_CHECK_SECS) for a watch still
   active, and checks are budgeted per day.
 """
+
 import hmac
 import contextlib
 import fcntl
@@ -46,31 +47,40 @@ import tempfile
 import time
 from typing import Annotated, Literal
 
-from pydantic import (AfterValidator, BaseModel, ConfigDict, Discriminator, Field,
-                      Tag, ValidationError, field_validator, model_validator)
-from datetime import datetime, timezone
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    Tag,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from datetime import datetime, timedelta, timezone
 
 VERSION = 1
-KINDS = ("remind", "watch")       # an `add`'s kind (a web watch is a
-                                  # watch with "check": "web")
+KINDS = ("remind", "watch")  # an `add`'s kind (a web watch is a
+# watch with "check": "web")
 
 # Limits (docs/PROTOCOL.md, Reminders and watches).
-REMIND_MIN_SECS = 60                    # at least a minute away
-REMIND_MAX_SECS = 366 * 86400           # at most a year away
-AFTER_MAX = 100 * REMIND_MAX_SECS       # a sane number (decide refuses
-                                        # past a year, with its line)
-WATCH_DEFAULT_SECS = 7 * 86400          # a watch runs a week by default
-WATCH_MAX_SECS = 30 * 86400             # and 30 days at most
+REMIND_MIN_SECS = 60  # at least a minute away
+REMIND_MAX_SECS = 366 * 86400  # at most a year away
+AFTER_MAX = 100 * REMIND_MAX_SECS  # a sane number (decide refuses
+# past a year, with its line)
+WATCH_DEFAULT_SECS = 7 * 86400  # a watch runs a week by default
+WATCH_MAX_SECS = 30 * 86400  # and 30 days at most
 WATCH_MIN_SECS = 60
 # Owners have no limits. Everyone else: one silent ceiling across all
 # kinds (a backstop against trolls and bad parses, not a setting), and
 # each fire counts as a reply toward limits.* where it fires (monitor).
 PER_PERSON_MAX = 25
-TOTAL_MAX = 2000      # everyone but the owners, a bound on the file
-HELD_RETRY_SECS = 600   # a fire held by a reply cap is tried this often
+TOTAL_MAX = 2000  # everyone but the owners, a bound on the file
+HELD_RETRY_SECS = 600  # a fire held by a reply cap is tried this often
 HELD_KEEP_SECS = 7 * 86400
-LATE_SECS = 3600      # a reminder this overdue fires once, marked late
-DEBOUNCE_SECS = 15 * 60   # one notification per watch per 15 minutes
+LATE_SECS = 3600  # a reminder this overdue fires once, marked late
+DEBOUNCE_SECS = 15 * 60  # one notification per watch per 15 minutes
 FIRE_KEEP_SECS = 24 * 3600  # a fire nobody answers is dropped after this
 DONE_KEEP_SECS = 48 * 3600  # schedule outcomes, so one is applied once
 FIRED_KEEP = 500
@@ -78,57 +88,53 @@ NOTE_MAX = 300
 WORDS_MAX = 5
 WORD_MIN, WORD_MAX = 2, 60
 CHANGES_MAX = 5
-LIST_MAX = 25         # items listed on a queue item
+LIST_MAX = 25  # items listed on a queue item
 TZ_MAX_USERS = 5000
 # Web watches.
-WEB_EVERY_MIN = 1800            # checked at most every 30 minutes
+WEB_EVERY_MIN = 1800  # checked at most every 30 minutes
 WEB_EVERY_MAX = 7 * 86400
-WEB_TOTAL_PER_DAY = 500         # checks a day in all: a safety budget,
-                                # checked when issuing (web watches are
-                                # the owners' only)
-WEB_CHECK_SECS = 15 * 60        # a check's nonce lives this long
-WEB_MAX_FAILS = 5               # unknown / no report in a row: it ends
-WEB_REPEAT_SECS = 6 * 3600      # "every time": quiet this long after one
+WEB_TOTAL_PER_DAY = 500  # checks a day in all: a safety budget,
+# checked when issuing (web watches are
+# the owners' only)
+WEB_CHECK_SECS = 15 * 60  # a check's nonce lives this long
+WEB_MAX_FAILS = 5  # unknown / no report in a row: it ends
+WEB_REPEAT_SECS = 6 * 3600  # "every time": quiet this long after one
 WEB_BACKOFF_MAX = 86400
 WHAT_MAX = SUMMARY_MAX = 300
 RESULTS = ("met", "not-met", "unknown", "refused")
 
 TZ_RE = re.compile(r"(UTC|[A-Za-z_]{1,32}(/[A-Za-z0-9_+\-]{1,32}){1,2})")
-PLACE_RE = re.compile(r"here|server|server:([1-9][0-9]{0,19})"
-                      r"|channel:([1-9][0-9]{0,19}):([1-9][0-9]{0,19})")
+PLACE_RE = re.compile(
+    r"here|server|server:([1-9][0-9]{0,19})"
+    r"|channel:([1-9][0-9]{0,19}):([1-9][0-9]{0,19})"
+)
 NOT_ON_SCHEDULE_ITEMS = ("silent", "settings", "attachments")
 _ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
 
 # The monitor's own reply when it does not do what the worker asked:
 # all or nothing, so each says nothing changed.
 LINES = {
-    "not-allowed": "Only my owners can set reminders and watches here, "
-                   "so nothing changed.",
+    "not-allowed": "Only my owners can set reminders and watches here, so nothing changed.",
     "bot": "I don't set reminders or watches for bots.",
-    "cap-person": "You have {cap} reminders and watches going; cancel "
-                  "one first.",
-    "cap-total": "I can't set that: I'm keeping as many reminders and "
-                 "watches as I can right now.",
+    "cap-person": "You have {cap} reminders and watches going; cancel one first.",
+    "cap-total": "I can't set that: I'm keeping as many reminders and watches as I can right now.",
     "time": "I couldn't set that: a reminder has to be between a minute "
-            "and a year away, so nothing changed.",
-    "watch-time": "I couldn't set that: a watch can run for 30 days at "
-                  "most, so nothing changed.",
+    "and a year away, so nothing changed.",
+    "watch-time": "I couldn't set that: a watch can run for 30 days at most, so nothing changed.",
     "place": "I couldn't set that watch: {why} Nothing changed.",
-    "cancel": "I couldn't find that among your reminders and watches, so "
-              "nothing changed.",
+    "cancel": "I couldn't find that among your reminders and watches, so nothing changed.",
     "tz": "I don't know that time zone, so nothing changed.",
-    "channel": "I can only set reminders and watches where you asked, so "
-               "nothing changed.",
+    "channel": "I can only set reminders and watches where you asked, so nothing changed.",
     "unknown": "I couldn't set that, so nothing changed.",
     "web-not-allowed": "Only my owners can set web watches, and only in a "
-                       "DM with me, so nothing changed.",
+    "DM with me, so nothing changed.",
     "web-inputs": "I can't set a web watch from a message with an "
-                  "attachment or a reply to someone else's, so nothing "
-                  "changed. Ask me again in a message of your own.",
+    "attachment or a reply to someone else's, so nothing "
+    "changed. Ask me again in a message of your own.",
 }
 # Ledger reasons: monitor.ledger_code maps the prefixes to codes.
-REASON_CAP = "reminders: limit reached"          # -> watch-cap
-REASON_NOT_ALLOWED = "reminders: not allowed"    # -> watch-not-allowed
+REASON_CAP = "reminders: limit reached"  # -> watch-cap
+REASON_NOT_ALLOWED = "reminders: not allowed"  # -> watch-not-allowed
 
 
 # ---------------------------------------------------------------------------
@@ -145,19 +151,18 @@ def parse_utc(value):
         v = v[:-1] + "+00:00"
     try:
         dt = datetime.fromisoformat(v)
-        if dt.tzinfo is None or dt.utcoffset().total_seconds() != 0:
+        if dt.tzinfo is None or dt.utcoffset() != timedelta(0):
             return None
         ts = dt.timestamp()
-    except (ValueError, OverflowError, OSError, TypeError):
+    except ValueError, OverflowError, OSError, TypeError:
         return None
     # Only times the protocol could ever take (decide checks the range).
-    return ts if 0 < ts < 4102444800 else None   # before 2100
+    return ts if 0 < ts < 4102444800 else None  # before 2100
 
 
 def iso(ts):
     """Epoch seconds as ISO-8601 UTC, to the second ("...Z")."""
-    return datetime.fromtimestamp(int(ts), timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ")
+    return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def known_tz(name):
@@ -232,23 +237,34 @@ class _Reminder(_Add):
 
 
 class _Match(_Shape):
-    words: Annotated[list[Annotated[str, AfterValidator(_word)]], Field(min_length=1, max_length=WORDS_MAX)]
+    words: Annotated[
+        list[Annotated[str, AfterValidator(_word)]], Field(min_length=1, max_length=WORDS_MAX)
+    ]
     in_: Annotated[str, Field(alias="in", pattern="^(?:" + PLACE_RE.pattern + ")$")]
     every: bool = False
 
 
-class _DiscordWatch(_Add):
+class _Until(_Add):
+    until: UTC | None = None
+
+    @field_validator("until", mode="before")
+    @classmethod
+    def no_null(cls, value):
+        if value is None:
+            raise ValueError("until cannot be null")
+        return value
+
+
+class _DiscordWatch(_Until):
     kind: Literal["watch"]
     match: _Match
-    until: UTC = Field(default=None)  # omitted is allowed; an explicit null is not
 
 
-class _WebWatch(_Add):
+class _WebWatch(_Until):
     kind: Literal["watch"]
     check: Literal["web"]
     what: Annotated[str, Field(min_length=1, max_length=WHAT_MAX)]
     every: Annotated[int, Field(ge=WEB_EVERY_MIN, le=WEB_EVERY_MAX)]
-    until: UTC = Field(default=None)
     repeat: bool = False
 
     @field_validator("what")
@@ -289,9 +305,12 @@ def _action_tag(value):
 
 
 _Action = Annotated[
-    Annotated[_Reminder, Tag("remind")] | Annotated[_DiscordWatch, Tag("watch")]
-    | Annotated[_WebWatch, Tag("web")] | Annotated[_CancelId, Tag("cancel-id")]
-    | Annotated[_CancelAll, Tag("cancel-all")] | Annotated[_Timezone, Tag("tz")],
+    Annotated[_Reminder, Tag("remind")]
+    | Annotated[_DiscordWatch, Tag("watch")]
+    | Annotated[_WebWatch, Tag("web")]
+    | Annotated[_CancelId, Tag("cancel-id")]
+    | Annotated[_CancelAll, Tag("cancel-all")]
+    | Annotated[_Timezone, Tag("tz")],
     Discriminator(_action_tag),
 ]
 
@@ -308,7 +327,7 @@ class _ScheduledReply(_Shape):
 
     @model_validator(mode="after")
     def no_other_actions(self):
-        bad = set(self.model_extra) & set(NOT_ON_SCHEDULE_ITEMS)
+        bad = set(self.model_extra or {}) & set(NOT_ON_SCHEDULE_ITEMS)
         if bad:
             raise ValueError("a schedule item carries no " + ", ".join(sorted(bad)))
         return self
@@ -332,15 +351,27 @@ def _validation_problems(model, value):
 
 def shape_problems(item):
     """Validate only schedule items; ordinary reply validation is the monitor's."""
-    return _validation_problems(_ScheduledReply, item) if isinstance(item, dict) and "schedule" in item else []
+    return (
+        _validation_problems(_ScheduledReply, item)
+        if isinstance(item, dict) and "schedule" in item
+        else []
+    )
 
 
 # ---------------------------------------------------------------------------
 # The store: watches.json, durable, monitor-internal (and bin/watches.py)
 # ---------------------------------------------------------------------------
 def empty():
-    return {"v": VERSION, "items": {}, "fires": {}, "done": {}, "tz": {},
-            "fired": {}, "web": {}, "held": {}}
+    return {
+        "v": VERSION,
+        "items": {},
+        "fires": {},
+        "done": {},
+        "tz": {},
+        "fired": {},
+        "web": {},
+        "held": {},
+    }
 
 
 def _clean(data):
@@ -360,8 +391,7 @@ class Store:
 
     def __init__(self, path):
         self.path = path
-        self.lock_path = os.path.join(os.path.dirname(path) or ".",
-                                      "watches.lock")
+        self.lock_path = os.path.join(os.path.dirname(path) or ".", "watches.lock")
         self._sig = None
         self._data = None
 
@@ -383,8 +413,7 @@ class Store:
             bad = f"{self.path}.bad-{int(time.time())}"
             with contextlib.suppress(OSError):
                 os.replace(self.path, bad)
-            print(f"watches.json unreadable ({e}); moved to "
-                  f"{os.path.basename(bad)}", flush=True)
+            print(f"watches.json unreadable ({e}); moved to {os.path.basename(bad)}", flush=True)
             return empty()
 
     def read(self):
@@ -412,8 +441,7 @@ class Store:
 
     def _write(self, data):
         d = os.path.dirname(self.path) or "."
-        fd, tmp = tempfile.mkstemp(dir=d, prefix=".watches.json.",
-                                   suffix=".tmp")
+        fd, tmp = tempfile.mkstemp(dir=d, prefix=".watches.json.", suffix=".tmp")
         try:
             with os.fdopen(fd, "w") as f:
                 os.fchmod(f.fileno(), 0o600)
@@ -436,8 +464,11 @@ def new_id(data, kind):
 def active(data, now=None):
     """The live items (not past their expiry)."""
     now = time.time() if now is None else now
-    return {i: r for i, r in data["items"].items() if isinstance(r, dict)
-            and (r.get("kind") == "remind" or r.get("until", 0) > now)}
+    return {
+        i: r
+        for i, r in data["items"].items()
+        if isinstance(r, dict) and (r.get("kind") == "remind" or r.get("until", 0) > now)
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -447,7 +478,7 @@ class Refused(Exception):
     def __init__(self, line, reason=None, detail=None):
         super().__init__(line)
         self.line = line
-        self.reason = reason      # a ledger reason, or None (replied)
+        self.reason = reason  # a ledger reason, or None (replied)
         self.detail = detail
 
 
@@ -458,9 +489,21 @@ class Request:
     or raises Refused (place checks need Discord: membership and
     channel permissions)."""
 
-    def __init__(self, requester, name, owner, guild_id, channel_id, dm,
-                 message_id, message_time, can_set, where, resolve,
-                 can_web=False):
+    def __init__(
+        self,
+        requester,
+        name,
+        owner,
+        guild_id,
+        channel_id,
+        dm,
+        message_id,
+        message_time,
+        can_set,
+        where,
+        resolve,
+        can_web=False,
+    ):
         self.requester = str(requester)
         self.name = name
         self.owner = bool(owner)
@@ -483,10 +526,8 @@ def decide(data, req, changes, now=None):
     adds = [c for c in changes if c.get("op") == "add"]
     if not req.can_set and adds:
         raise Refused(LINES["not-allowed"], REASON_NOT_ALLOWED)
-    if not (req.can_web and req.owner) \
-            and any(c.get("check") == "web" for c in adds):
-        raise Refused(LINES["web-not-allowed"], REASON_NOT_ALLOWED,
-                      {"kind": "watch-web"})
+    if not (req.can_web and req.owner) and any(c.get("check") == "web" for c in adds):
+        raise Refused(LINES["web-not-allowed"], REASON_NOT_ALLOWED, {"kind": "watch-web"})
     items = dict(data["items"])
     live = active(data, now)
     tz = dict(data["tz"])
@@ -506,14 +547,21 @@ def decide(data, req, changes, now=None):
             # Web watches change only where they are set (req.can_web).
             def ok(r):
                 return req.can_web or r.get("kind") != "watch-web"
+
             if c.get("all"):
-                ids = [i for i, r in items.items()
-                       if r.get("requester") == req.requester and i in live
-                       and ok(r)]
+                ids = [
+                    i
+                    for i, r in items.items()
+                    if r.get("requester") == req.requester and i in live and ok(r)
+                ]
             else:
                 r = items.get(c["id"])
-                if r is None or c["id"] not in live or not ok(r) or not (
-                        req.owner or r.get("requester") == req.requester):
+                if (
+                    r is None
+                    or c["id"] not in live
+                    or not ok(r)
+                    or not (req.owner or r.get("requester") == req.requester)
+                ):
                     raise Refused(LINES["cancel"])
                 ids = [c["id"]]
             for i in ids:
@@ -522,59 +570,79 @@ def decide(data, req, changes, now=None):
                 done.append(("cancel", i))
             continue
         kind = "watch-web" if c.get("check") == "web" else c["kind"]
-        rec = {"kind": kind, "requester": req.requester, "name": req.name,
-               "guild_id": None if req.dm else req.guild_id,
-               "channel_id": req.channel_id, "dm": req.dm,
-               "message_id": req.message_id, "created": now,
-               "where": req.where,
-               "note": (c.get("note") or "").strip()[:NOTE_MAX]}
+        rec = {
+            "kind": kind,
+            "requester": req.requester,
+            "name": req.name,
+            "guild_id": None if req.dm else req.guild_id,
+            "channel_id": req.channel_id,
+            "dm": req.dm,
+            "message_id": req.message_id,
+            "created": now,
+            "where": req.where,
+            "note": (c.get("note") or "").strip()[:NOTE_MAX],
+        }
         if kind == "remind":
-            due = parse_utc(c["at"]) if "at" in c \
-                else req.message_time + c["after"]
+            due = parse_utc(c["at"]) if "at" in c else req.message_time + c["after"]
+            if due is None:
+                raise Refused(LINES["time"])
             delay = due - req.message_time
-            if delay < REMIND_MIN_SECS or delay > REMIND_MAX_SECS \
-                    or due - now > REMIND_MAX_SECS:
+            if delay < REMIND_MIN_SECS or delay > REMIND_MAX_SECS or due - now > REMIND_MAX_SECS:
                 raise Refused(LINES["time"])
             rec["due"] = due
         elif kind == "watch-web":
-            until = parse_utc(c["until"]) if "until" in c \
-                else now + WATCH_DEFAULT_SECS
-            if until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
+            until = parse_utc(c["until"]) if "until" in c else now + WATCH_DEFAULT_SECS
+            if until is None or until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
                 raise Refused(LINES["watch-time"])
-            rec.update({"until": until, "what": " ".join(c["what"].split()),
-                        "every": c["every"], "repeat": bool(c.get("repeat")),
-                        "owner": req.owner, "next_check": now,
-                        "check": None, "fails": 0, "checks": 0})
+            rec.update(
+                {
+                    "until": until,
+                    "what": " ".join(c["what"].split()),
+                    "every": c["every"],
+                    "repeat": bool(c.get("repeat")),
+                    "owner": req.owner,
+                    "next_check": now,
+                    "check": None,
+                    "fails": 0,
+                    "checks": 0,
+                }
+            )
         else:
             m = c["match"]
-            until = parse_utc(c["until"]) if "until" in c \
-                else now + WATCH_DEFAULT_SECS
-            if until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
+            until = parse_utc(c["until"]) if "until" in c else now + WATCH_DEFAULT_SECS
+            if until is None or until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
                 raise Refused(LINES["watch-time"])
             scope, scope_name = req.resolve(m["in"])
-            rec.update({"until": until, "scope": scope,
-                        "scope_name": scope_name,
-                        "words": [w.strip() for w in m["words"]],
-                        "every": bool(m.get("every")),
-                        "last_fired": 0, "fired": 0})
+            rec.update(
+                {
+                    "until": until,
+                    "scope": scope,
+                    "scope_name": scope_name,
+                    "words": [w.strip() for w in m["words"]],
+                    "every": bool(m.get("every")),
+                    "last_fired": 0,
+                    "fired": 0,
+                }
+            )
         if not req.owner:
-            mine = sum(1 for r in live.values()
-                       if r.get("requester") == req.requester)
+            mine = sum(1 for r in live.values() if r.get("requester") == req.requester)
             if mine >= PER_PERSON_MAX:
-                raise Refused(LINES["cap-person"].format(cap=PER_PERSON_MAX),
-                              REASON_CAP, {"kind": kind, "cap": PER_PERSON_MAX,
-                                           "per": "person"})
+                raise Refused(
+                    LINES["cap-person"].format(cap=PER_PERSON_MAX),
+                    REASON_CAP,
+                    {"kind": kind, "cap": PER_PERSON_MAX, "per": "person"},
+                )
             if len(live) >= TOTAL_MAX:
-                raise Refused(LINES["cap-total"], REASON_CAP,
-                              {"kind": kind, "cap": TOTAL_MAX,
-                               "per": "total"})
+                raise Refused(
+                    LINES["cap-total"], REASON_CAP, {"kind": kind, "cap": TOTAL_MAX, "per": "total"}
+                )
         rid = new_id({"items": items}, kind)
         items[rid] = rec
         live[rid] = rec
         done.append(("add", rid))
     data["items"] = items
     if len(tz) > TZ_MAX_USERS:
-        for k in list(tz)[:len(tz) - TZ_MAX_USERS]:
+        for k in list(tz)[: len(tz) - TZ_MAX_USERS]:
             del tz[k]
     data["tz"] = tz
     return done
@@ -586,8 +654,7 @@ def remember_done(data, qid, outcome, now=None):
     now = time.time() if now is None else now
     d = data["done"]
     d[str(qid)] = dict(outcome, at=now)
-    for k in [k for k, v in d.items()
-              if now - (v or {}).get("at", 0) > DONE_KEEP_SECS]:
+    for k in [k for k, v in d.items() if now - (v or {}).get("at", 0) > DONE_KEEP_SECS]:
         del d[k]
     for k in list(d)[:-500]:
         del d[k]
@@ -606,14 +673,24 @@ def _entry(i, r, show_for=False):
     if r.get("kind") == "remind":
         e["due"] = iso(r.get("due", 0))
     elif r.get("kind") == "watch-web":
-        e.update({"web": True, "every_secs": r.get("every"),
-                  "repeat": bool(r.get("repeat")),
-                  "until": iso(r.get("until", 0))})
+        e.update(
+            {
+                "web": True,
+                "every_secs": r.get("every"),
+                "repeat": bool(r.get("repeat")),
+                "until": iso(r.get("until", 0)),
+            }
+        )
         if not show_for:
             e["what"] = r.get("what")
     else:
-        e.update({"in": r.get("scope_name"), "every": bool(r.get("every")),
-                  "until": iso(r.get("until", 0))})
+        e.update(
+            {
+                "in": r.get("scope_name"),
+                "every": bool(r.get("every")),
+                "until": iso(r.get("until", 0)),
+            }
+        )
         if not show_for:
             e["words"] = r.get("words")
     if show_for:
@@ -622,8 +699,7 @@ def _entry(i, r, show_for=False):
     return e
 
 
-def card(data, uid, guild_id=None, dm=False, owner_dm=False, can_set=True,
-         now=None, can_web=False):
+def card(data, uid, guild_id=None, dm=False, owner_dm=False, can_set=True, now=None, can_web=False):
     """The `watches` field of a queue item: the author's reminders and
     watches that may be shown where they asked (all of them in a DM,
     those set in this server in a server, with a count of the rest),
@@ -632,22 +708,24 @@ def card(data, uid, guild_id=None, dm=False, owner_dm=False, can_set=True,
     In an owner's own DM: everyone's, marked with whose."""
     now = time.time() if now is None else now
     uid = str(uid)
-    live = sorted(active(data, now).items(),
-                  key=lambda kv: kv[1].get("due") or kv[1].get("until", 0))
+    live = sorted(
+        active(data, now).items(), key=lambda kv: kv[1].get("due") or kv[1].get("until", 0)
+    )
     if owner_dm:
-        shown = [_entry(i, r, show_for=r.get("requester") != uid)
-                 for i, r in live]
+        shown = [_entry(i, r, show_for=r.get("requester") != uid) for i, r in live]
         hidden = 0
     else:
         mine = [(i, r) for i, r in live if r.get("requester") == uid]
-        ok = [(i, r) for i, r in mine
-              if dm or (not r.get("dm") and r.get("guild_id") == guild_id)]
+        ok = [(i, r) for i, r in mine if dm or (not r.get("dm") and r.get("guild_id") == guild_id)]
         shown = [_entry(i, r) for i, r in ok]
         hidden = len(mine) - len(ok)
-    out = {"can_set": bool(can_set), "can_web": bool(can_set and can_web),
-           "items": shown[:LIST_MAX]}
+    out = {
+        "can_set": bool(can_set),
+        "can_web": bool(can_set and can_web),
+        "items": shown[:LIST_MAX],
+    }
     if hidden:
-        out["elsewhere"] = hidden   # theirs, set in other places
+        out["elsewhere"] = hidden  # theirs, set in other places
     if len(shown) > LIST_MAX:
         out["more"] = len(shown) - LIST_MAX
     if data["tz"].get(uid):
@@ -660,22 +738,29 @@ def card(data, uid, guild_id=None, dm=False, owner_dm=False, can_set=True,
 # ---------------------------------------------------------------------------
 def due_reminders(data, now=None):
     now = time.time() if now is None else now
-    return [(i, r) for i, r in data["items"].items()
-            if isinstance(r, dict) and r.get("kind") == "remind"
-            and r.get("due", 0) <= now]
+    return [
+        (i, r)
+        for i, r in data["items"].items()
+        if isinstance(r, dict) and r.get("kind") == "remind" and r.get("due", 0) <= now
+    ]
 
 
 def expired_watches(data, now=None):
     now = time.time() if now is None else now
-    return [i for i, r in data["items"].items()
-            if isinstance(r, dict) and r.get("kind") != "remind"
-            and r.get("until", 0) <= now]
+    return [
+        i
+        for i, r in data["items"].items()
+        if isinstance(r, dict) and r.get("kind") != "remind" and r.get("until", 0) <= now
+    ]
 
 
 def next_due(data):
     """When the next reminder or expiry is due (epoch), or None."""
-    ts = [r.get("due") if r.get("kind") == "remind" else r.get("until")
-          for r in data["items"].values() if isinstance(r, dict)]
+    ts = [
+        r.get("due") if r.get("kind") == "remind" else r.get("until")
+        for r in data["items"].values()
+        if isinstance(r, dict)
+    ]
     ts = [t for t in ts if isinstance(t, (int, float))]
     return min(ts) if ts else None
 
@@ -689,8 +774,7 @@ def matcher(words):
     key = tuple(words)
     pat = _PATTERNS.get(key)
     if pat is None:
-        alts = "|".join(re.escape(w.casefold()) for w in
-                        sorted(words, key=len, reverse=True))
+        alts = "|".join(re.escape(w.casefold()) for w in sorted(words, key=len, reverse=True))
         pat = re.compile(r"(?<!\w)(?:" + alts + r")(?!\w)")
         if len(_PATTERNS) > 2000:
             _PATTERNS.clear()
@@ -713,7 +797,8 @@ def watch_covers(rec, guild_id, channel_id, parent_id=None):
         return False
     if sc.get("channel_id"):
         return channel_id == sc["channel_id"] or (
-            parent_id is not None and parent_id == sc["channel_id"])
+            parent_id is not None and parent_id == sc["channel_id"]
+        )
     return True
 
 
@@ -766,15 +851,15 @@ def _utc_day(now):
 
 
 def _backoff(rec, now):
-    rec["next_check"] = now + min(WEB_BACKOFF_MAX, rec.get("every", 3600)
-                                  * 2 ** max(0, rec.get("fails", 0)))
+    rec["next_check"] = now + min(
+        WEB_BACKOFF_MAX, rec.get("every", 3600) * 2 ** max(0, rec.get("fails", 0))
+    )
 
 
 def _not_owners(r, owners):
     """A web watch set before they were the owners' only, or by someone
     no longer among owners (the owners now, when given)."""
-    return not r.get("owner") or (owners is not None
-                                  and str(r.get("requester")) not in owners)
+    return not r.get("owner") or (owners is not None and str(r.get("requester")) not in owners)
 
 
 def web_issue(data, now=None, owners=None):
@@ -792,8 +877,7 @@ def web_issue(data, now=None, owners=None):
         used.update({"day": day, "total": 0})
     gave_up = []
     for i, r in list(data["items"].items()):
-        if not isinstance(r, dict) or r.get("kind") != "watch-web" \
-                or r.get("until", 0) <= now:
+        if not isinstance(r, dict) or r.get("kind") != "watch-web" or r.get("until", 0) <= now:
             continue
         if _not_owners(r, owners):
             # It ends, its check withdrawn (the requester is told, as for
@@ -812,13 +896,17 @@ def web_issue(data, now=None, owners=None):
         if chk or r.get("next_check", 0) > now:
             continue
         if used["total"] >= WEB_TOTAL_PER_DAY:
-            tomorrow = datetime.strptime(day, "%Y-%m-%d").replace(
-                tzinfo=timezone.utc).timestamp() + 86400
+            tomorrow = (
+                datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() + 86400
+            )
             r["next_check"] = tomorrow + secrets.randbelow(600)
             continue
         used["total"] += 1
-        r["check"] = {"nonce": secrets.token_hex(16), "issued": now,
-                      "expires": now + WEB_CHECK_SECS}
+        r["check"] = {
+            "nonce": secrets.token_hex(16),
+            "issued": now,
+            "expires": now + WEB_CHECK_SECS,
+        }
         r["checks"] = r.get("checks", 0) + 1
     return gave_up
 
@@ -833,14 +921,17 @@ def web_due(data, now=None):
     out = []
     for i, r in sorted(data["items"].items()):
         chk = r.get("check") if isinstance(r, dict) else None
-        if r.get("kind") == "watch-web" and chk \
-                and chk.get("expires", 0) > now:
-            out.append({"id": i, "key": f"{i}:{int(chk['issued'])}",
-                        "group": hashlib.sha256(
-                            str(r.get("requester")).encode()).hexdigest()[
-                            :16],
-                        "nonce": chk["nonce"], "what": r.get("what"),
-                        "expires": iso(chk["expires"])})
+        if r.get("kind") == "watch-web" and chk and chk.get("expires", 0) > now:
+            out.append(
+                {
+                    "id": i,
+                    "key": f"{i}:{int(chk['issued'])}",
+                    "group": hashlib.sha256(str(r.get("requester")).encode()).hexdigest()[:16],
+                    "nonce": chk["nonce"],
+                    "what": r.get("what"),
+                    "expires": iso(chk["expires"]),
+                }
+            )
     return out
 
 
@@ -849,7 +940,14 @@ class _Report(_Shape):
     nonce: Annotated[str, Field(pattern=r"^[0-9a-f]{32,64}$")]
     result: Literal["met", "not-met", "unknown", "refused"]
     summary: Annotated[str, Field(max_length=SUMMARY_MAX)]
-    at: Annotated[float, Field(ge=0)] = Field(default=None)  # local report-tool timestamp
+    at: Annotated[float, Field(ge=0)] | None = None  # local report-tool timestamp
+
+    @field_validator("at", mode="before")
+    @classmethod
+    def no_null_at(cls, value):
+        if value is None:
+            raise ValueError("at cannot be null")
+        return value
 
     @field_validator("summary")
     @classmethod
@@ -883,8 +981,7 @@ def web_apply(data, rep, now=None, owners=None):
         return None, i, "its requester is not an owner"
     if not chk or chk.get("expires", 0) <= now:
         return None, i, "no live check (expired or already reported)"
-    if not hmac.compare_digest(str(chk.get("nonce")).encode(),
-                               rep["nonce"].encode()):
+    if not hmac.compare_digest(str(chk.get("nonce")).encode(), rep["nonce"].encode()):
         return None, i, "wrong nonce"
     r["check"] = None
     result = rep["result"]
@@ -915,35 +1012,42 @@ def web_work(data, now=None, owners=None):
     then."""
     now = time.time() if now is None else now
     for r in data["items"].values():
-        if isinstance(r, dict) and r.get("kind") == "watch-web" \
-                and r.get("until", 0) > now:
+        if isinstance(r, dict) and r.get("kind") == "watch-web" and r.get("until", 0) > now:
             if _not_owners(r, owners):
                 return True
             chk = r.get("check")
             if (chk and chk.get("expires", 0) <= now) or (
-                    not chk and r.get("next_check", 0) <= now):
+                not chk and r.get("next_check", 0) <= now
+            ):
                 return True
     return False
 
 
 def fire_entry(i, r, now, matched=None):
     """One entry of a fire's `reminder.items`."""
-    e = {"id": i, "kind": r.get("kind"), "note": r.get("note") or "",
-         "set_at": iso(r.get("created", now))}
+    e = {
+        "id": i,
+        "kind": r.get("kind"),
+        "note": r.get("note") or "",
+        "set_at": iso(r.get("created", now)),
+    }
     if r.get("kind") == "remind":
         e["due"] = iso(r.get("due", now))
         e["late"] = now - r.get("due", now) > LATE_SECS
     elif r.get("kind") == "watch-web":
         res = (matched or {}).get("result", "met")
-        e.update({"what": r.get("what"), "result": res,
-                  "ends": iso(r.get("until", now))
-                  if r.get("repeat") and res == "met" else "now"})
-        if (matched or {}).get("summary"):
+        e.update(
+            {
+                "what": r.get("what"),
+                "result": res,
+                "ends": iso(r.get("until", now)) if r.get("repeat") and res == "met" else "now",
+            }
+        )
+        if matched and matched.get("summary"):
             e["summary"] = matched["summary"]
     else:
         e.update({"words": r.get("words"), "in": r.get("scope_name")})
         if matched:
             e["matched"] = matched
-        e["ends"] = "now" if not r.get("every") \
-            else iso(r.get("until", now))
+        e["ends"] = "now" if not r.get("every") else iso(r.get("until", now))
     return e

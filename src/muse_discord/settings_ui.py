@@ -11,12 +11,32 @@ import json
 import re
 import secrets
 from dataclasses import dataclass, field
+from collections.abc import Callable
+from typing import Any, Protocol, TypedDict, NotRequired, cast
 
 import discord
 from discord import ui
 
 from muse_discord import muse_settings as ms
 from muse_discord.settings_display import clip
+
+
+def action_row(*children: ui.Item[ui.View | ui.LayoutView]) -> ui.ActionRow[ui.LayoutView]:
+    # DynamicItem is typed for either kind of view; these items belong to
+    # this module's LayoutView. Keep the SDK's type adaptation in one place.
+    items = cast(tuple[ui.Item[ui.LayoutView], ...], children)
+    return ui.ActionRow[ui.LayoutView](*items)
+
+
+class Pending(TypedDict):
+    warnings: list[str]
+    undo: NotRequired[str | None]
+
+
+class SettingsClient(Protocol):
+    settings_context: Callable[[], Any]
+    settings_log: Callable[[str], None]
+
 
 TTL = 900
 PREFIX = "mset:"
@@ -141,9 +161,7 @@ REASONS = {
 def text(value, limit=500):
     """Names and values are untrusted Discord text; never allow mentions."""
     value = re.sub(r"[\u202a-\u202e\u2066-\u2069]", "", str(value))
-    return clip(
-        discord.utils.escape_markdown(discord.utils.escape_mentions(value)), limit
-    )
+    return clip(discord.utils.escape_markdown(discord.utils.escape_mentions(value)), limit)
 
 
 def value_text(value):
@@ -204,7 +222,7 @@ class Screen:
     key: str = "who.replies"
     draft: dict = field(default_factory=dict)
     baseline: dict = field(default_factory=dict)
-    pending: object = None
+    pending: Pending | None = None
     browse: str = ""
     page: int = 0
     undo_id: str | None = None
@@ -229,8 +247,7 @@ class Screen:
         role = role_for(interaction, ctx)
         place = self.place(ctx)
         if role == "admin" and (
-            place.kind not in ("server", "channel")
-            or place.guild_id != str(interaction.guild_id)
+            place.kind not in ("server", "channel") or place.guild_id != str(interaction.guild_id)
         ):
             raise ms.SettingsError("管理しているサーバー以外の設定は変更できません。")
         return role
@@ -280,14 +297,11 @@ class Screen:
                 self.key = values[0]
         elif action in ("scope", "browse", "previous", "next"):
             if self.draft:
-                raise ms.SettingsError(
-                    "適用先を変える前に、下書きを保存するか破棄してください。"
-                )
+                raise ms.SettingsError("適用先を変える前に、下書きを保存するか破棄してください。")
             if action == "scope" and values[0] not in ("servers", "channels"):
                 new = ms.parse_place(values[0], ctx)
                 if role == "admin" and (
-                    new.guild_id != place.guild_id
-                    or new.kind not in ("server", "channel")
+                    new.guild_id != place.guild_id or new.kind not in ("server", "channel")
                 ):
                     raise ms.SettingsError("管理しているサーバー以外は選べません。")
                 self.place_text = ms.format_place(new)
@@ -300,15 +314,11 @@ class Screen:
                 self.page = 0
         elif action == "preset":
             if role != "owner" or place.kind != "server":
-                raise ms.SettingsError(
-                    "プリセットは所有者がサーバー全体に設定できます。"
-                )
+                raise ms.SettingsError("プリセットは所有者がサーバー全体に設定できます。")
             staged = ms.simulate(ctx.settings, self.changes(ctx))
             for change in ms.preset_changes(staged, values[0], place, ctx):
                 self.stage(ctx, role, change.key, change.value)
-            return (
-                "プリセットを下書きに追加しました。保存前に変更内容を確認してください。"
-            )
+            return "プリセットを下書きに追加しました。保存前に変更内容を確認してください。"
         elif action == "set":
             self.stage(ctx, role, self.key, json.loads(values[0]))
         elif action == "inherit":
@@ -318,9 +328,7 @@ class Screen:
             ids = [("role:" if v in resolved_roles else "") + v for v in values[0]]
             self.stage(ctx, role, self.key, ids)
         elif action == "input":
-            self.stage(
-                ctx, role, self.key, parse_input(ctx.settings.spec(self.key), values[0])
-            )
+            self.stage(ctx, role, self.key, parse_input(ctx.settings.spec(self.key), values[0]))
         elif action == "discard":
             self.clear()
             return "下書きを破棄しました。"
@@ -351,36 +359,27 @@ class Screen:
         elif action == "why":
             self.browse = "why"
         else:
-            raise ms.SettingsError(
-                "この操作は利用できません。/settingsを開き直してください。"
-            )
+            raise ms.SettingsError("この操作は利用できません。/settingsを開き直してください。")
         return ""
 
     def save(self, ctx, role, confirmed=False):
         place = self.place(ctx)
         if ctx.settings.overlay_error:
-            raise ms.SettingsError(
-                "config.discord.yamlを読めないため、保存を停止しています。"
-            )
+            raise ms.SettingsError("config.discord.yamlを読めないため、保存を停止しています。")
         if confirmed and not self.pending:
-            raise ms.SettingsError(
-                "確認内容の有効期限が切れました。保存し直してください。"
-            )
-        if confirmed and len(self.pending.get("warnings", [])) > 5:
-            raise ms.SettingsError(
-                "変更を少数ずつ保存して、すべての警告を確認してください。"
-            )
-        if confirmed and "undo" in self.pending:
-            expected = self.pending["undo"]
+            raise ms.SettingsError("確認内容の有効期限が切れました。保存し直してください。")
+        pending = self.pending or Pending(warnings=[])
+        if confirmed and len(pending.get("warnings", [])) > 5:
+            raise ms.SettingsError("変更を少数ずつ保存して、すべての警告を確認してください。")
+        if confirmed and "undo" in pending:
+            expected = pending["undo"]
             kw = {"children": place.kind == "server", "expect": expected}
             if role == "admin":
                 kw["admin_gid"] = place.guild_id
-            plan = ms.undo_plan(
-                ctx.settings, place, kw["children"], kw.get("admin_gid")
-            )
+            plan = ms.undo_plan(ctx.settings, place, kw["children"], kw.get("admin_gid"))
             assessment = ms.assess(ctx.settings, plan, ctx) if role == "owner" else None
-            if assessment and assessment.warnings != self.pending["warnings"]:
-                self.pending["warnings"] = assessment.warnings
+            if assessment and assessment.warnings != pending["warnings"]:
+                pending["warnings"] = assessment.warnings
                 return ""
             planned = ms.plan_changes(ctx.settings, plan, role)
             ctx.undo(place, self.uid, **kw)
@@ -405,7 +404,7 @@ class Screen:
         if assessment and assessment.risky:
             # 確認中に条件が変わった場合は、新しい警告をもう一度表示する。
             warnings = assessment.warnings
-            if not confirmed or self.pending.get("warnings") != warnings:
+            if not confirmed or pending.get("warnings") != warnings:
                 self.pending = {"warnings": warnings}
                 return ""
         res = ctx.apply(
@@ -448,14 +447,14 @@ def parse_input(spec, raw):
     return value
 
 
-class Action(
-    ui.DynamicItem, template=r"mset:(?P<token>[A-Za-z0-9_-]{12}):(?P<action>[a-z]+)"
-):
+class Action(ui.DynamicItem, template=r"mset:(?P<token>[A-Za-z0-9_-]{12}):(?P<action>[a-z]+)"):
     """discord.py routes both buttons and selects; the session owns state."""
 
     def __init__(self, item):
         super().__init__(item)
         match = self.template.fullmatch(item.custom_id)
+        if match is None:
+            raise ValueError("invalid settings action id")
         self.token, self.action = match["token"], match["action"]
 
     @classmethod
@@ -464,12 +463,10 @@ class Action(
 
     async def callback(self, interaction):
         try:
-            ctx = await asyncio.to_thread(interaction.client.settings_context)
+            ctx = await asyncio.to_thread(cast(SettingsClient, interaction.client).settings_context)
             screen = ctx.session_peek(str(interaction.user.id), self.token)
             if not isinstance(screen, Screen):
-                raise ms.SettingsError(
-                    "この画面は期限切れです。/settingsを開き直してください。"
-                )
+                raise ms.SettingsError("この画面は期限切れです。/settingsを開き直してください。")
             screen.authorize(interaction, ctx)
             if self.action == "modal":
                 modal = ValueModal(screen, ctx)
@@ -479,22 +476,22 @@ class Action(
             await interaction.response.defer()
             async with screen.lock:
                 # 同じ画面で連続クリックしても、最新の設定・下書きから処理する。
-                ctx = await asyncio.to_thread(interaction.client.settings_context)
+                ctx = await asyncio.to_thread(
+                    cast(SettingsClient, interaction.client).settings_context
+                )
                 role = screen.authorize(interaction, ctx)
                 vals = (interaction.data or {}).get("values", [])
                 if self.action == "people":
                     vals = [
                         vals,
-                        (interaction.data.get("resolved") or {}).get("roles", {}),
+                        ((interaction.data or {}).get("resolved") or {}).get("roles", {}),
                     ]
-                banner = await asyncio.to_thread(
-                    screen.act, ctx, role, self.action, vals
-                )
+                banner = await asyncio.to_thread(screen.act, ctx, role, self.action, vals)
                 await redraw(interaction, screen, banner)
         except (ms.SettingsError, ValueError, KeyError, IndexError) as exc:
             await error(interaction, str(exc))
         except Exception as exc:
-            interaction.client.settings_log(
+            cast(SettingsClient, interaction.client).settings_log(
                 f"settings action failed: {type(exc).__name__}: {exc}"
             )
             await error(
@@ -504,7 +501,7 @@ class Action(
 
 
 class ValueModal(ui.Modal):
-    def __init__(self, screen, ctx):
+    def __init__(self, screen: Screen, ctx):
         self.screen, self.key = screen, screen.key
         spec = ctx.settings.spec(self.key)
         current = screen.draft.get(
@@ -544,13 +541,9 @@ class ValueModal(ui.Modal):
             )
         )
         if spec.type == "number":
-            hint = f"{spec.min}〜{spec.max}の整数。" + (
-                "空欄で無制限" if spec.none else ""
-            )
+            hint = f"{spec.min}〜{spec.max}の整数。" + ("空欄で無制限" if spec.none else "")
         self.input = ui.TextInput(
-            style=discord.TextStyle.paragraph
-            if spec.type != "number"
-            else discord.TextStyle.short,
+            style=discord.TextStyle.paragraph if spec.type != "number" else discord.TextStyle.short,
             default=default[: spec.maxlen or 4000],
             required=False,
             max_length=spec.maxlen or 4000,
@@ -561,7 +554,9 @@ class ValueModal(ui.Modal):
         await interaction.response.defer()
         try:
             async with self.screen.lock:
-                ctx = await asyncio.to_thread(interaction.client.settings_context)
+                ctx = await asyncio.to_thread(
+                    cast(SettingsClient, interaction.client).settings_context
+                )
                 active = ctx.session_peek(str(interaction.user.id), self.screen.token)
                 if active is not self.screen:
                     raise ms.SettingsError(
@@ -572,9 +567,7 @@ class ValueModal(ui.Modal):
                     raise ms.SettingsError(
                         "編集中の設定項目が変わりました。入力画面を開き直してください。"
                     )
-                await asyncio.to_thread(
-                    self.screen.act, ctx, role, "input", [self.input.value]
-                )
+                await asyncio.to_thread(self.screen.act, ctx, role, "input", [self.input.value])
                 await redraw(
                     interaction,
                     self.screen,
@@ -584,12 +577,10 @@ class ValueModal(ui.Modal):
             await error(interaction, str(exc))
 
     async def on_error(self, interaction, exc):
-        interaction.client.settings_log(
+        cast(SettingsClient, interaction.client).settings_log(
             f"settings modal failed: {type(exc).__name__}: {exc}"
         )
-        await error(
-            interaction, "入力を保存できませんでした。設定画面を開き直してください。"
-        )
+        await error(interaction, "入力を保存できませんでした。設定画面を開き直してください。")
 
 
 async def error(interaction, message):
@@ -606,7 +597,7 @@ async def error(interaction, message):
 
 
 async def redraw(interaction, screen, banner=""):
-    ctx = await asyncio.to_thread(interaction.client.settings_context)
+    ctx = await asyncio.to_thread(cast(SettingsClient, interaction.client).settings_context)
     role = screen.authorize(interaction, ctx)
     view = Panel(screen, ctx, role, banner, interaction.guild_id)
     check_output(interaction, view.to_components())
@@ -625,9 +616,7 @@ class Panel(ui.LayoutView):
         self.body = ui.Container(accent_colour=discord.Colour.blurple())
         self.add_item(self.body)
         self.body.add_item(
-            ui.TextDisplay(
-                f"## Museの設定 · {text(ms.place_name(self.place, ctx.names), 100)}"
-            )
+            ui.TextDisplay(f"## Museの設定 · {text(ms.place_name(self.place, ctx.names), 100)}")
         )
         self.body.add_item(
             ui.TextDisplay(
@@ -653,9 +642,7 @@ class Panel(ui.LayoutView):
         else:
             self.editor()
 
-    def button(
-        self, label, action, *, disabled=False, style=discord.ButtonStyle.secondary
-    ):
+    def button(self, label, action, *, disabled=False, style=discord.ButtonStyle.secondary):
         return Action(
             ui.Button(
                 label=label,
@@ -667,7 +654,7 @@ class Panel(ui.LayoutView):
 
     def select(self, action, options, placeholder):
         self.body.add_item(
-            ui.ActionRow(
+            action_row(
                 Action(
                     ui.Select(
                         custom_id=f"{PREFIX}{self.screen.token}:{action}",
@@ -680,9 +667,7 @@ class Panel(ui.LayoutView):
 
     def options(self, values, current=None):
         return [
-            discord.SelectOption(
-                label=clip(label, 100), value=val, default=val == current
-            )
+            discord.SelectOption(label=clip(label, 100), value=val, default=val == current)
             for label, val in values
         ]
 
@@ -720,9 +705,7 @@ class Panel(ui.LayoutView):
         choices = [k for k in CATEGORIES[s.category][1] if k in keys]
         if s.key not in choices:
             s.key = choices[0]
-        self.select(
-            "key", self.options([(TITLES[k], k) for k in choices], s.key), "③ 設定項目"
-        )
+        self.select("key", self.options([(TITLES[k], k) for k in choices], s.key), "③ 設定項目")
         if self.role == "owner" and p.kind == "server" and s.category == "reply":
             self.select(
                 "preset",
@@ -739,11 +722,7 @@ class Panel(ui.LayoutView):
         path = ms.place_path(st, p, key)
         if key in ms.TOP:
             current = st.top(key)
-            source = (
-                "設定ファイル / Discord"
-                if st.layer(path, key)[0]
-                else "組み込みの初期値"
-            )
+            source = "設定ファイル / Discord" if st.layer(path, key)[0] else "組み込みの初期値"
         else:
             current, trace = st.trace(p.scope(key), key)
             source_path = next(
@@ -759,38 +738,30 @@ class Panel(ui.LayoutView):
         inherited = st.value_without(p.scope(key), key, path)
         if path == ("all_servers",):
             self.body.add_item(
-                ui.TextDisplay(
-                    "サーバー共通の初期設定です。DMは適用先「DM」で変更します。"
-                )
+                ui.TextDisplay("サーバー共通の初期設定です。DMは適用先「DM」で変更します。")
             )
         self.body.add_item(ui.Separator())
         self.body.add_item(
             ui.TextDisplay(
-                f"### {TITLES[key]}\n現在：**{value_text(current)}**\n-# 設定元：{text(source, 180)}\n継承する値：{value_text(inherited)}"
+                f"### {TITLES[key]}\n現在：**{value_text(current)}**"
+                f"\n-# 設定元：{text(source, 180)}\n継承する値：{value_text(inherited)}"
             )
         )
         if key in s.draft:
-            new = (
-                "上の設定を継承"
-                if s.draft[key] == "inherit"
-                else value_text(s.draft[key])
-            )
+            new = "上の設定を継承" if s.draft[key] == "inherit" else value_text(s.draft[key])
             self.body.add_item(ui.TextDisplay(f"✎ 保存後：**{new}**"))
         self.control(key)
         buttons = [self.button("上の設定を継承", "inherit")]
         if p.kind != "defaults":
             buttons.append(self.button("返信しなかった理由", "why"))
-        self.body.add_item(ui.ActionRow(*buttons))
+        self.body.add_item(action_row(*buttons))
         if s.draft:
             lines = [
                 f"• {TITLES[k]} → {'継承' if v == 'inherit' else value_text(v)}"
                 for k, v in s.draft.items()
             ]
             self.body.add_item(
-                ui.TextDisplay(
-                    f"**未保存の変更：{len(lines)}件**\n"
-                    + clip("\n".join(lines), 700)
-                )
+                ui.TextDisplay(f"**未保存の変更：{len(lines)}件**\n" + clip("\n".join(lines), 700))
             )
         _, s.undo_id = ms.undo_preview(
             st,
@@ -799,7 +770,7 @@ class Panel(ui.LayoutView):
             admin_gid=p.guild_id if self.role == "admin" else None,
         )
         self.body.add_item(
-            ui.ActionRow(
+            action_row(
                 self.button(
                     f"保存（{len(s.draft)}件）",
                     "save",
@@ -817,9 +788,7 @@ class Panel(ui.LayoutView):
 
     def control(self, key):
         spec = self.ctx.settings.spec(key)
-        val = self.screen.draft.get(
-            key, current_value(self.ctx.settings, self.place, key)
-        )
+        val = self.screen.draft.get(key, current_value(self.ctx.settings, self.place, key))
         if spec.type in ("choice", "on-off", "people"):
             vals = (True, False) if spec.type == "on-off" else spec.values
             if self.role == "admin":
@@ -845,22 +814,18 @@ class Panel(ui.LayoutView):
                 )
         if spec.type in ("number", "text", "people") or spec.ids:
             self.body.add_item(
-                ui.ActionRow(
+                action_row(
                     self.button(
-                        "値を入力…"
-                        if spec.type in ("number", "text")
-                        else "IDのリストを編集…",
+                        "値を入力…" if spec.type in ("number", "text") else "IDのリストを編集…",
                         "modal",
                         style=discord.ButtonStyle.primary,
                     )
                 )
             )
-        if (
-            spec.type == "people" or spec.ids
-        ) and self.place.guild_id == self.interaction_gid:
+        if (spec.type == "people" or spec.ids) and self.place.guild_id == self.interaction_gid:
             picker = ui.UserSelect if spec.ids else ui.MentionableSelect
             self.body.add_item(
-                ui.ActionRow(
+                action_row(
                     Action(
                         picker(
                             custom_id=f"{PREFIX}{self.screen.token}:people",
@@ -888,18 +853,14 @@ class Panel(ui.LayoutView):
                 f"{TITLES[k]} → {'継承' if v == 'inherit' else value_text(v)}"
                 for k, v in s.draft.items()
             ]
-        self.body.add_item(
-            ui.TextDisplay(clip("\n".join(f"• {line}" for line in lines), 1200))
-        )
+        self.body.add_item(ui.TextDisplay(clip("\n".join(f"• {line}" for line in lines), 1200)))
         warnings = s.pending.get("warnings", [])
         for warning in warnings[:5]:
             self.body.add_item(ui.TextDisplay("⚠ " + text(warning, 350)))
         if len(warnings) > 5:
-            self.body.add_item(
-                ui.TextDisplay("警告が多いため、変更を少数ずつ保存してください。")
-            )
+            self.body.add_item(ui.TextDisplay("警告が多いため、変更を少数ずつ保存してください。"))
         self.body.add_item(
-            ui.ActionRow(
+            action_row(
                 self.button(
                     "確認して適用",
                     "confirm",
@@ -933,7 +894,7 @@ class Panel(ui.LayoutView):
             self.body.add_item(ui.TextDisplay("選択できる適用先がありません。"))
         # Two navigation actions need distinct custom_ids in the same view.
         self.body.add_item(
-            ui.ActionRow(
+            action_row(
                 self.button("前へ", "previous", disabled=s.page == 0),
                 self.button("次へ", "next", disabled=s.page == pages - 1),
                 self.button("戻る", "back"),
@@ -943,7 +904,8 @@ class Panel(ui.LayoutView):
     def diagnostics(self):
         self.body.add_item(
             ui.TextDisplay(
-                "### 返信しなかった理由\n記録された当時の理由です。設定変更後も過去のメッセージへ自動返信はしません。"
+                "### 返信しなかった理由\n記録された当時の理由です。"
+                "設定変更後も過去のメッセージへ自動返信はしません。"
             )
         )
         if self.place.kind == "dms":
@@ -954,9 +916,7 @@ class Panel(ui.LayoutView):
             )
         outcomes = self.ctx.recent_outcomes(self.place, 50)
         refused = [
-            o
-            for o in outcomes
-            if o.get("status") in ("skipped", "quarantined", "enqueue_failed")
+            o for o in outcomes if o.get("status") in ("skipped", "quarantined", "enqueue_failed")
         ][:5]
         for o in refused:
             self.body.add_item(ui.TextDisplay(text(outcome_text(o), 450)))
@@ -966,7 +926,7 @@ class Panel(ui.LayoutView):
                     "最近の記録はありません。Discordの閲覧・送信権限も確認してください。"
                 )
             )
-        self.body.add_item(ui.ActionRow(self.button("設定に戻る", "back")))
+        self.body.add_item(action_row(self.button("設定に戻る", "back")))
 
 
 def outcome_text(outcome):
@@ -1022,7 +982,10 @@ async def why_message(interaction, ctx):
         ):
             body = outcome_text(outcome)
         else:
-            body = "このメッセージの処理記録はありません。/settingsで返信条件やDiscordの権限を確認してください。"
+            body = (
+                "このメッセージの処理記録はありません。"
+                "/settingsで返信条件やDiscordの権限を確認してください。"
+            )
         check_output(interaction, body)
         await interaction.edit_original_response(
             content=text(body, 1500), allowed_mentions=discord.AllowedMentions.none()

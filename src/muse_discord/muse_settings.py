@@ -25,6 +25,7 @@ ARE SET: everywhere = one total, a server = that server, dms = all DMs.
 Every cap set along the chain is enforced (see Settings.cap_layers).
 
 """
+
 import contextlib
 import copy
 import fcntl
@@ -42,9 +43,20 @@ import yaml
 
 from muse_discord.settings_schema import CORE, TOP, CORE_GROUPS
 from muse_discord.settings_display import (
-    LABELS, VALUE_LABELS, CATEGORY_TYPE, ServerInfo, chain_names, name_lookup,
-    people_text, person_name, change_location, describe_change,
-    label, names_from, place_name, value_label,
+    LABELS,
+    VALUE_LABELS,
+    CATEGORY_TYPE,
+    ServerInfo,
+    chain_names,
+    name_lookup,
+    people_text,
+    person_name,
+    change_location,
+    describe_change,
+    label,
+    names_from,
+    place_name,
+    value_label,
 )
 from muse_discord.settings_schema import NOTES_MAX as NOTES_MAX, PRESENCE_KINDS as PRESENCE_KINDS
 
@@ -55,10 +67,12 @@ DEFAULT_PERSONA = "persona.md"
 # Short key names a channel/category entry uses.
 CHANNEL_SHORT = {"replies": "who.replies", "notes": "style.notes"}
 ENGINE_KEYS = {
-    "rest_poll_seconds": None, "discovery_refresh_minutes": None,
-    "coalesce_seconds": None, "max_reply_chars": None, "guild_ids": None,
-    "sweep": {"every_cycles", "grace_seconds", "max_age_hours",
-              "max_recoveries"},
+    "rest_poll_seconds": None,
+    "discovery_refresh_minutes": None,
+    "coalesce_seconds": None,
+    "max_reply_chars": None,
+    "guild_ids": None,
+    "sweep": {"every_cycles", "grace_seconds", "max_age_hours", "max_recoveries"},
     "backoff": {"initial_seconds", "max_seconds"},
 }
 _ID_RE = re.compile(r"^[0-9]{1,25}$")
@@ -78,9 +92,13 @@ class SettingsError(Exception):
     reason and the valid values; several problems are one per line)."""
 
 
-TOP_DISCORD_EDITABLE = ("presence.status", "presence.kind",
-                        "updates.notify", "telemetry.usage_stats",
-                        "memory.save_dms")
+TOP_DISCORD_EDITABLE = (
+    "presence.status",
+    "presence.kind",
+    "updates.notify",
+    "telemetry.usage_stats",
+    "memory.save_dms",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +135,7 @@ def _show(v):
 
 # Keys: overlay form 'servers."1".channels."2".replies'
 # ---------------------------------------------------------------------------
-def parse_key(s):
+def parse_key(s) -> tuple[tuple[str, ...], str]:
     """('scope path tuple', 'canonical key') for an overlay key, or raise
     ValueError. Scope paths: ("top",) ("everywhere",) ("dms",)
     ("all_servers",) ("servers", sid) ("servers", sid, "channels", cid)."""
@@ -129,7 +147,7 @@ def parse_key(s):
             j = s.find('"', i + 1)
             if j < 0:
                 raise ValueError("unbalanced quote")
-            buf += s[i + 1:j]
+            buf += s[i + 1 : j]
             i = j + 1
             continue
         if c == ".":
@@ -149,8 +167,7 @@ def parse_key(s):
     if head == "servers" and len(parts) >= 3:
         sid = parts[1]
         if parts[2] == "channels" and len(parts) >= 5:
-            return ("servers", sid, "channels", parts[3]), \
-                _canon(parts[4:], True)
+            return ("servers", sid, "channels", parts[3]), _canon(parts[4:], True)
         return ("servers", sid), _canon(parts[2:], False)
     raise ValueError("unknown scope")
 
@@ -162,7 +179,7 @@ def _canon(rest, channel):
     return key
 
 
-def format_key(path, key):
+def format_key(path: tuple[str, ...], key: str) -> str:
     if path == ("top",):
         return key
     if path[0] == "servers":
@@ -190,8 +207,7 @@ class Scope:
     server. A server scope may name its channel (for a thread: the
     parent) and that channel's category."""
 
-    def __init__(self, kind, guild_id=None, guild_name=None,
-                 channel_id=None, category_id=None):
+    def __init__(self, kind, guild_id=None, guild_name=None, channel_id=None, category_id=None):
         self.kind = kind
         self.guild_id = str(guild_id) if guild_id else None
         self.guild_name = guild_name
@@ -207,8 +223,7 @@ class Scope:
         return cls("everywhere")
 
     @classmethod
-    def server(cls, guild_id, guild_name=None, channel_id=None,
-               category_id=None):
+    def server(cls, guild_id, guild_name=None, channel_id=None, category_id=None):
         return cls("server", guild_id, guild_name, channel_id, category_id)
 
     @property
@@ -216,8 +231,7 @@ class Scope:
         return self.kind == "dms"
 
     def key(self):
-        return (self.kind, self.guild_id, self.guild_name, self.channel_id,
-                self.category_id)
+        return (self.kind, self.guild_id, self.guild_name, self.channel_id, self.category_id)
 
     def label(self):
         if self.kind != "server":
@@ -237,8 +251,9 @@ class Scope:
 # ---------------------------------------------------------------------------
 # Parsing a new-layout dict into layer values
 # ---------------------------------------------------------------------------
-CHANNEL_ONLY = ("a channel or category may set only replies, notes, "
-                "media.enabled and proactive.enabled")
+CHANNEL_ONLY = (
+    "a channel or category may set only replies, notes, media.enabled and proactive.enabled"
+)
 
 
 def spec_of(key):
@@ -249,17 +264,17 @@ def spec_of(key):
 def _settable_at(spec, kind, key):
     """key may be set at a layer of this kind (all_servers takes only
     who.replies and the on/off keys)."""
-    return kind in spec.scopes and (kind != "all_servers"
-                                    or key == "who.replies"
-                                    or key.endswith(".enabled"))
+    return kind in spec.scopes and (
+        kind != "all_servers" or key == "who.replies" or key.endswith(".enabled")
+    )
 
 
 class _Parser:
     def __init__(self, file_label):
         self.file = file_label
         self.errors = []
-        self.values = {}       # (path, key) -> value
-        self.labels = {}       # server/channel id -> name label
+        self.values = {}  # (path, key) -> value
+        self.labels = {}  # server/channel id -> name label
 
     def err(self, where, msg):
         self.errors.append(f"{self.file}: {where}: {msg}")
@@ -276,15 +291,15 @@ class _Parser:
             else:
                 group = key.split(".")[0]
                 valid = sorted(k for k in CORE if k.startswith(group + "."))
-                self.err(where, "unknown setting" + (
-                    f"; valid in {group}: {', '.join(valid)}" if valid
-                    else ""))
+                self.err(
+                    where,
+                    "unknown setting"
+                    + (f"; valid in {group}: {', '.join(valid)}" if valid else ""),
+                )
             return
         if not _settable_at(spec, kind, key):
-            where_ok = ", ".join(s for s in spec.scopes
-                                 if _settable_at(spec, s, key))
-            self.err(where, f"cannot be set at {kind} scope (it can be "
-                     f"set in: {where_ok})")
+            where_ok = ", ".join(s for s in spec.scopes if _settable_at(spec, s, key))
+            self.err(where, f"cannot be set at {kind} scope (it can be set in: {where_ok})")
             return
         ok, v = normalize(spec, value)
         if not ok:
@@ -311,9 +326,12 @@ class _Parser:
                     cid_s = _id_str(cid)
                     cw = f'{where}.channels."{cid}"'
                     if cid_s is None:
-                        self.err(cw, "expected a Discord channel or "
-                                 "category id (digits) as the key; put a "
-                                 "name in `name:` inside")
+                        self.err(
+                            cw,
+                            "expected a Discord channel or "
+                            "category id (digits) as the key; put a "
+                            "name in `name:` inside",
+                        )
                         continue
                     self.scope_block(path + ("channels", cid_s), cblock, cw)
             elif kind == "channel":
@@ -334,10 +352,11 @@ class _Parser:
                 for k, v in sub.items():
                     self.set(path, f"{top}.{k}", v, f"{w}.{k}")
             else:
-                self.err(w, "unknown section; valid: "
-                         + ", ".join(CORE_GROUPS
-                                     + (("name", "channels")
-                                        if kind == "server" else ())))
+                self.err(
+                    w,
+                    "unknown section; valid: "
+                    + ", ".join(CORE_GROUPS + (("name", "channels") if kind == "server" else ())),
+                )
 
     def top_value(self, key, value, where):
         spec = TOP[key]
@@ -352,8 +371,7 @@ class _Parser:
 # Settings
 # ---------------------------------------------------------------------------
 def overlay_path_for(config_path):
-    return os.path.join(os.path.dirname(os.path.abspath(config_path)),
-                        OVERLAY_NAME)
+    return os.path.join(os.path.dirname(os.path.abspath(config_path)), OVERLAY_NAME)
 
 
 def _read_yaml(path):
@@ -369,8 +387,7 @@ def server_config_paths(config_path):
     root = os.path.join(os.path.dirname(os.path.abspath(config_path)), "servers")
     if not os.path.isdir(root):
         return []
-    return [os.path.join(root, name) for name in sorted(os.listdir(root))
-            if name.endswith(".yaml")]
+    return [os.path.join(root, name) for name in sorted(os.listdir(root)) if name.endswith(".yaml")]
 
 
 class Settings:
@@ -378,13 +395,14 @@ class Settings:
 
     def __init__(self):
         self.path = None
-        self.overlay_path = None
+        self.overlay_path: str | None = None
+        self.overlay_error: str | None = None
         self.raw = {}
         self.server_files = {}
         self.file_values = {}
-        self.overlay = {}         # (path, key) -> entry dict (active ones)
+        self.overlay = {}  # (path, key) -> entry dict (active ones)
         self.overlay_doc = {}
-        self.retire = []          # [(keystr, entry, reason)]
+        self.retire = []  # [(keystr, entry, reason)]
         self.labels = {}
         self.engine = {}
         self.owners = []
@@ -457,23 +475,30 @@ class Settings:
     def chain(self, scope):
         """The layer paths for a scope, least specific first, each with a
         display name."""
-        out = [(("builtin",), "built-in"), (("everywhere",), "everywhere")]
+        out: list[tuple[tuple[str, ...], str]] = [
+            (("builtin",), "built-in"),
+            (("everywhere",), "everywhere"),
+        ]
         if scope.kind == "everywhere":
             return out
         if scope.kind == "dms":
             return out + [(("dms",), "dms")]
-        out += [(("builtin_all_servers",), "all_servers (built-in)"),
-                (("all_servers",), "all_servers")]
+        out += [
+            (("builtin_all_servers",), "all_servers (built-in)"),
+            (("all_servers",), "all_servers"),
+        ]
         if scope.kind == "all_servers" or not scope.guild_id:
             return out
         gid = scope.guild_id
         out.append((("servers", gid), f"server {gid}"))
         if scope.category_id and scope.category_id != scope.channel_id:
-            out.append((("servers", gid, "channels", scope.category_id),
-                        f"category {scope.category_id}"))
+            out.append(
+                (("servers", gid, "channels", scope.category_id), f"category {scope.category_id}")
+            )
         if scope.channel_id:
-            out.append((("servers", gid, "channels", scope.channel_id),
-                        f"channel {scope.channel_id}"))
+            out.append(
+                (("servers", gid, "channels", scope.channel_id), f"channel {scope.channel_id}")
+            )
         return out
 
     def resolve(self, scope):
@@ -521,13 +546,15 @@ class Settings:
             if s:
                 value, win = v, path
                 break
-        if win is not None and win[0] == "servers" and entry_role(
-                self.overlay.get((win, key))) == "admin":
+        if (
+            win is not None
+            and win[0] == "servers"
+            and entry_role(self.overlay.get((win, key))) == "admin"
+        ):
             # A server admin's entry never outvotes the owners: it is the
             # quieter of its own value and what the owners' layers say
             # (an owner pausing the server reaches the admin's channel).
-            value = _quieter(key, value, self._owner_value(chain, key),
-                             self.spec(key))
+            value = _quieter(key, value, self._owner_value(chain, key), self.spec(key))
         return value, rows
 
     def _owner_layer(self, path, key):
@@ -537,8 +564,7 @@ class Settings:
         if ov is None or entry_role(ov) != "admin":
             s, v, _src = self.layer(path, key)
             return s, v
-        below = _entry_below(ov, self.overlay_doc or {},
-                             format_key(path, key), self.owners)
+        below = _entry_below(ov, self.overlay_doc or {}, format_key(path, key), self.owners)
         if not below:
             if (path, key) in self.file_values:
                 return True, self.file_values[(path, key)]
@@ -580,15 +606,15 @@ class Settings:
                 else:
                     src = f"inherited from {name} ({desc})"
                 if key == "style.notes":
-                    parts = [r for r in rows if r[2] and r[3]
-                             and _scope_kind(r[1]) == "channel"]
-                    base = [r for r in rows if r[2]
-                            and _scope_kind(r[1]) != "channel"]
+                    parts = [r for r in rows if r[2] and r[3] and _scope_kind(r[1]) == "channel"]
+                    base = [r for r in rows if r[2] and _scope_kind(r[1]) != "channel"]
                     if parts and value:
-                        names = ([base[-1][0]] if base and base[-1][3]
-                                 and base[-1][1][0] != "builtin" else [])
-                        src = "combined: " + ", ".join(
-                            names + [r[0] for r in parts])
+                        names = (
+                            [base[-1][0]]
+                            if base and base[-1][3] and base[-1][1][0] != "builtin"
+                            else []
+                        )
+                        src = "combined: " + ", ".join(names + [r[0] for r in parts])
                 break
             out.append((key, value, src, rows))
         return out
@@ -640,14 +666,14 @@ class Settings:
     def servers_listed(self):
         """{server id: label} for every server the files mention."""
         out = {}
-        for (path, _k) in list(self.file_values) + list(self.overlay):
+        for path, _k in list(self.file_values) + list(self.overlay):
             if path[0] == "servers":
                 out.setdefault(path[1], self.labels.get(path[1]))
         return out
 
     def channels_listed(self, gid):
         out = set()
-        for (path, _k) in list(self.file_values) + list(self.overlay):
+        for path, _k in list(self.file_values) + list(self.overlay):
             if path[0] == "servers" and path[1] == gid and len(path) > 2:
                 out.add(path[3])
         return sorted(out)
@@ -670,9 +696,16 @@ class Settings:
                 if keystr not in values or not _same_entry(cur, entry):
                     continue  # replaced since this Settings was loaded
                 values.pop(keystr, None)
-                doc.setdefault("history", []).append({
-                    "key": keystr, "from": entry.get("value"), "to": None,
-                    "by": entry.get("by"), "at": now, "retired": reason})
+                doc.setdefault("history", []).append(
+                    {
+                        "key": keystr,
+                        "from": entry.get("value"),
+                        "to": None,
+                        "by": entry.get("by"),
+                        "at": now,
+                        "retired": reason,
+                    }
+                )
                 notices.append(_retire_notice(keystr, entry, reason))
             doc["values"] = values
             doc["history"] = _trim_history(doc.get("history") or [])
@@ -709,14 +742,18 @@ def _source_text(src):
 
 def _retire_notice(keystr, entry, reason):
     if reason == "file changed":
-        return (f"settings: you edited `{keystr}` in config.yaml after it "
-                f"was changed in Discord (to {_show(entry.get('value'))} by "
-                f"{entry.get('by')} at {entry.get('at')}). The file wins; "
-                f"the Discord change is undone and kept in "
-                f"{OVERLAY_NAME} history.")
-    return (f"settings: the Discord change to `{keystr}` "
-            f"({_show(entry.get('value'))}) no longer applies ({reason}); "
-            f"it was moved to {OVERLAY_NAME} history.")
+        return (
+            f"settings: you edited `{keystr}` in config.yaml after it "
+            f"was changed in Discord (to {_show(entry.get('value'))} by "
+            f"{entry.get('by')} at {entry.get('at')}). The file wins; "
+            f"the Discord change is undone and kept in "
+            f"{OVERLAY_NAME} history."
+        )
+    return (
+        f"settings: the Discord change to `{keystr}` "
+        f"({_show(entry.get('value'))}) no longer applies ({reason}); "
+        f"it was moved to {OVERLAY_NAME} history."
+    )
 
 
 def _now():
@@ -741,15 +778,19 @@ def _read_overlay_doc(path, strict=False):
             raise SettingsError(
                 f"{OVERLAY_NAME} cannot be read ({e}); nothing was changed. "
                 f"Fix the file, or delete it to drop every change made "
-                f"from Discord.")
+                f"from Discord."
+            )
         return {"version": 1, "values": {}, "history": []}
-    if strict and (not isinstance(doc, dict)
-                   or not isinstance(doc.get("values", {}) or {}, dict)
-                   or not isinstance(doc.get("history", []) or [], list)):
+    if strict and (
+        not isinstance(doc, dict)
+        or not isinstance(doc.get("values", {}) or {}, dict)
+        or not isinstance(doc.get("history", []) or [], list)
+    ):
         raise SettingsError(
             f"{OVERLAY_NAME} is not a settings overlay (expected values: "
             f"and history:); nothing was changed. Fix the file, or delete "
-            f"it to drop every change made from Discord.")
+            f"it to drop every change made from Discord."
+        )
     if not isinstance(doc, dict):
         doc = {}
     if not isinstance(doc.get("values"), dict):
@@ -769,8 +810,12 @@ def _trim_history(hist):
 
     def group(h):
         return h.get("group") if isinstance(h, dict) else None
-    while cut < len(hist) and group(hist[cut]) is not None \
-            and group(hist[cut]) == group(hist[cut - 1]):
+
+    while (
+        cut < len(hist)
+        and group(hist[cut]) is not None
+        and group(hist[cut]) == group(hist[cut - 1])
+    ):
         cut += 1
     return hist[cut:]
 
@@ -808,7 +853,8 @@ OVERLAY_HEADER = (
     "# delete: everything then follows config.yaml again. Each value names\n"
     "# the file's value it replaced (base); edit config.yaml at that spot\n"
     "# and the file wins again. `bin/settings.py fold` copies these into\n"
-    "# config.yaml.\n")
+    "# config.yaml.\n"
+)
 
 
 def atomic_write_text(path, text):
@@ -817,14 +863,13 @@ def atomic_write_text(path, text):
     except OSError:
         mode = 0o600
     d = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path)
-                               + ".", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w") as f:
             os.fchmod(f.fileno(), mode)
             f.write(text)
             f.flush()
-            os.fsync(f.fileno())   # never an empty file after a crash
+            os.fsync(f.fileno())  # never an empty file after a crash
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -835,10 +880,13 @@ def atomic_write_text(path, text):
 
 
 def _write_overlay_doc(path, doc):
-    body = yaml.safe_dump({"version": 1, "values": doc.get("values") or {},
-                           "history": doc.get("history") or []},
-                          sort_keys=False, default_flow_style=False,
-                          allow_unicode=True, width=1000)
+    body = yaml.safe_dump(
+        {"version": 1, "values": doc.get("values") or {}, "history": doc.get("history") or []},
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
+        width=1000,
+    )
     atomic_write_text(path, OVERLAY_HEADER + body)
 
 
@@ -852,8 +900,7 @@ def load(config_path, overlay_path=None, text=None):
     st.overlay_path = overlay_path or overlay_path_for(config_path)
     label = os.path.basename(config_path)
     try:
-        raw = _yload(text) if text is not None \
-            else _read_yaml(config_path)
+        raw = _yload(text) if text is not None else _read_yaml(config_path)
     except yaml.YAMLError as e:
         raise SettingsError(f"{label}: not valid YAML ({e})")
     except OSError as e:
@@ -861,8 +908,9 @@ def load(config_path, overlay_path=None, text=None):
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):
-        raise SettingsError(f"{label}: expected settings (key: value "
-                            f"lines), got {type(raw).__name__}")
+        raise SettingsError(
+            f"{label}: expected settings (key: value lines), got {type(raw).__name__}"
+        )
     st.raw = raw
     p = _Parser(label)
     _parse_new(p, raw, st)
@@ -890,14 +938,27 @@ def load(config_path, overlay_path=None, text=None):
 
 
 def _parse_new(p, data, st):
-    allowed = {"version", "owners", "persona", "token_from", "presence",
-               "updates", "telemetry", "memory", "everywhere", "dms",
-               "all_servers",
-               "servers", "engine", "testing"}
+    allowed = {
+        "version",
+        "owners",
+        "persona",
+        "token_from",
+        "presence",
+        "updates",
+        "telemetry",
+        "memory",
+        "everywhere",
+        "dms",
+        "all_servers",
+        "servers",
+        "engine",
+        "testing",
+    }
     for k in data:
         if k not in allowed:
-            p.err(str(k), "unknown top-level key; valid: "
-                  + ", ".join(sorted(allowed - {"testing"})))
+            p.err(
+                str(k), "unknown top-level key; valid: " + ", ".join(sorted(allowed - {"testing"}))
+            )
     v = data.get("version")
     if v is not None and v != 1:
         p.err("version", f"{v!r} is not supported; valid: 1")
@@ -908,8 +969,7 @@ def _parse_new(p, data, st):
         else:
             for o in owners:
                 if _id_str(o) is None:
-                    p.err("owners", f"{_show(o)}: expected a Discord user "
-                          f"id (digits)")
+                    p.err("owners", f"{_show(o)}: expected a Discord user id (digits)")
             st.owners = [str(o) for o in owners]
     persona = data.get("persona")
     if persona is not None:
@@ -920,21 +980,24 @@ def _parse_new(p, data, st):
     tf = data.get("token_from")
     if tf is not None:
         items = tf if isinstance(tf, list) else [tf]
-        if not items or not all(isinstance(i, str) and i.strip()
-                                and i.strip() != "env:" for i in items):
-            p.err("token_from", "expected env:NAME or a file path (never "
-                  "the token itself)")
-        elif any(re.fullmatch(r"[A-Za-z0-9_.\-]{50,}", i.strip())
-                 for i in items):
-            p.err("token_from", "this looks like a token itself; store the "
-                  "token in a file (mode 600) and give its path")
+        if not items or not all(
+            isinstance(i, str) and i.strip() and i.strip() != "env:" for i in items
+        ):
+            p.err("token_from", "expected env:NAME or a file path (never the token itself)")
+        elif any(re.fullmatch(r"[A-Za-z0-9_.\-]{50,}", i.strip()) for i in items):
+            p.err(
+                "token_from",
+                "this looks like a token itself; store the "
+                "token in a file (mode 600) and give its path",
+            )
         else:
-            st.token_from = [i.strip() for i in items] \
-                if isinstance(tf, list) else tf.strip()
-    for sect, keys in (("presence", ("status", "kind", "enabled")),
-                       ("updates", ("notify",)),
-                       ("telemetry", ("usage_stats",)),
-                       ("memory", ("save_dms",))):
+            st.token_from = [i.strip() for i in items] if isinstance(tf, list) else tf.strip()
+    for sect, keys in (
+        ("presence", ("status", "kind", "enabled")),
+        ("updates", ("notify",)),
+        ("telemetry", ("usage_stats",)),
+        ("memory", ("save_dms",)),
+    ):
         block = data.get(sect)
         if block is None:
             continue
@@ -943,8 +1006,10 @@ def _parse_new(p, data, st):
             continue
         for k, val in block.items():
             if k not in keys:
-                p.err(f"{sect}.{k}", "unknown setting; valid: "
-                      + ", ".join(x for x in keys if x != "enabled"))
+                p.err(
+                    f"{sect}.{k}",
+                    "unknown setting; valid: " + ", ".join(x for x in keys if x != "enabled"),
+                )
                 continue
             p.top_value(f"{sect}.{k}", val, f"{sect}.{k}")
     for scope in ("everywhere", "dms", "all_servers"):
@@ -968,16 +1033,17 @@ def _parse_new(p, data, st):
         else:
             for k, sub in eng.items():
                 if k not in ENGINE_KEYS:
-                    p.err(f"engine.{k}", "unknown engine setting; "
-                          "valid: " + ", ".join(ENGINE_KEYS))
+                    p.err(f"engine.{k}", "unknown engine setting; valid: " + ", ".join(ENGINE_KEYS))
                 elif isinstance(ENGINE_KEYS[k], set):
                     if not isinstance(sub, dict):
                         p.err(f"engine.{k}", "expected a block")
                         continue
                     for kk in sub:
                         if kk not in ENGINE_KEYS[k]:
-                            p.err(f"engine.{k}.{kk}", "unknown; valid: "
-                                  + ", ".join(sorted(ENGINE_KEYS[k])))
+                            p.err(
+                                f"engine.{k}.{kk}",
+                                "unknown; valid: " + ", ".join(sorted(ENGINE_KEYS[k])),
+                            )
             gids = eng.get("guild_ids")
             if gids is not None and not isinstance(gids, list):
                 p.err("engine.guild_ids", "expected a list of server ids")
@@ -1001,15 +1067,20 @@ def _apply_overlay(st):
         values = {}
     for keystr, entry in values.items():
         if not isinstance(entry, dict) or "value" not in entry:
-            st.retire.append((str(keystr), entry if isinstance(entry, dict)
-                              else {"value": entry}, "not a valid entry"))
+            st.retire.append(
+                (
+                    str(keystr),
+                    entry if isinstance(entry, dict) else {"value": entry},
+                    "not a valid entry",
+                )
+            )
             continue
         reason = None
         try:
             path, key = parse_key(keystr)
         except ValueError as e:
             path, key, reason = None, None, f"not a settings key ({e})"
-        if reason is None:
+        if reason is None and path is not None:
             spec = st.spec(key)
             kind = _scope_kind(path)
             if spec is None:
@@ -1020,8 +1091,8 @@ def _apply_overlay(st):
             elif not _settable_at(spec, kind, key):
                 reason = f"cannot be set at {kind} scope"
             elif path[0] == "servers" and (
-                    _id_str(path[1]) is None
-                    or (len(path) > 2 and _id_str(path[3]) is None)):
+                _id_str(path[1]) is None or (len(path) > 2 and _id_str(path[3]) is None)
+            ):
                 reason = "expected Discord ids in the key"
             elif spec is not None and not spec.discord_editable:
                 reason = "not editable from Discord"
@@ -1062,11 +1133,11 @@ def check_settable(st, path, key):
         raise SettingsError(f"{keystr}: a bot-wide setting has no scope")
     elif not _settable_at(spec, kind, key):
         raise SettingsError(f"{keystr}: cannot be set at {kind} scope")
-    elif kind == "channel" and not (key in CHANNEL_SHORT.values()
-                                    or _is_enabled_key(key)):
+    elif kind == "channel" and not (key in CHANNEL_SHORT.values() or _is_enabled_key(key)):
         raise SettingsError(f"{keystr}: {CHANNEL_ONLY}")
-    if path[0] in ("servers", "alias") and (_id_str(path[1]) is None or (
-            len(path) > 2 and _id_str(path[3]) is None)):
+    if path[0] in ("servers", "alias") and (
+        _id_str(path[1]) is None or (len(path) > 2 and _id_str(path[3]) is None)
+    ):
         raise SettingsError(f"{keystr}: expected Discord ids")
     if not spec.discord_editable or spec.hidden:
         raise SettingsError(f"{keystr}: not editable from Discord")
@@ -1091,7 +1162,7 @@ NO_CHANGE = _NoChange()
 
 
 def entry_role(entry, owners=()):
-    """"admin" when a server admin (not an owner) wrote this overlay entry
+    """ "admin" when a server admin (not an owner) wrote this overlay entry
     or history line: recognized only by the role: admin it records.
     Anything else (an owner, the CLI, muse.ai, an older entry with no
     role) is owner-level, which a server admin can never revert."""
@@ -1121,8 +1192,7 @@ def _layer_noop(st, path, key, value, role="owner"):
     """True when the layer already holds value ("inherit": the layer
     sets nothing). An owner's write onto a server admin's entry is never
     a no-op: it makes the value the owners' own."""
-    if role != "admin" and entry_role(st.overlay.get((path, key))) \
-            == "admin":
+    if role != "admin" and entry_role(st.overlay.get((path, key))) == "admin":
         return False
     s, cur, _src = st.layer(path, key)
     if value == "inherit":
@@ -1162,8 +1232,7 @@ def _below_for_write(st, path, key):
     if cur is None:
         return {}
     if entry_role(cur) == "admin":
-        return _entry_below(cur, st.overlay_doc or {},
-                            format_key(path, key), st.owners)
+        return _entry_below(cur, st.overlay_doc or {}, format_key(path, key), st.owners)
     return {"value": cur.get("value")}
 
 
@@ -1179,8 +1248,7 @@ def owner_layer(doc, keystr, owners):
     return _entry_below(cur, doc, keystr, owners)
 
 
-def _write_entry(st, doc, path, key, spec, value, by, now, group=None,
-                 role=None):
+def _write_entry(st, doc, path, key, spec, value, by, now, group=None, role=None):
     """Record one overlay entry and its history line in doc (not saved).
     value: the display value, or "inherit"."""
     keystr = format_key(path, key)
@@ -1188,11 +1256,14 @@ def _write_entry(st, doc, path, key, spec, value, by, now, group=None,
         role = _infer_role(by, st.owners)
     base = st.file_values.get((path, key))
     s, before, _src = st.layer(path, key)
-    entry = {"value": value, "base": base,
-             "by": str(by), "at": now}
-    hist = {"key": keystr,
-            "from": before if s else "inherit",
-            "to": value, "by": str(by), "at": now}
+    entry = {"value": value, "base": base, "by": str(by), "at": now}
+    hist = {
+        "key": keystr,
+        "from": before if s else "inherit",
+        "to": value,
+        "by": str(by),
+        "at": now,
+    }
     if group:
         hist["group"] = group
     if role == "admin":
@@ -1205,9 +1276,12 @@ def _write_entry(st, doc, path, key, spec, value, by, now, group=None,
             entry["resume"] = hist["from"]
         elif isinstance(prev, dict) and "resume" in prev:
             entry["resume"] = prev["resume"]
-    if role != "admin" and value != "inherit" \
-            and (path, key) in st.file_values \
-            and normalize(spec, value) == (True, base):
+    if (
+        role != "admin"
+        and value != "inherit"
+        and (path, key) in st.file_values
+        and normalize(spec, value) == (True, base)
+    ):
         # config.yaml says this at this very layer: it stays the source
         # of truth, so the overlay entry goes instead.
         doc["values"].pop(keystr, None)
@@ -1218,8 +1292,7 @@ def _write_entry(st, doc, path, key, spec, value, by, now, group=None,
     return keystr
 
 
-def set_value(config_path, keystr, value, by, group=None,
-              role=None):
+def set_value(config_path, keystr, value, by, group=None, role=None):
     """Record a Discord-side change: overlay entry {value, base, by, at}
     plus a history line (last HISTORY_CAP kept). value "inherit" resets
     the key at that scope. Raises SettingsError for an invalid key/value.
@@ -1245,14 +1318,12 @@ def set_value(config_path, keystr, value, by, group=None,
         if value != "inherit":
             ok, norm = normalize(spec, value)
             if not ok:
-                raise SettingsError(f"{keystr}: {norm}; valid: "
-                                    f"{spec.valid_text()}")
+                raise SettingsError(f"{keystr}: {norm}; valid: {spec.valid_text()}")
             value = norm
         if _layer_noop(st, path, key, norm, role):
             return NO_CHANGE
         doc = _read_overlay_doc(st.overlay_path, strict=True)
-        _write_entry(st, doc, path, key, spec, value, by, _now(), group,
-                     role)
+        _write_entry(st, doc, path, key, spec, value, by, _now(), group, role)
         doc["history"] = _trim_history(doc["history"])
         _write_overlay_doc(st.overlay_path, doc)
     return value
@@ -1261,8 +1332,7 @@ def set_value(config_path, keystr, value, by, group=None,
 def reset(config_path, keystr, by, group=None, role=None):
     """Act as if this scope did not set the key (writes inherit; nothing
     when the scope sets nothing there already: NO_CHANGE)."""
-    return set_value(config_path, keystr, "inherit", by, group,
-                     role)
+    return set_value(config_path, keystr, "inherit", by, group, role)
 
 
 # Which way a change goes: the most permissive value last. Used by
@@ -1315,6 +1385,7 @@ def loosens(key, old, new, spec=None):
 
         def people(v):
             return set() if v == "owners" else set(v or [])
+
         return bool(people(new) - people(old))
     return None
 
@@ -1323,10 +1394,12 @@ def _dms_from_loosens(old, new):
     """owners < a list of people < shared-servers < anyone, except that
     a list and shared-servers cannot be ordered (a listed person may
     share no server with the bot)."""
+
     def rank(v):
         if isinstance(v, list):
             return 1
         return {"owners": 0, "shared-servers": 2, "anyone": 3}.get(v)
+
     ro, rn = rank(old), rank(new)
     if ro is None or rn is None:
         return None
@@ -1368,8 +1441,10 @@ def _undo_match(prefix, children=False):
         paths = {path, ("top",)} if path == ("everywhere",) else {path}
 
         def match(p, _k):
-            return p in paths or (children and path[0] == "servers"
-                                  and len(path) == 2 and p[:2] == path)
+            return p in paths or (
+                children and path[0] == "servers" and len(path) == 2 and p[:2] == path
+            )
+
         return match
     return lambda p, k: place.owns(p, k, children)
 
@@ -1386,8 +1461,14 @@ def _undo_group(doc, match, accept=None):
 
     def cand(i):
         h = hist[i]
-        if not isinstance(h, dict) or "to" not in h or h.get("undo") \
-                or h.get("undone") or h.get("retired") or h.get("folded"):
+        if (
+            not isinstance(h, dict)
+            or "to" not in h
+            or h.get("undo")
+            or h.get("undone")
+            or h.get("retired")
+            or h.get("folded")
+        ):
             return None
         try:
             path, key = parse_key(h.get("key"))
@@ -1395,14 +1476,16 @@ def _undo_group(doc, match, accept=None):
             return None
         ks = format_key(path, key)
         live = _line_live(h, values)
-        return (i, ks, path, key, h.get("from", "inherit")) if live \
-            else None
+        return (i, ks, path, key, h.get("from", "inherit")) if live else None
 
     for i in range(len(hist) - 1, -1, -1):
         c = cand(i)
-        if c is None or not match(c[2], c[3]) \
-                or (accept is not None and not accept(hist[i])) \
-                or _touched_later(hist, i, c[1]):
+        if (
+            c is None
+            or not match(c[2], c[3])
+            or (accept is not None and not accept(hist[i]))
+            or _touched_later(hist, i, c[1])
+        ):
             continue
         gid = hist[i].get("group")
         if not gid:
@@ -1411,9 +1494,8 @@ def _undo_group(doc, match, accept=None):
         for j in range(len(hist) - 1, -1, -1):
             if isinstance(hist[j], dict) and hist[j].get("group") == gid:
                 cj = cand(j)
-                if cj is None or cj[1] in seen or (
-                        j != i and _touched_later(hist, j, cj[1])):
-                    continue   # changed again since: not this group's now
+                if cj is None or cj[1] in seen or (j != i and _touched_later(hist, j, cj[1])):
+                    continue  # changed again since: not this group's now
                 seen.add(cj[1])
                 out.append(cj)
         return out
@@ -1422,9 +1504,8 @@ def _undo_group(doc, match, accept=None):
 
 def _touched_later(hist, j, ks):
     """A later history line (not an undo of something newer) changed ks."""
-    for h in hist[j + 1:]:
-        if isinstance(h, dict) and h.get("key") == ks \
-                and not h.get("undo") and not h.get("undone"):
+    for h in hist[j + 1 :]:
+        if isinstance(h, dict) and h.get("key") == ks and not h.get("undo") and not h.get("undone"):
             return True
     return False
 
@@ -1437,8 +1518,8 @@ def _admin_accept(owners, guild_id):
             path, _k = parse_key(h.get("key"))
         except ValueError:
             return False
-        return entry_role(h, owners) == "admin" \
-            and path[0] == "servers" and path[1] == gid
+        return entry_role(h, owners) == "admin" and path[0] == "servers" and path[1] == gid
+
     return accept
 
 
@@ -1448,15 +1529,23 @@ def undo_plan(st, prefix, children=False, admin_gid=None):
     there is nothing to undo. admin_gid: a server admin's Undo, which
     sees only server admins' changes in that server."""
     accept = _admin_accept(st.owners, admin_gid) if admin_gid else None
-    picks = _undo_group(st.overlay_doc or {}, _undo_match(prefix, children),
-                        accept)
-    return [Change(place_of_path(path), key, target, path=path)
-            for _i, _ks, path, key, target in picks]
+    picks = _undo_group(st.overlay_doc or {}, _undo_match(prefix, children), accept)
+    return [
+        Change(place_of_path(path), key, target, path=path) for _i, _ks, path, key, target in picks
+    ]
 
 
-def undo_changes(config_path, prefix, by, children=False,
-                 admin_gid=None, info=None, role=None, expect=None,
-                 undo_id=None):
+def undo_changes(
+    config_path,
+    prefix,
+    by,
+    children=False,
+    admin_gid=None,
+    info=None,
+    role=None,
+    expect=None,
+    undo_id=None,
+):
     """Revert the newest change still in effect at one place, and with
     it every change of the same group (one apply, preset or pause),
     in one file write. Old history lines without a group undo one at a
@@ -1475,14 +1564,17 @@ def undo_changes(config_path, prefix, by, children=False,
         accept = _admin_accept(st.owners, admin_gid) if admin_gid else None
         picks = _undo_group(doc, _undo_match(prefix, children), accept)
         if expect is not None and _undo_ident(doc, picks) != expect:
-            raise SettingsError("Something changed since; nothing was "
-                                "undone.")
+            raise SettingsError("Something changed since; nothing was undone.")
         if not picks:
             return []
         if admin_gid:
-            admin_check(st, admin_gid,
-                        [Change(place_of_path(p), k, t, path=p)
-                         for _i, _ks, p, k, t in picks], info, revert=True)
+            admin_check(
+                st,
+                admin_gid,
+                [Change(place_of_path(p), k, t, path=p) for _i, _ks, p, k, t in picks],
+                info,
+                revert=True,
+            )
             role = "admin"
         elif role == "admin":
             raise SettingsError("a server admin's undo needs admin_gid")
@@ -1491,15 +1583,13 @@ def undo_changes(config_path, prefix, by, children=False,
     return done
 
 
-def undo(config_path, prefix, by, children=False,
-         admin_gid=None, info=None, expect=None):
+def undo(config_path, prefix, by, children=False, admin_gid=None, info=None, expect=None):
     """Revert the newest Discord change made at one scope (prefix as
     scope_prefix gives; "everywhere" includes the bot-wide settings) that
     is still in effect, with the rest of its group (see undo_changes).
     Repeated calls step further back. Returns the key string of the
     newest change reverted, or None when there is nothing to undo."""
-    done = undo_changes(config_path, prefix, by, children,
-                        admin_gid, info, expect=expect)
+    done = undo_changes(config_path, prefix, by, children, admin_gid, info, expect=expect)
     return done[0] if done else None
 
 
@@ -1516,8 +1606,9 @@ def backup(path):
 
 
 def dump_config(data):
-    return yaml.safe_dump(data, sort_keys=False, default_flow_style=False,
-                          allow_unicode=True, width=78)
+    return yaml.safe_dump(
+        data, sort_keys=False, default_flow_style=False, allow_unicode=True, width=78
+    )
 
 
 def fold(config_path):
@@ -1534,9 +1625,10 @@ def _fold(config_path):
     # A server admin's entry stays in the overlay: in config.yaml it
     # would be the owners' own value, no longer held to the quieter of
     # the two (Settings._resolve_key).
-    todo = sorted(((pk, e) for pk, e in st.overlay.items()
-                   if entry_role(e) != "admin"),
-                  key=lambda kv: format_key(*kv[0]))
+    todo = sorted(
+        ((pk, e) for pk, e in st.overlay.items() if entry_role(e) != "admin"),
+        key=lambda kv: format_key(*kv[0]),
+    )
     if not todo:
         return None, []
     data = copy.deepcopy(st.raw)
@@ -1544,12 +1636,13 @@ def _fold(config_path):
     if isinstance(data.get("servers"), dict):
         data["servers"] = _by_str_id(data["servers"])
         for block in data["servers"].values():
-            if isinstance(block, dict) \
-                    and isinstance(block.get("channels"), dict):
+            if isinstance(block, dict) and isinstance(block.get("channels"), dict):
                 block["channels"] = _by_str_id(block["channels"])
-    external = {sid: _read_yaml(filename)
-                for sid, filename in st.server_files.items()
-                if any(path[:2] == ("servers", sid) for (path, key), entry in todo)}
+    external = {
+        sid: _read_yaml(filename)
+        for sid, filename in st.server_files.items()
+        if any(path[:2] == ("servers", sid) for (path, key), entry in todo)
+    }
     for block in external.values():
         if isinstance(block.get("channels"), dict):
             block["channels"] = _by_str_id(block["channels"])
@@ -1561,8 +1654,7 @@ def _fold(config_path):
             node_path = list(_node_prefix(path))
             if len(path) > 2:
                 short = {v: k for k, v in CHANNEL_SHORT.items()}
-                node_path += (short[key].split(".") if key in short
-                              else key.split("."))
+                node_path += short[key].split(".") if key in short else key.split(".")
             else:
                 node_path += key.split(".")
         target = data
@@ -1648,16 +1740,17 @@ def _del_path(d, parts):
 # server-admin revert rule, presets, pause. Pure (no network): callers
 # pass what they know about servers and names (info, names).
 # ---------------------------------------------------------------------------
-BIG_FOR_MEMORY = 50          # members: memory "everything" warns harder
+BIG_FOR_MEMORY = 50  # members: memory "everything" warns harder
 BIG_FOR_CONVERSATIONAL = 500
-BIG_FOR_CAPS = 500           # members: removing a reply cap is risky
+BIG_FOR_CAPS = 500  # members: removing a reply cap is risky
 MEDIA_PER_DAY_RISKY = 20
 BOT_EXCHANGE_RISKY = 10
 ADMIN_REPLIES = ("off", "when-addressed")
-ADMIN_QUIETER = ("Server admins can make the bot quieter, or undo their own "
-                 "changes back to what the owners set; never louder.")
-_PLACE_HELP = ('use "defaults", "dms", "server:<server id>" or '
-               '"channel:<server id>:<channel id>"')
+ADMIN_QUIETER = (
+    "Server admins can make the bot quieter, or undo their own "
+    "changes back to what the owners set; never louder."
+)
+_PLACE_HELP = 'use "defaults", "dms", "server:<server id>" or "channel:<server id>:<channel id>"'
 
 
 class Place:
@@ -1671,8 +1764,7 @@ class Place:
 
     KINDS = ("defaults", "dms", "server", "channel")
 
-    def __init__(self, kind, guild_id=None, channel_id=None,
-                 category_id=None):
+    def __init__(self, kind, guild_id=None, channel_id=None, category_id=None):
         if kind not in self.KINDS:
             raise SettingsError(f"{kind!r} is not a place; {_PLACE_HELP}")
         self.kind = kind
@@ -1697,9 +1789,11 @@ class Place:
         return cls("channel", guild_id, channel_id, category_id)
 
     def __eq__(self, other):
-        return isinstance(other, Place) and (
-            self.kind, self.guild_id, self.channel_id) == (
-            other.kind, other.guild_id, other.channel_id)
+        return isinstance(other, Place) and (self.kind, self.guild_id, self.channel_id) == (
+            other.kind,
+            other.guild_id,
+            other.channel_id,
+        )
 
     def __hash__(self):
         return hash((self.kind, self.guild_id, self.channel_id))
@@ -1721,24 +1815,23 @@ class Place:
             return Scope.dm()
         if self.kind == "server":
             return Scope.server(self.guild_id)
-        return Scope.server(self.guild_id, channel_id=self.channel_id,
-                            category_id=self.category_id)
+        return Scope.server(self.guild_id, channel_id=self.channel_id, category_id=self.category_id)
 
     def owns(self, path, key=None, children=False):
         """True when a change at layer path (for key) belongs to this
         place (what its Undo sees). Defaults also owns the DM keys it
         offers (who.dms_from, and who.replies for "Nobody")."""
         if self.kind == "defaults":
-            return path in (("everywhere",), ("all_servers",), ("top",)) \
-                or (path == ("dms",) and key in ("who.dms_from",
-                                                 "who.replies"))
+            return path in (("everywhere",), ("all_servers",), ("top",)) or (
+                path == ("dms",) and key in ("who.dms_from", "who.replies")
+            )
         if self.kind == "dms":
             return path == ("dms",)
         if self.kind == "server":
             return path == ("servers", self.guild_id) or (
-                children and path[:2] == ("servers", self.guild_id))
-        return path == ("servers", self.guild_id, "channels",
-                        self.channel_id)
+                children and path[:2] == ("servers", self.guild_id)
+            )
+        return path == ("servers", self.guild_id, "channels", self.channel_id)
 
 
 def _is_enabled_key(key):
@@ -1774,13 +1867,14 @@ def parse_place(text, info=None):
         inf = ServerInfo(info)
         ch = inf.channel(m[1], m[2])
         if ch is not None and ch.get("type") == CATEGORY_TYPE:
-            raise SettingsError(f"{t}: that is a category; categories "
-                                f"can only be set in config.yaml. Pick "
-                                f"a channel, or the server.")
+            raise SettingsError(
+                f"{t}: that is a category; categories "
+                f"can only be set in config.yaml. Pick "
+                f"a channel, or the server."
+            )
         return Place.channel(m[1], m[2], inf.category_of(m[1], m[2]))
     if t.lower().startswith("category"):
-        raise SettingsError(f"{t}: categories can only be set in "
-                            f"config.yaml; {_PLACE_HELP}")
+        raise SettingsError(f"{t}: categories can only be set in config.yaml; {_PLACE_HELP}")
     raise SettingsError(f"{t!r} is not a place; {_PLACE_HELP}")
 
 
@@ -1804,8 +1898,7 @@ def place_path(st, place, key):
     try:
         check_settable(st, path, key)
     except SettingsError as e:
-        raise SettingsError(f"{label(key)} can't be changed in "
-                            f"{place_name(place)} ({e})")
+        raise SettingsError(f"{label(key)} can't be changed in {place_name(place)} ({e})")
     return path
 
 
@@ -1816,8 +1909,7 @@ def _layer_path(st, place, key):
         raise SettingsError(f"{key}: unknown setting")
     if key in TOP:
         if place.kind != "defaults":
-            raise SettingsError(f"{label(key)} is bot-wide; change it in "
-                                f"Defaults")
+            raise SettingsError(f"{label(key)} is bot-wide; change it in Defaults")
         path = ("top",)
     elif place.kind == "defaults":
         if key == "who.replies" or _is_enabled_key(key):
@@ -1846,25 +1938,44 @@ def place_value(st, place, key, path=None):
 
 def _scope_for(place, key, path=None):
     if path is not None and place.kind == "defaults":
-        return {("everywhere",): Scope.everywhere(),
-                ("all_servers",): Scope("all_servers"),
-                ("dms",): Scope.dm()}.get(path)
+        return {
+            ("everywhere",): Scope.everywhere(),
+            ("all_servers",): Scope("all_servers"),
+            ("dms",): Scope.dm(),
+        }.get(path)
     return place.scope(key)
 
 
 # -- what each place offers ---------------------------------------------------
-BASIC_KEYS = ("who.replies", "who.dms_from", "privacy.memory", "style.notes",
-              "style.length", "limits.per_person_per_day", "media.enabled",
-              "proactive.enabled")
-MORE_KEYS = ("who.allow", "who.ignore", "who.bots", "who.bot_exchange_limit",
-             "limits.per_day", "privacy.suspicious", "media.who",
-             "media.per_day", "abilities.reminders", "proactive.frequency",
-             "proactive.per_person_per_day", "proactive.per_person_per_week",
-             "proactive.per_channel_per_day", "proactive.quiet_hours",
-             "proactive.timezone")
+BASIC_KEYS = (
+    "who.replies",
+    "who.dms_from",
+    "privacy.memory",
+    "style.notes",
+    "style.length",
+    "limits.per_person_per_day",
+    "media.enabled",
+    "proactive.enabled",
+)
+MORE_KEYS = (
+    "who.allow",
+    "who.ignore",
+    "who.bots",
+    "who.bot_exchange_limit",
+    "limits.per_day",
+    "privacy.suspicious",
+    "media.who",
+    "media.per_day",
+    "abilities.reminders",
+    "proactive.frequency",
+    "proactive.per_person_per_day",
+    "proactive.per_person_per_week",
+    "proactive.per_channel_per_day",
+    "proactive.quiet_hours",
+    "proactive.timezone",
+)
 BOT_WIDE_KEYS = ("presence.status", "updates.notify")
-HIDDEN_KEYS = ("abilities.owner_commands", "presence.kind",
-               "privacy.never_share")
+HIDDEN_KEYS = ("abilities.owner_commands", "presence.kind", "privacy.never_share")
 CHANNEL_KEYS = ("who.replies", "style.notes")
 
 
@@ -1878,16 +1989,14 @@ def place_keys(st, place, tier):
     read only."""
     if tier not in ("basics", "more", "hidden"):
         raise ValueError(tier)
-    basics = [k for k in BASIC_KEYS
-              if k != "who.dms_from" or place.kind in ("defaults", "dms")]
+    basics = [k for k in BASIC_KEYS if k != "who.dms_from" or place.kind in ("defaults", "dms")]
     more = list(MORE_KEYS)
     hidden = list(HIDDEN_KEYS)
     if place.kind == "defaults":
         more += list(BOT_WIDE_KEYS)
     if place.kind == "channel":
         more = []
-        basics = [k for k in basics if k in CHANNEL_KEYS
-                  or _is_enabled_key(k)]
+        basics = [k for k in basics if k in CHANNEL_KEYS or _is_enabled_key(k)]
     want = {"basics": basics, "more": more, "hidden": hidden}[tier]
     out = []
     for key in want:
@@ -1916,8 +2025,7 @@ def _valid_layer(st, place, key):
         return "dms" in spec.scopes
     if place.kind == "server":
         return "server" in spec.scopes
-    return "channel" in spec.scopes and (key in CHANNEL_KEYS
-                                         or _is_enabled_key(key))
+    return "channel" in spec.scopes and (key in CHANNEL_KEYS or _is_enabled_key(key))
 
 
 def _date(at):
@@ -1929,7 +2037,7 @@ def _date(at):
 
 
 def source_tag(st, place, key, names=None):
-    """"● changed here by @Sam on Oct 19, 2026", "● set here in
+    """ "● changed here by @Sam on Oct 19, 2026", "● set here in
     config.yaml", "Same as <place>", or "Built-in default"."""
     names = chain_names(names, names_from(None, st))
     look = name_lookup(names)
@@ -1937,6 +2045,7 @@ def source_tag(st, place, key, names=None):
         path = _layer_path(st, place, key)
     except SettingsError:
         path = None
+    rows: list[tuple[str, tuple[str, ...], bool, object, tuple]]
     if key in TOP:
         s, _v, src = st.layer(("top",), key)
         rows = [("top", ("top",), s, _v, src)]
@@ -1951,15 +2060,14 @@ def source_tag(st, place, key, names=None):
                 return "● set here in config.yaml"
             by = src[1] if len(src) > 1 else None
             who = person_name(by, look) if _id_str(by) else (by or "someone")
-            return f"● changed here by {who} on {_date(src[2])}"
+            return f"● changed here by {who} on {_date(src[2] if len(src) > 2 else '')}"
         if p[0] in ("builtin", "builtin_all_servers"):
-            return "Built-in default" if place.kind == "defaults" \
-                else "Same as Defaults"
+            return "Built-in default" if place.kind == "defaults" else "Same as Defaults"
         owner = place_of_path(p)
         if owner is None:
-            return f"Same as server \"{p[1]}\" (old config)"
+            return f'Same as server "{p[1]}" (old config)'
         if owner.kind == "channel" and owner.channel_id != place.channel_id:
-            n = look(owner.channel_id)
+            n = look(owner.channel_id) if owner.channel_id is not None else None
             return f"Same as category {n or owner.channel_id}"
         return f"Same as {place_name(owner, names)}"
     return "Built-in default"
@@ -1969,14 +2077,14 @@ def explain_lines(st, place, keys=None, names=None):
     """["When it answers: Chatty (Same as Defaults)", ...] for keys
     (default: the place's basics and more)."""
     if keys is None:
-        keys = place_keys(st, place, "basics") + place_keys(st, place,
-                                                            "more")
+        keys = place_keys(st, place, "basics") + place_keys(st, place, "more")
     names = chain_names(names, names_from(None, st))
     out = []
     for key in keys:
         v = place_value(st, place, key)
-        out.append(f"{label(key)}: {value_label(key, v, names)} "
-                   f"({source_tag(st, place, key, names)})")
+        out.append(
+            f"{label(key)}: {value_label(key, v, names)} ({source_tag(st, place, key, names)})"
+        )
     return out
 
 
@@ -2008,12 +2116,10 @@ def parse_value(st, key, text):
     if spec.type == "people" or (spec.type == "choice" and spec.ids):
         if low in spec.values:
             return low
-        if spec.type == "people" and low in ("", "nobody", "none",
-                                             "no one", "[]"):
+        if spec.type == "people" and low in ("", "nobody", "none", "no one", "[]"):
             return []
         if re.fullmatch(r"[\s,]*((role:)?\d{1,25}[\s,]*)+", t):
-            return [p.strip() for p in t.replace(" ", ",").split(",")
-                    if p.strip()]
+            return [p.strip() for p in t.replace(" ", ",").split(",") if p.strip()]
     if spec.type == "number":
         try:
             return json.loads(t)
@@ -2033,11 +2139,10 @@ class Change:
             place = parse_place(place)
         self.place, self.key, self.value = place, key, value
         self.path = path
-        self.revert = revert   # an admin's revert (see admin_changes)
+        self.revert = revert  # an admin's revert (see admin_changes)
 
     def to_dict(self):
-        return {"place": format_place(self.place), "key": self.key,
-                "value": self.value}
+        return {"place": format_place(self.place), "key": self.key, "value": self.value}
 
     @classmethod
     def from_dict(cls, d, info=None):
@@ -2052,13 +2157,15 @@ class Change:
         return cls(place, str(d["key"]), d["value"])
 
     def __eq__(self, other):
-        return isinstance(other, Change) and (
-            self.place, self.key, self.value, self.path) == (
-            other.place, other.key, other.value, other.path)
+        return isinstance(other, Change) and (self.place, self.key, self.value, self.path) == (
+            other.place,
+            other.key,
+            other.value,
+            other.path,
+        )
 
     def __repr__(self):
-        return (f"Change({format_place(self.place)!r}, {self.key!r}, "
-                f"{self.value!r})")
+        return f"Change({format_place(self.place)!r}, {self.key!r}, {self.value!r})"
 
 
 def change_path(st, change):
@@ -2073,8 +2180,7 @@ def _check_group(group):
         return None
     group = str(group)
     if not _GROUP_RE.fullmatch(group):
-        raise SettingsError(f"group id {group!r}: 1-24 letters, digits, "
-                            f"'-', '_', '.' or ':'")
+        raise SettingsError(f"group id {group!r}: 1-24 letters, digits, '-', '_', '.' or ':'")
     return group
 
 
@@ -2089,17 +2195,14 @@ def simulate(st, changes, role="owner"):
         spec = st.spec(ch.key)
         extra = {}
         if role == "admin":
-            extra = {"role": "admin",
-                     "below": _below_for_write(st, path, ch.key)}
+            extra = {"role": "admin", "below": _below_for_write(st, path, ch.key)}
         if ch.value == "inherit":
             new.overlay[(path, ch.key)] = dict(extra, value="inherit")
             continue
         ok, norm = normalize(spec, ch.value)
         if not ok:
-            raise SettingsError(f"{label(ch.key)}: {norm}; valid: "
-                                f"{spec.valid_text()}")
-        new.overlay[(path, ch.key)] = dict(
-            extra, value=norm, _norm=norm, by="", at="")
+            raise SettingsError(f"{label(ch.key)}: {norm}; valid: {spec.valid_text()}")
+        new.overlay[(path, ch.key)] = dict(extra, value=norm, _norm=norm, by="", at="")
     return new
 
 
@@ -2108,8 +2211,7 @@ def _place_noop(st, place, path, key, norm, role="owner"):
     layer holds it already, or the layer sets nothing and the value in
     force there is the same (a reset when the layer sets nothing). An
     owner's write onto a server admin's entry always counts."""
-    if role != "admin" and entry_role(st.overlay.get((path, key))) \
-            == "admin":
+    if role != "admin" and entry_role(st.overlay.get((path, key))) == "admin":
         return False
     if _layer_noop(st, path, key, norm, role):
         return True
@@ -2119,9 +2221,14 @@ def _place_noop(st, place, path, key, norm, role="owner"):
         return TOP[key].default == norm
     if key == "style.notes" and _scope_kind(path) == "channel":
         return norm == ""
-    if place.kind == "channel" and place.category_id is None and any(
+    if (
+        place.kind == "channel"
+        and place.category_id is None
+        and any(
             p[:2] == path[:2] and len(p) > 2 and p != path and k == key
-            for p, k in list(st.file_values) + list(st.overlay)):
+            for p, k in list(st.file_values) + list(st.overlay)
+        )
+    ):
         return False  # an unknown category may set it: write it
     sc = _scope_for(place, key, path)
     if sc is None:
@@ -2141,8 +2248,7 @@ class Planned:
         self.old = self.new = None
 
     def describe(self, names=None):
-        return describe_change(self.change.place, self.key, self.old,
-                               self.new, names, self.path)
+        return describe_change(self.change.place, self.key, self.old, self.new, names, self.path)
 
 
 def plan_changes(st, changes, role="owner"):
@@ -2156,20 +2262,20 @@ def plan_changes(st, changes, role="owner"):
         path = change_path(st, ch)
         spec = check_settable(st, path, ch.key)
         if (path, ch.key) in seen:
-            raise SettingsError(f"{label(ch.key)} appears twice for "
-                                f"{place_name(ch.place)}")
+            raise SettingsError(f"{label(ch.key)} appears twice for {place_name(ch.place)}")
         seen.add((path, ch.key))
         if ch.value == "inherit":
             norm = write = "inherit"
         else:
             ok, norm = normalize(spec, ch.value)
             if not ok:
-                raise SettingsError(f"{label(ch.key)}: {norm}; valid: "
-                                    f"{spec.valid_text()}")
+                raise SettingsError(f"{label(ch.key)}: {norm}; valid: {spec.valid_text()}")
             write = norm
-        out.append(Planned(ch, path, spec, write, norm,
-                           _place_noop(st, ch.place, path, ch.key, norm,
-                                       role)))
+        out.append(
+            Planned(
+                ch, path, spec, write, norm, _place_noop(st, ch.place, path, ch.key, norm, role)
+            )
+        )
     sim = simulate(st, [p.change for p in out if not p.noop], role)
     for p in out:
         sc = _scope_for(p.change.place, p.key, p.path)
@@ -2197,8 +2303,7 @@ class ApplyResult:
         return [p.describe(names) for p in self.written]
 
 
-def apply(config_path, changes, by, group=None,
-          role=None, admin_gid=None, info=None):
+def apply(config_path, changes, by, group=None, role=None, admin_gid=None, info=None):
     """Write several changes atomically: one overlay file write, one
     history group id (group, or a fresh one; 24 characters at most) on
     every history line. A change that would change nothing is skipped
@@ -2216,8 +2321,7 @@ def apply(config_path, changes, by, group=None,
         st = load(config_path)
         if role == "admin":
             if not admin_gid:
-                raise SettingsError("an admin change needs the admin's "
-                                    "server")
+                raise SettingsError("an admin change needs the admin's server")
             changes = admin_changes(st, admin_gid, changes, info)
         rows = plan_changes(st, changes, role)
         todo = [p for p in rows if not p.noop]
@@ -2227,8 +2331,7 @@ def apply(config_path, changes, by, group=None,
         doc = _read_overlay_doc(st.overlay_path, strict=True)
         now = _now()
         for p in todo:
-            _write_entry(st, doc, p.path, p.key, p.spec, p.write, by, now,
-                         group, role)
+            _write_entry(st, doc, p.path, p.key, p.spec, p.write, by, now, group, role)
         doc["history"] = _trim_history(doc["history"])
         _write_overlay_doc(st.overlay_path, doc)
     return ApplyResult(group, todo, [p for p in rows if p.noop])
@@ -2236,31 +2339,33 @@ def apply(config_path, changes, by, group=None,
 
 # -- groups -------------------------------------------------------------------
 def _line_id(h):
-    return json.dumps([h.get("key"), h.get("at"), h.get("by"),
-                       h.get("group"), h.get("to"), bool(h.get("undo"))],
-                      sort_keys=True, default=str)
+    return json.dumps(
+        [h.get("key"), h.get("at"), h.get("by"), h.get("group"), h.get("to"), bool(h.get("undo"))],
+        sort_keys=True,
+        default=str,
+    )
 
 
 def history_since(doc, mark):
     """(the overlay history lines after mark, the new mark). With no mark
     yet (the first call) nothing counts: only the position is taken."""
-    hist = [h for h in (doc or {}).get("history") or []
-            if isinstance(h, dict)]
+    hist = [h for h in (doc or {}).get("history") or [] if isinstance(h, dict)]
     ids = [_line_id(h) for h in hist]
-    last = {"id": ids[-1] if ids else None,
-            "at": str(hist[-1].get("at") or "") if hist else None}
+    last = {"id": ids[-1] if ids else None, "at": str(hist[-1].get("at") or "") if hist else None}
     if not isinstance(mark, dict):
         return [], last
     if mark.get("id") in ids:
-        return hist[len(ids) - ids[::-1].index(mark["id"]):], last
+        return hist[len(ids) - ids[::-1].index(mark["id"]) :], last
     after = str(mark.get("at") or "")
     return [h for h in hist if str(h.get("at") or "") > after], last
 
 
 def _group_lines(doc, group):
-    return [(i, h) for i, h in enumerate(doc.get("history") or [])
-            if isinstance(h, dict) and h.get("group") == group
-            and "to" in h and not h.get("undo")]
+    return [
+        (i, h)
+        for i, h in enumerate(doc.get("history") or [])
+        if isinstance(h, dict) and h.get("group") == group and "to" in h and not h.get("undo")
+    ]
 
 
 def _line_live(h, values):
@@ -2270,8 +2375,7 @@ def _line_live(h, values):
         return False
     cur = values.get(format_key(path, key))
     if h.get("to") == "inherit":
-        return cur is None or (isinstance(cur, dict)
-                               and cur.get("value") == "inherit")
+        return cur is None or (isinstance(cur, dict) and cur.get("value") == "inherit")
     if cur is None:
         return bool(h.get("dropped"))
     return isinstance(cur, dict) and cur.get("value") == h.get("to")
@@ -2288,7 +2392,7 @@ def group_current(st, group):
     keys = {h.get("key") for _i, h in lines}
     last = max(i for i, _h in lines)
     hist = doc.get("history") or []
-    for h in hist[last + 1:]:
+    for h in hist[last + 1 :]:
         if isinstance(h, dict) and h.get("key") in keys:
             return False
     values = doc.get("values") or {}
@@ -2307,8 +2411,7 @@ def group_undo_plan(st, group):
             path, key = parse_key(h["key"])
         except ValueError:
             continue
-        out.append(Change(place_of_path(path), key, h.get("from", "inherit"),
-                          path=path))
+        out.append(Change(place_of_path(path), key, h.get("from", "inherit"), path=path))
     return out
 
 
@@ -2329,8 +2432,7 @@ def _revert(st, doc, picks, by, role=None, ugroup=None):
         below = owner_layer(doc, ks, st.owners)
         in_file = (path, key) in st.file_values
         cur = st.file_values.get((path, key))
-        entry = {"value": "inherit", "base": cur,
-                 "by": str(by), "at": now}
+        entry = {"value": "inherit", "base": cur, "by": str(by), "at": now}
         if target == "inherit":
             if in_file:
                 doc["values"][ks] = entry
@@ -2339,18 +2441,23 @@ def _revert(st, doc, picks, by, role=None, ugroup=None):
         else:
             ok, norm = normalize(spec, target)
             if not ok:
-                raise SettingsError(f"{ks}: cannot restore "
-                                    f"{_show(target)}: {norm}")
+                raise SettingsError(f"{ks}: cannot restore {_show(target)}: {norm}")
             if in_file and norm == cur:
-                doc["values"].pop(ks, None)   # the file says it already
+                doc["values"].pop(ks, None)  # the file says it already
             else:
                 doc["values"][ks] = dict(entry, value=norm)
         if role == "admin" and ks in doc["values"]:
             doc["values"][ks]["role"] = "admin"
             doc["values"][ks]["below"] = below
         hist[i] = dict(hist[i], undone=True)
-        line = {"key": ks, "from": hist[i]["to"], "to": target,
-                "by": str(by), "at": now, "undo": True}
+        line = {
+            "key": ks,
+            "from": hist[i]["to"],
+            "to": target,
+            "by": str(by),
+            "at": now,
+            "undo": True,
+        }
         if ugroup:
             line["group"] = ugroup
         if role == "admin":
@@ -2363,8 +2470,7 @@ def _revert(st, doc, picks, by, role=None, ugroup=None):
     return done
 
 
-def undo_group(config_path, group, by, role=None,
-               undo_id=None):
+def undo_group(config_path, group, by, role=None, undo_id=None):
     """Undo one specific group (an "[Undo]" under a "Done: ..." reply),
     as an owner (role "owner"; server admins undo through undo() with
     admin_gid, which checks them). Refused (SettingsError) unless
@@ -2373,8 +2479,9 @@ def undo_group(config_path, group, by, role=None,
     group id for the undo's own history lines (e.g. "nl-undo-<token>").
     Returns the key strings reverted."""
     if role != "owner":
-        raise SettingsError("undo_group is for owners; a server admin's "
-                            "Undo goes through undo(..., admin_gid=...)")
+        raise SettingsError(
+            "undo_group is for owners; a server admin's Undo goes through undo(..., admin_gid=...)"
+        )
     undo_id = _check_group(undo_id)
     with overlay_lock(overlay_path_for(config_path)):
         st = load(config_path)
@@ -2383,13 +2490,11 @@ def undo_group(config_path, group, by, role=None,
         if not lines:
             raise SettingsError("There is no such change to undo.")
         if not group_current(st, group):
-            raise SettingsError("Those settings changed since; nothing was "
-                                "undone.")
+            raise SettingsError("Those settings changed since; nothing was undone.")
         picks = []
         for i, h in reversed(lines):
             path, key = parse_key(h["key"])
-            picks.append((i, format_key(path, key), path, key,
-                          h.get("from", "inherit")))
+            picks.append((i, format_key(path, key), path, key, h.get("from", "inherit")))
         done = _revert(st, doc, picks, by, "owner", undo_id)
         _write_overlay_doc(st.overlay_path, doc)
     return done
@@ -2413,20 +2518,20 @@ def undo_results(st, plan):
     out = []
     for ch in plan:
         sc = _scope_for(ch.place, ch.key, ch.path)
-        out.append((ch, sim.top(ch.key) if sc is None
-                    else sim.get(ch.key, sc)))
+        out.append((ch, sim.top(ch.key) if sc is None else sim.get(ch.key, sc)))
     return out
 
 
 def undo_lines(st, plan, names=None):
     """["In #general, When it answers → back to Chatty", ...]."""
-    return [f"{change_location(ch.place, ch.key, names, ch.path)}, {label(ch.key)} "
-            f"→ back to {value_label(ch.key, new, names)}"
-            for ch, new in undo_results(st, plan)]
+    return [
+        f"{change_location(ch.place, ch.key, names, ch.path)}, {label(ch.key)} "
+        f"→ back to {value_label(ch.key, new, names)}"
+        for ch, new in undo_results(st, plan)
+    ]
 
 
-def undo_preview(st, prefix, include_children=False, names=None,
-                 admin_gid=None):
+def undo_preview(st, prefix, include_children=False, names=None, admin_gid=None):
     """(description, group id) for what Undo at prefix would do, e.g.
     ("Undo: In #general, When it answers → back to Chatty", "g3f9a..."),
     or (None, None) when there is nothing to undo. The id lets a UI
@@ -2439,14 +2544,23 @@ def undo_preview(st, prefix, include_children=False, names=None,
     if not picks:
         return None, None
     names = chain_names(names, names_from(None, st))
-    plan = [Change(place_of_path(p), k, t, path=p)
-            for _i, _ks, p, k, t in picks]
+    plan = [Change(place_of_path(p), k, t, path=p) for _i, _ks, p, k, t in picks]
     text = "Undo: " + "; ".join(undo_lines(st, plan, names))
-    pp = prefix if isinstance(prefix, Place) else (
-        Place.defaults() if str(prefix) == "defaults"
-        else place_of_path(parse_scope_prefix(prefix)))
-    if include_children and pp is not None and pp.kind == "server" and any(
-            ch.place.kind == "channel" for ch in plan):
+    pp = (
+        prefix
+        if isinstance(prefix, Place)
+        else (
+            Place.defaults()
+            if str(prefix) == "defaults"
+            else place_of_path(parse_scope_prefix(prefix))
+        )
+    )
+    if (
+        include_children
+        and pp is not None
+        and pp.kind == "server"
+        and any(ch.place is not None and ch.place.kind == "channel" for ch in plan)
+    ):
         text += " (this includes a change in a channel of this server)"
     return text, _undo_ident(doc, picks)
 
@@ -2468,8 +2582,7 @@ def owners_view(st, guild_id):
     new.overlay = dict(st.overlay)
     new._cache = {}
     for (path, key), entry in st.overlay.items():
-        if path[0] != "servers" or path[1] != gid \
-                or entry_role(entry) != "admin":
+        if path[0] != "servers" or path[1] != gid or entry_role(entry) != "admin":
             continue
         below = owner_layer(doc, format_key(path, key), st.owners)
         if not below:
@@ -2489,21 +2602,20 @@ def owners_view(st, guild_id):
 
 def _admin_scope_check(st, gid, ch, inf):
     pl = ch.place
-    if pl is None or pl.kind not in ("server", "channel") \
-            or pl.guild_id != gid:
-        raise SettingsError("Server admins can change settings only in "
-                            "their own server.")
+    if pl is None or pl.kind not in ("server", "channel") or pl.guild_id != gid:
+        raise SettingsError("Server admins can change settings only in their own server.")
     if pl.kind == "channel":
         if inf.channel(gid, pl.channel_id) is None:
             raise SettingsError("That channel is not in this server.")
     if not _admin_key_ok(pl, ch.key):
-        raise SettingsError("Server admins can change only When it "
-                            "answers, Extras on/off and (for the whole "
-                            "server) Never answer.")
+        raise SettingsError(
+            "Server admins can change only When it "
+            "answers, Extras on/off and (for the whole "
+            "server) Never answer."
+        )
     path = place_path(st, pl, ch.key)
     if ch.path is not None and ch.path != path:
-        raise SettingsError("Server admins can change settings only in "
-                            "their own server.")
+        raise SettingsError("Server admins can change settings only in their own server.")
     return path
 
 
@@ -2516,8 +2628,7 @@ def _admin_translate(st, path, key, spec, value):
     never a reset, which would drop the owners' pin."""
     cur = st.overlay.get((path, key))
     if cur is not None and entry_role(cur) == "admin":
-        below = _entry_below(cur, st.overlay_doc or {},
-                             format_key(path, key), st.owners)
+        below = _entry_below(cur, st.overlay_doc or {}, format_key(path, key), st.owners)
         if below:
             target = below.get("value")
         elif (path, key) in st.file_values:
@@ -2533,11 +2644,12 @@ def _admin_translate(st, path, key, spec, value):
                 return target, True
         return value, False
     s, pin, _src = st.layer(path, key)
-    if s:   # an owner's entry or config.yaml sets this layer
+    if s:  # an owner's entry or config.yaml sets this layer
         if value == "inherit":
             raise SettingsError(
                 "The owners set this here; server admins can make it "
-                "quieter, but not remove the owners' setting.")
+                "quieter, but not remove the owners' setting."
+            )
         ok, norm = normalize(spec, value)
         if ok and loosens(key, pin, norm, spec) is not False:
             raise SettingsError(ADMIN_QUIETER)
@@ -2572,11 +2684,11 @@ def admin_changes(st, guild_id, changes, info=None):
             if not ok:
                 raise SettingsError(f"{label(ch.key)}: {norm}")
             if ch.key == "who.replies" and norm not in ADMIN_REPLIES:
-                raise SettingsError("Server admins can set When it answers "
-                                    "to Off or Only when @mentioned.")
+                raise SettingsError(
+                    "Server admins can set When it answers to Off or Only when @mentioned."
+                )
             if _is_enabled_key(ch.key) and norm is not False:
-                raise SettingsError("Server admins can only turn Extras "
-                                    "off.")
+                raise SettingsError("Server admins can only turn Extras off.")
         out.append(Change(ch.place, ch.key, value, revert=revert))
     admin_check(st, gid, out, info, revert=True)
     return out
@@ -2596,17 +2708,24 @@ def admin_check(st, guild_id, changes, info=None, revert=False):
         _admin_scope_check(st, gid, ch, inf)
         if not revert and not ch.revert and ch.value != "inherit":
             ok, norm = normalize(st.spec(ch.key), ch.value)
-            if ok and ch.key == "who.replies" and norm not in ADMIN_REPLIES \
-                    or ok and _is_enabled_key(ch.key) and norm is not False:
+            if (
+                ok
+                and ch.key == "who.replies"
+                and norm not in ADMIN_REPLIES
+                or ok
+                and _is_enabled_key(ch.key)
+                and norm is not False
+            ):
                 raise SettingsError(ADMIN_QUIETER)
     sim = simulate(st, changes, "admin")
     owners = owners_view(st, gid)
-    scopes = {format_place(ch.place): ch.place.scope(ch.key)
-              for ch in changes}
+    scopes = {format_place(ch.place): ch.place.scope(ch.key) for ch in changes}
     scopes[f"server:{gid}"] = Scope.server(gid)
     for cid in st.channels_listed(gid):
-        scopes.setdefault(f"channel:{gid}:{cid}", Scope.server(
-            gid, channel_id=cid, category_id=inf.category_of(gid, cid)))
+        scopes.setdefault(
+            f"channel:{gid}:{cid}",
+            Scope.server(gid, channel_id=cid, category_id=inf.category_of(gid, cid)),
+        )
     for key in {ch.key for ch in changes}:
         spec = st.spec(key)
         for sc in scopes.values():
@@ -2643,12 +2762,10 @@ def dms_from_changes(st, choice, people=None):
     elif choice in ("owners", "shared-servers", "anyone"):
         value = choice
     else:
-        raise SettingsError(f"{choice!r}: owners, list, shared-servers, "
-                            f"anyone or nobody")
+        raise SettingsError(f"{choice!r}: owners, list, shared-servers, anyone or nobody")
     out = [Change(dms, "who.dms_from", value)]
     if st.get("who.replies", Scope.dm()) == "off":
-        out += resume_changes(st, dms) or [
-            Change(dms, "who.replies", "conversational")]
+        out += resume_changes(st, dms) or [Change(dms, "who.replies", "conversational")]
     return out
 
 
@@ -2658,27 +2775,28 @@ def pause_changes(place):
     channel, a server pause the server, DMs the DMs, and Defaults is
     Pause everywhere (DMs and all servers)."""
     if place.kind == "defaults":
-        return [Change(Place.dms(), "who.replies", "off"),
-                Change(Place.defaults(), "who.replies", "off")]
+        return [
+            Change(Place.dms(), "who.replies", "off"),
+            Change(Place.defaults(), "who.replies", "off"),
+        ]
     return [Change(place, "who.replies", "off")]
 
 
 def _pause_targets(place):
     if place.kind == "defaults":
-        return [(Place.dms(), ("dms",)),
-                (Place.defaults(), ("all_servers",))]
+        return [(Place.dms(), ("dms",)), (Place.defaults(), ("all_servers",))]
     if place.kind == "dms":
         return [(place, ("dms",))]
     if place.kind == "server":
         return [(place, ("servers", place.guild_id))]
-    return [(place, ("servers", place.guild_id, "channels",
-                     place.channel_id))]
+    return [(place, ("servers", place.guild_id, "channels", place.channel_id))]
 
 
 def is_paused(st, place):
     """Paused at place itself (Defaults: both DMs and all servers)."""
-    return all(st.layer(path, "who.replies")[:2] == (True, "off")
-               for _pl, path in _pause_targets(place))
+    return all(
+        st.layer(path, "who.replies")[:2] == (True, "off") for _pl, path in _pause_targets(place)
+    )
 
 
 def resume_value(st, path):
@@ -2686,8 +2804,7 @@ def resume_value(st, path):
     with the pause itself ("resume" on the entry), else from history,
     else "inherit" (the layer set nothing before)."""
     entry = st.overlay.get((path, "who.replies"))
-    if isinstance(entry, dict) and entry.get("value") == "off" \
-            and "resume" in entry:
+    if isinstance(entry, dict) and entry.get("value") == "off" and "resume" in entry:
         return entry["resume"]
     ks = format_key(path, "who.replies")
     for h in reversed((st.overlay_doc or {}).get("history") or []):
@@ -2718,30 +2835,52 @@ def resume_changes(st, place):
 _IF_MEDIA, _IF_EMPTY = "if-media-on", "if-empty"
 WORK_NOTES = "Keep a professional tone. Keep replies brief."
 PRESETS = {
-    "friends": ("Friends", {
-        "who.replies": "conversational", "privacy.memory": "everything",
-        "limits.per_person_per_day": None, "limits.per_day": None,
-        "who.bots": "when-addressed", "who.bot_exchange_limit": None,
-        "media.per_day": None, "proactive.enabled": True}),
-    "community": ("Community", {
-        "who.replies": "when-addressed", "privacy.memory": "public-only",
-        "limits.per_person_per_day": 20, "limits.per_day": 300,
-        "who.bots": "when-addressed", "who.bot_exchange_limit": 4,
-        "media.per_day": (_IF_MEDIA, 10), "proactive.enabled": False}),
-    "work": ("Work", {
-        "who.replies": "when-addressed", "privacy.memory": "nothing",
-        "limits.per_person_per_day": None, "limits.per_day": None,
-        "who.bots": "ignore", "media.per_day": None,
-        "proactive.enabled": False,
-        "style.notes": (_IF_EMPTY, WORK_NOTES)}),
+    "friends": (
+        "Friends",
+        {
+            "who.replies": "conversational",
+            "privacy.memory": "everything",
+            "limits.per_person_per_day": None,
+            "limits.per_day": None,
+            "who.bots": "when-addressed",
+            "who.bot_exchange_limit": None,
+            "media.per_day": None,
+            "proactive.enabled": True,
+        },
+    ),
+    "community": (
+        "Community",
+        {
+            "who.replies": "when-addressed",
+            "privacy.memory": "public-only",
+            "limits.per_person_per_day": 20,
+            "limits.per_day": 300,
+            "who.bots": "when-addressed",
+            "who.bot_exchange_limit": 4,
+            "media.per_day": (_IF_MEDIA, 10),
+            "proactive.enabled": False,
+        },
+    ),
+    "work": (
+        "Work",
+        {
+            "who.replies": "when-addressed",
+            "privacy.memory": "nothing",
+            "limits.per_person_per_day": None,
+            "limits.per_day": None,
+            "who.bots": "ignore",
+            "media.per_day": None,
+            "proactive.enabled": False,
+            "style.notes": (_IF_EMPTY, WORK_NOTES),
+        },
+    ),
 }
 
 
 def _preset(name):
     n = str(name or "").strip().lower()
     if n not in PRESETS:
-        raise SettingsError(f"{name!r} is not a preset: Friends, Community "
-                            f"or Work")
+        raise SettingsError(f"{name!r} is not a preset: Friends, Community or Work")
     return PRESETS[n]
 
 
@@ -2760,13 +2899,13 @@ def preset_changes(st, name, place, info=None, big="refuse"):
         raise SettingsError("Presets apply to a whole server.")
     members = ServerInfo(info).members(place.guild_id)
     skip = set()
-    if title == "Friends" and members is not None \
-            and members > BIG_FOR_MEMORY:
+    if title == "Friends" and members is not None and members > BIG_FOR_MEMORY:
         if big != "skip":
             raise SettingsError(
                 f"The Friends preset lets replies use anything it "
                 f"remembers about you, so it is only for servers of up to "
-                f"{BIG_FOR_MEMORY} members; this one has {members:,}.")
+                f"{BIG_FOR_MEMORY} members; this one has {members:,}."
+            )
         skip.add("privacy.memory")
     out = []
     sc = Scope.server(place.guild_id)
@@ -2787,7 +2926,7 @@ def preset_changes(st, name, place, info=None, big="refuse"):
 
 
 def matching_preset(st, place):
-    """"Friends" / "Community" / "Work" when a server's values in force
+    """ "Friends" / "Community" / "Work" when a server's values in force
     match that preset, else None ("Custom"). Instructions and reaching
     out on its own (a server may keep Friends with it off) are not
     compared; the media cap only when media is on there."""
@@ -2797,8 +2936,7 @@ def matching_preset(st, place):
     for title, values in PRESETS.values():
         ok = True
         for key, value in values.items():
-            if key in ("style.notes", "proactive.enabled") \
-                    or st.spec(key) is None:
+            if key in ("style.notes", "proactive.enabled") or st.spec(key) is None:
                 continue
             if isinstance(value, tuple):
                 cond, value = value
@@ -2827,8 +2965,7 @@ class Assessment:
         return bool(self.warnings)
 
     def to_dict(self):
-        return {"risky": self.risky, "warnings": list(self.warnings),
-                "notes": list(self.notes)}
+        return {"risky": self.risky, "warnings": list(self.warnings), "notes": list(self.notes)}
 
     def __repr__(self):
         return f"Assessment(risky={self.risky}, warnings={self.warnings})"
@@ -2852,8 +2989,7 @@ def _dm_audience(s):
         people = users if people is None else people & users
     if people is not None:
         people = people - ignore - {str(o) for o in s.owners}
-        return ("set", frozenset(people)) if people else ("none",
-                                                          frozenset())
+        return ("set", frozenset(people)) if people else ("none", frozenset())
     return ("shared" if pol == "shared-servers" else "any"), frozenset()
 
 
@@ -2918,7 +3054,8 @@ def assess(st, changes, info=None, names=None, named=()):
         out.warnings.append(
             f"External app access increases from {before_apps} to {after_apps}. "
             "App-specific limits still apply. Unconditional approval skips "
-            "approval for registered writes, deletes and sends.")
+            "approval for registered writes, deletes and sends."
+        )
 
     gids = set(inf.guilds()) | set(st.servers_listed())
     for ch in changes:
@@ -2931,8 +3068,7 @@ def assess(st, changes, info=None, names=None, named=()):
 
     def gdesc(g):
         n = inf.members(g)
-        return f"{gname(g)} ({n:,} members)" if n is not None \
-            else f"{gname(g)} (size unknown)"
+        return f"{gname(g)} ({n:,} members)" if n is not None else f"{gname(g)} (size unknown)"
 
     def large(g, limit):
         """Known to have more than limit members, or of unknown size
@@ -2944,13 +3080,11 @@ def assess(st, changes, info=None, names=None, named=()):
     channels = {}
     for g in gids:
         for c in st.channels_listed(g):
-            channels[(g, c)] = Scope.server(
-                g, channel_id=c, category_id=inf.category_of(g, c))
+            channels[(g, c)] = Scope.server(g, channel_id=c, category_id=inf.category_of(g, c))
     for ch in changes:
-        if ch.place.kind == "channel":
-            channels[(ch.place.guild_id, ch.place.channel_id)] = \
-                ch.place.scope(ch.key)
-    later = Scope("all_servers")   # servers it joins later / not listed
+        if ch.place is not None and ch.place.kind == "channel":
+            channels[(ch.place.guild_id, ch.place.channel_id)] = ch.place.scope(ch.key)
+    later = Scope("all_servers")  # servers it joins later / not listed
     total = sum(inf.members(g) or 0 for g in inf.guilds())
 
     # DMs open to more people.
@@ -2959,51 +3093,68 @@ def assess(st, changes, info=None, names=None, named=()):
     if isinstance(grew, set) and named:
         grew = grew - {str(n) for n in named} or None
     if grew is True and aud_a[0] == "any":
-        out.warnings.append("Anyone on Discord, strangers included, can DM "
-                            "the bot and get answers. Each answer costs a "
-                            "Muse turn.")
+        out.warnings.append(
+            "Anyone on Discord, strangers included, can DM "
+            "the bot and get answers. Each answer costs a "
+            "Muse turn."
+        )
     elif grew is True:
-        out.warnings.append("Anyone who shares a server with the bot can "
-                            "DM it and get answers, not only you.")
+        out.warnings.append(
+            "Anyone who shares a server with the bot can DM it and get answers, not only you."
+        )
     elif grew:
-        out.warnings.append(f"{people_text(sorted(grew), look)} can DM the "
-                            f"bot and get answers.")
+        out.warnings.append(f"{people_text(sorted(grew), look)} can DM the bot and get answers.")
 
     # Other bots in DMs.
     def bot_dms(s):
         r = s.resolve(Scope.dm())
-        return r["who.replies"] != "off" and r["who.bots"] != "ignore" \
-            and r["who.dms_from"] in ("anyone", "shared-servers") \
+        return (
+            r["who.replies"] != "off"
+            and r["who.bots"] != "ignore"
+            and r["who.dms_from"] in ("anyone", "shared-servers")
             and r["who.allow"] == "everyone"
+        )
+
     if bot_dms(after) and not bot_dms(st):
-        out.warnings.append("Other bots can DM the bot and get answers; two "
-                            "bots can keep answering each other, each "
-                            "answer a Muse turn.")
+        out.warnings.append(
+            "Other bots can DM the bot and get answers; two "
+            "bots can keep answering each other, each "
+            "answer a Muse turn."
+        )
 
     # Memory: anything it remembers.
     def mem(s, sc):
         return s.get("privacy.memory", sc) == "everything"
-    newly = [g for g, sc in servers.items()
-             if mem(after, sc) and not mem(st, sc)]
+
+    newly = [g for g, sc in servers.items() if mem(after, sc) and not mem(st, sc)]
     if newly or (mem(after, later) and not mem(st, later)):
         places = [gdesc(g) for g in newly] or ["servers it joins later"]
         big = [g for g in newly if large(g, BIG_FOR_MEMORY)]
-        text = (f"In {_join(places)}, replies may draw on anything it "
-                f"remembers about you (your job, location, finances and "
-                f"other saved memory), and anyone there can ask the bot "
-                f"about you.")
+        text = (
+            f"In {_join(places)}, replies may draw on anything it "
+            f"remembers about you (your job, location, finances and "
+            f"other saved memory), and anyone there can ask the bot "
+            f"about you."
+        )
         if big:
-            text = (f"More than {BIG_FOR_MEMORY} members (or size unknown): "
-                    f"{_join(gdesc(g) for g in big)}. " + text)
+            text = (
+                f"More than {BIG_FOR_MEMORY} members (or size unknown): "
+                f"{_join(gdesc(g) for g in big)}. " + text
+            )
         out.warnings.append(text)
-    if aud_a[0] in ("shared", "any") and mem(after, Scope.dm()) and not (
-            aud_b[0] in ("shared", "any") and mem(st, Scope.dm())):
-        out.warnings.append("People who DM the bot, strangers included, may "
-                            "get replies drawing on anything it remembers "
-                            "about you.")
+    if (
+        aud_a[0] in ("shared", "any")
+        and mem(after, Scope.dm())
+        and not (aud_b[0] in ("shared", "any") and mem(st, Scope.dm()))
+    ):
+        out.warnings.append(
+            "People who DM the bot, strangers included, may "
+            "get replies drawing on anything it remembers "
+            "about you."
+        )
 
     # Image and video generation.
-    scopes = {(g,): sc for g, sc in servers.items()}
+    scopes: dict[tuple[str, ...], Scope] = {(g,): sc for g, sc in servers.items()}
     scopes[("DMs",)] = Scope.dm()
     scopes[("later",)] = later
     for (g, c), sc in channels.items():
@@ -3014,8 +3165,7 @@ def assess(st, changes, info=None, names=None, named=()):
             return None, False
         who = s.get("media.who", sc)
         cap = _effective_cap(s, "media.per_day", sc)
-        return who, who != "owners" and (
-            cap is None or cap > MEDIA_PER_DAY_RISKY)
+        return who, who != "owners" and (cap is None or cap > MEDIA_PER_DAY_RISKY)
 
     def where(k):
         if k == ("DMs",):
@@ -3025,6 +3175,7 @@ def assess(st, changes, info=None, names=None, named=()):
         if len(k) == 1:
             return gname(k[0])
         return place_name(Place.channel(*k), look_names)
+
     everyone, uncapped = [], []
     for k, sc in scopes.items():
         wb, ub = media(st, sc)
@@ -3034,20 +3185,24 @@ def assess(st, changes, info=None, names=None, named=()):
         if ua and not ub:
             uncapped.append(where(k))
     if everyone:
-        out.warnings.append(f"Anyone in {_join(everyone)} can ask for "
-                            f"generated images and video. Generation "
-                            f"can cost real money.")
+        out.warnings.append(
+            f"Anyone in {_join(everyone)} can ask for "
+            f"generated images and video. Generation "
+            f"can cost real money."
+        )
     if uncapped:
         out.warnings.append(
             f"Generations per day: more than "
             f"{MEDIA_PER_DAY_RISKY} (or no limit) for people other "
             f"than you in {_join(uncapped)}. Generation can cost real "
-            f"money.")
+            f"money."
+        )
 
     # Only answer these people: newly limiting places.
     allow_scopes = [(gname(g), sc) for g, sc in servers.items()] + [
-        ("servers it joins later", later)]
-    if aud_b[0] != "none":   # DMs answered someone besides the owners
+        ("servers it joins later", later)
+    ]
+    if aud_b[0] != "none":  # DMs answered someone besides the owners
         allow_scopes.append(("DMs", Scope.dm()))
     silenced, who = [], None
     for name, sc in allow_scopes:
@@ -3060,91 +3215,113 @@ def assess(st, changes, info=None, names=None, named=()):
         out.warnings.append(
             f"Only {people_text(who, look) if who else 'nobody'} and you "
             f"will get answers in {n} place{'s' if n != 1 else ''} "
-            f"({_join(silenced)}); everyone else there is ignored.")
+            f"({_join(silenced)}); everyone else there is ignored."
+        )
 
     # Pause everywhere.
     def paused_all(s):
-        return s.get("who.replies", Scope.dm()) == "off" \
-            and s.get("who.replies", later) == "off"
+        return s.get("who.replies", Scope.dm()) == "off" and s.get("who.replies", later) == "off"
+
     if paused_all(after) and not paused_all(st):
-        own = [gname(g) for g, sc in servers.items()
-               if after.get("who.replies", sc) != "off"]
-        text = ("Pause everywhere: the bot stops answering everyone, in DMs "
-                "and in every server without its own setting, until you "
-                "resume.")
+        own = [gname(g) for g, sc in servers.items() if after.get("who.replies", sc) != "off"]
+        text = (
+            "Pause everywhere: the bot stops answering everyone, in DMs "
+            "and in every server without its own setting, until you "
+            "resume."
+        )
         if own:
-            text += (f" {_join(own)} set{'s' if len(own) == 1 else ''} "
-                     f"its own and keep{'s' if len(own) == 1 else ''} "
-                     f"answering.")
+            text += (
+                f" {_join(own)} set{'s' if len(own) == 1 else ''} "
+                f"its own and keep{'s' if len(own) == 1 else ''} "
+                f"answering."
+            )
         out.warnings.append(text)
 
     # A reply cap removed where the bot is large.
     for key in ("limits.per_day", "limits.per_person_per_day"):
         lost = []
         for g, sc in servers.items():
-            if large(g, BIG_FOR_CAPS) \
-                    and st.cap_layers(key, sc) and not after.cap_layers(key,
-                                                                        sc):
+            if large(g, BIG_FOR_CAPS) and st.cap_layers(key, sc) and not after.cap_layers(key, sc):
                 lost.append(gdesc(g))
-        if aud_a[0] in ("shared", "any") and st.cap_layers(
-                key, Scope.dm()) and not after.cap_layers(key, Scope.dm()):
+        if (
+            aud_a[0] in ("shared", "any")
+            and st.cap_layers(key, Scope.dm())
+            and not after.cap_layers(key, Scope.dm())
+        ):
             lost.append("DMs (open to strangers)")
         ev = Scope.everywhere()
-        unknown = not inf.guilds() or any(inf.members(g) is None
-                                          for g in inf.guilds())
-        if (total > BIG_FOR_CAPS or unknown) and not lost \
-                and st.cap_layers(key, ev) and not after.cap_layers(key, ev):
-            lost.append("the bot as a whole (size unknown)"
-                        if not total else
-                        f"the bot as a whole ({total:,} members"
-                        + (", some of unknown size)" if unknown else ")"))
+        unknown = not inf.guilds() or any(inf.members(g) is None for g in inf.guilds())
+        if (
+            (total > BIG_FOR_CAPS or unknown)
+            and not lost
+            and st.cap_layers(key, ev)
+            and not after.cap_layers(key, ev)
+        ):
+            lost.append(
+                "the bot as a whole (size unknown)"
+                if not total
+                else f"the bot as a whole ({total:,} members"
+                + (", some of unknown size)" if unknown else ")")
+            )
         if lost:
-            out.warnings.append(f"{label(key)}: no limit any more in "
-                                f"{_join(lost)}.")
+            out.warnings.append(f"{label(key)}: no limit any more in {_join(lost)}.")
 
     # Chatty in a big server.
     big = []
-    for (g, c), sc in [((g, None), sc) for g, sc in servers.items()] \
-            + list(channels.items()):
+    for (g, c), sc in [((g, None), sc) for g, sc in servers.items()] + list(channels.items()):
         if not large(g, BIG_FOR_CONVERSATIONAL):
             continue
-        if after.get("who.replies", sc) == "conversational" \
-                and st.get("who.replies", sc) != "conversational":
+        if (
+            after.get("who.replies", sc) == "conversational"
+            and st.get("who.replies", sc) != "conversational"
+        ):
             if c:
                 n = look(c)
-                cname = (n if str(n).startswith("#") else f"#{n}") if n \
-                    else f"channel {c}"
+                cname = (n if str(n).startswith("#") else f"#{n}") if n else f"channel {c}"
                 big.append(f"{cname} in {gdesc(g)}")
             else:
                 big.append(gdesc(g))
     if big:
         out.warnings.append(
             f"Chatty in {_join(big)}: anyone the bot answers there can keep "
-            f"talking to it for 2 minutes without @mentioning it.")
+            f"talking to it for 2 minutes without @mentioning it."
+        )
 
     # Replies in a row to other bots.
     def botx(s, sc):
         lim = s.get("who.bot_exchange_limit", sc)
-        return s.get("who.bots", sc) != "ignore" and (
-            lim is None or lim > BOT_EXCHANGE_RISKY)
-    loose = [n for n, sc in [("Defaults", Scope.everywhere())] + [
-        (gname(g), sc) for g, sc in servers.items()]
-        if botx(after, sc) and not botx(st, sc)]
+        return s.get("who.bots", sc) != "ignore" and (lim is None or lim > BOT_EXCHANGE_RISKY)
+
+    loose = [
+        n
+        for n, sc in [("Defaults", Scope.everywhere())]
+        + [(gname(g), sc) for g, sc in servers.items()]
+        if botx(after, sc) and not botx(st, sc)
+    ]
     if loose:
-        out.warnings.append(f"Two bots can keep answering each other in "
-                            f"{_join(loose)} with no limit (or more than "
-                            f"{BOT_EXCHANGE_RISKY} in a row), each answer "
-                            f"a Muse turn.")
+        out.warnings.append(
+            f"Two bots can keep answering each other in "
+            f"{_join(loose)} with no limit (or more than "
+            f"{BOT_EXCHANGE_RISKY} in a row), each answer "
+            f"a Muse turn."
+        )
 
     # Notes.
     def allow_ineffective(s):
         r = s.resolve(Scope.dm())
-        return r["who.replies"] != "off" and r["who.dms_from"] == "owners" \
-            and isinstance(r["who.allow"], list) and bool(r["who.allow"])
+        return (
+            r["who.replies"] != "off"
+            and r["who.dms_from"] == "owners"
+            and isinstance(r["who.allow"], list)
+            and bool(r["who.allow"])
+        )
+
     if allow_ineffective(after) and not allow_ineffective(st):
-        out.notes.append("Only answer these people does not let anyone DM "
-                         "the bot while Who can DM it is Only you; choose "
-                         "You and people you pick for that.")
+        out.notes.append(
+            "Only answer these people does not let anyone DM "
+            "the bot while Who can DM it is Only you; choose "
+            "You and people you pick for that."
+        )
     return out
 
 

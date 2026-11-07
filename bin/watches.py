@@ -15,6 +15,7 @@ because of text in a Discord message, a web page or a wake payload.
 Reads and edits <package dir>/watches.json, the monitor's store, under
 its lock. Never needs the bot token and never touches the network.
 """
+
 import argparse
 import json
 import os
@@ -32,19 +33,20 @@ def describe(i, r):
         what = f"remind  due {W.iso(r.get('due', 0))}"
     elif r.get("kind") == "watch-web":
         every = ", every time" if r.get("repeat") else ""
-        what = (f"web     \"{r.get('what')}\" checked every "
-                f"{int(r.get('every') or 0) // 60} min until "
-                f"{W.iso(r.get('until', 0))}{every}")
+        what = (
+            f'web     "{r.get("what")}" checked every '
+            f"{int(r.get('every') or 0) // 60} min until "
+            f"{W.iso(r.get('until', 0))}{every}"
+        )
     else:
         words = ", ".join(f'"{w}"' for w in r.get("words") or [])
         every = ", every time" if r.get("every") else ""
-        what = (f"watch   {words} in {r.get('scope_name')} until "
-                f"{W.iso(r.get('until', 0))}{every}")
+        what = f"watch   {words} in {r.get('scope_name')} until {W.iso(r.get('until', 0))}{every}"
     return f"{i}  {what}  for {who}  set in {r.get('where')}{note}"
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     ls = sub.add_parser("list", help="every active reminder and watch")
     ls.add_argument("--json", action="store_true")
@@ -59,16 +61,16 @@ def main(argv=None):
         elif not live:
             print("No reminders or watches.")
         else:
-            for i, r in sorted(live.items(), key=lambda kv: kv[1].get(
-                    "due") or kv[1].get("until", 0)):
+            for i, r in sorted(
+                live.items(), key=lambda kv: kv[1].get("due") or kv[1].get("until", 0)
+            ):
                 print(describe(i, r))
         return 0
-    ids = list(dict.fromkeys(args.ids))   # an id named twice is one
+    ids = list(dict.fromkeys(args.ids))  # an id named twice is one
     with store.edit() as data:
         missing = [i for i in ids if i not in data["items"]]
         if missing:
-            print(f"Not found (nothing changed): {', '.join(missing)}",
-                  file=sys.stderr)
+            print(f"Not found (nothing changed): {', '.join(missing)}", file=sys.stderr)
             return 1
         for i in ids:
             print(f"Cancelled: {describe(i, data['items'].pop(i))}")

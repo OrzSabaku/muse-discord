@@ -1,6 +1,7 @@
 """Keep the legacy approval interaction worker responsive during a slow
 main-loop tick. Native settings callbacks run on discord.py's event loop.
 """
+
 import contextlib
 import io
 import json
@@ -20,8 +21,9 @@ mod = H.load_monitor(tmp)
 mod.api.routes["/users/@me"] = {"id": H.BOT, "username": "musebot"}
 mod.BOT_ID = mod.BOT_USER_ID = None
 mod.discover_channels = lambda previous=None: (
-    {"C1": H.chan()}, {H.G1: {"name": "Srv", "system_channel_id": None,
-                              "joined_at": None}})
+    {"C1": H.chan()},
+    {H.G1: {"name": "Srv", "system_channel_id": None, "joined_at": None}},
+)
 with open(mod.STATE_FILE, "w") as f:
     json.dump({"guild_joined": {H.G1: 0}, "known_guilds": {H.G1: "Srv"}}, f)
 
@@ -36,7 +38,7 @@ class Stop(BaseException):
 
 def slow_outbox(state):
     in_outbox.set()
-    acked.wait(3)   # only acks that come while the main loop is blocked
+    acked.wait(3)  # only acks that come while the main loop is blocked
     raise Stop()
 
 
@@ -46,19 +48,24 @@ res = {"acks": [], "handled_on": []}
 
 def handle(ix, ctx):
     res["handled_on"].append(threading.current_thread().name)
-    return {"type": 4 if ix["type"] == 2 else 7,
-            "data": {"content": f"page for {ix['id']}", "flags": 64,
-                     "seen_guilds": [g["id"] for g in ctx.guilds()]}}
+    return {
+        "type": 4 if ix["type"] == 2 else 7,
+        "data": {
+            "content": f"page for {ix['id']}",
+            "flags": 64,
+            "seen_guilds": [g["id"] for g in ctx.guilds()],
+        },
+    }
 
 
 for key in ("/test-settings", "test-settings"):
-    mod.register_interaction(key, lambda ix, rest, uid, record: handle(ix, mod.SettingsCtx()), owner_only=False)
+    mod.register_interaction(
+        key, lambda ix, rest, uid, record: handle(ix, mod.SettingsCtx()), owner_only=False
+    )
 
 
 def cb(i, resp):
-    res["acks"].append({"id": i["id"],
-                        "after": time.time() - res["put_at"][i["id"]],
-                        "resp": resp})
+    res["acks"].append({"id": i["id"], "after": time.time() - res["put_at"][i["id"]], "resp": resp})
     if len(res["acks"]) == 3:
         acked.set()
 
@@ -69,15 +76,18 @@ res["put_at"] = {}
 
 def fake_gw(token, inbox, status):
     in_outbox.wait(5)
-    for n, (t, data) in enumerate([
+    for n, (t, data) in enumerate(
+        [
             (2, {"name": "test-settings", "type": 1}),
             (3, {"custom_id": "test-settings:p:e", "component_type": 2}),
-            (5, {"custom_id": "test-settings:m:x", "components": []})]):
+            (5, {"custom_id": "test-settings:m:x", "components": []}),
+        ]
+    ):
         iid = f"90{n}"
         res["put_at"][iid] = time.time()
-        status["interactions"].put({
-            "id": iid, "token": "tok", "type": t, "data": data,
-            "user": {"id": H.OWNER}})
+        status["interactions"].put(
+            {"id": iid, "token": "tok", "type": t, "data": data, "user": {"id": H.OWNER}}
+        )
         time.sleep(0.05)
 
 

@@ -7,7 +7,7 @@ Each layer validates only supplied values, so defaults never erase inheritance.
 
 from dataclasses import dataclass
 from pydantic.fields import FieldInfo
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypedDict, Required, cast
 from zoneinfo import ZoneInfo
 
 from pydantic import (
@@ -35,7 +35,7 @@ def _quiet_hours(value):
 def _timezone(value):
     try:
         ZoneInfo(value)
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         raise ValueError("expected an IANA time zone such as Europe/Paris") from None
     return value
 
@@ -159,6 +159,14 @@ class SettingsSchema(SettingsModel):
     memory: MemorySettings = Field(default_factory=MemorySettings)
 
 
+class SettingPolicy(TypedDict, total=False):
+    scopes: Required[list[str]]
+    editor: str
+    risky: bool
+    discord_editable: bool
+    hidden: bool
+
+
 @dataclass(frozen=True)
 class SettingField:
     """Editor metadata derived from a Pydantic field, not another schema.
@@ -186,7 +194,7 @@ class SettingField:
         validator = TypeAdapter(info.rebuild_annotation())
         schema = validator.json_schema()
         variants = schema.get("anyOf", [schema])
-        policy = info.json_schema_extra or {}
+        policy = cast(SettingPolicy, info.json_schema_extra or {})
         choices = tuple(
             v for b in variants for v in b.get("enum", [b["const"]] if "const" in b else [])
         )
@@ -212,7 +220,9 @@ class SettingField:
             maxlen=constraint("maxLength"),
             none=any(b.get("type") == "null" for b in variants),
             ids=kind == "choice" and any(b.get("type") == "array" for b in variants),
-            **{k: policy[k] for k in ("risky", "discord_editable", "hidden") if k in policy},
+            risky=policy.get("risky", False),
+            discord_editable=policy.get("discord_editable", True),
+            hidden=policy.get("hidden", False),
         )
 
     def valid_text(self):
@@ -243,6 +253,8 @@ def field_registry(*groups):
     result = {}
     for group in groups:
         model = SettingsSchema.model_fields[group].annotation
+        if not isinstance(model, type) or not issubclass(model, BaseModel):
+            raise TypeError(f"{group} must be a settings model")
         for name, info in model.model_fields.items():
             result[f"{group}.{name}"] = SettingField.from_field(info)
     return result

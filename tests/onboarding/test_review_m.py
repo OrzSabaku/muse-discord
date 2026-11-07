@@ -1,6 +1,7 @@
 """Review M (lean/core): the first-run ownerless-server check.
 
 Usage: [MUT_DIR=<tree>] python3 tests/onboarding/test_review_m.py"""
+
 import os
 import sys
 import unittest
@@ -8,8 +9,17 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 import common  # noqa: E402,F401 (sets up sys.path for MUT_DIR)
-from settings_harness import (G1, G2, CH_G2, OWNER, U1, HTTPErr,  # noqa
-                              gmsg, load_monitor, quiet)
+from settings_harness import (  # noqa: E402 (local import path bootstrap)
+    G1,
+    G2,
+    CH_G2,
+    OWNER,
+    U1,
+    HTTPErr,  # noqa
+    gmsg,
+    load_monitor,
+    quiet,
+)
 
 BASE = f'version: 1\nowners: ["{OWNER}"]\n'
 
@@ -23,9 +33,9 @@ class FirstRun(unittest.TestCase):
         mod = load_monitor(BASE)
         mod.api.members[(G1, OWNER)] = []
         with quiet():
-            st = mod.load_state()                  # no state.json
-            mod.sync_guilds(st, {}, {})            # boot discovery failed
-            for gid in (G1, G2):                   # READY's GUILD_CREATEs
+            st = mod.load_state()  # no state.json
+            mod.sync_guilds(st, {}, {})  # boot discovery failed
+            for gid in (G1, G2):  # READY's GUILD_CREATEs
                 mod.on_guild_event(st, {"op": "create", "id": gid})
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
         self.assertIsNone(mod.trigger_kind(stranger, G2))
@@ -35,8 +45,7 @@ class FirstRun(unittest.TestCase):
         429 it must stop asking (the rest stay gated and are retried),
         not send one more request per server and owner."""
         mod = load_monitor(BASE)
-        guilds = {str(700000000000000000 + i): {"name": f"g{i}"}
-                  for i in range(30)}
+        guilds = {str(700000000000000000 + i): {"name": f"g{i}"} for i in range(30)}
         asked = []
 
         def get(path):
@@ -46,12 +55,12 @@ class FirstRun(unittest.TestCase):
                 mod._note_rate_limit(e)
                 raise e
             raise HTTPErr(404)
+
         mod.api_get = get
         with quiet():
             st = mod.load_state()
             mod.sync_guilds(st, guilds, {})
-        self.assertLessEqual(len(asked), 1, f"{len(asked)} member GETs "
-                             f"after a 429")
+        self.assertLessEqual(len(asked), 1, f"{len(asked)} member GETs after a 429")
 
 
 if __name__ == "__main__":

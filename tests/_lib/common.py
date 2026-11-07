@@ -6,6 +6,7 @@ Every suite puts this directory on sys.path first thing:
         os.path.abspath(__file__))), "_lib"))
 
 MUT_DIR is the package tree under test (default: this checkout)."""
+
 import atexit
 import os
 import shutil
@@ -22,14 +23,14 @@ os.environ["GIT_CONFIG_NOSYSTEM"] = "1"
 # Usage stats (telemetry.py) are never sent from a test, whatever the
 # endpoint; the telemetry suite turns them on per Recorder, at a fake.
 os.environ["MUSE_DISCORD_TELEMETRY"] = "off"
-os.environ["MUSE_DISCORD_TELEMETRY_URL"] = ""   # "" = no endpoint at all
+os.environ["MUSE_DISCORD_TELEMETRY_URL"] = ""  # "" = no endpoint at all
 
 LIB = os.path.dirname(os.path.abspath(__file__))
 TESTS = os.path.dirname(LIB)
 REPO = os.path.dirname(TESTS)
 MUT_DIR = os.path.abspath(os.environ.get("MUT_DIR") or REPO)
 sys.path.insert(0, os.path.join(MUT_DIR, "src"))
-os.environ["MUT_DIR"] = MUT_DIR   # subprocesses see the same tree
+os.environ["MUT_DIR"] = MUT_DIR  # subprocesses see the same tree
 
 FAKE_PROC = os.path.join(LIB, "fake_proc.py")  # monitor/presence stand-in
 HOOK_RUNTIME = os.path.join(LIB, "hook_runtime.sh")  # hatch hook stubs
@@ -53,8 +54,12 @@ def copy_watchdog(dst_dir):
     with open(os.path.join(MUT_DIR, "bin", "watchdog.sh")) as f:
         text = f.read()
     os.makedirs(os.path.join(dst_dir, "bin"), exist_ok=True)
-    shutil.copytree(os.path.join(MUT_DIR, "src"), os.path.join(dst_dir, "src"),
-                    dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
+    shutil.copytree(
+        os.path.join(MUT_DIR, "src"),
+        os.path.join(dst_dir, "src"),
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
     dst = os.path.join(dst_dir, "bin", "watchdog.sh")
     with open(dst, "w") as f:
         f.write(text.replace("    sleep 5\n", "    sleep 0.2\n"))
@@ -71,8 +76,7 @@ def redirect_files(mod, tmp):
         return
     for name in dir(mod):
         val = getattr(mod, name)
-        if (name.endswith("_FILE") and isinstance(val, str)
-                and val.startswith(base + os.sep)):
+        if name.endswith("_FILE") and isinstance(val, str) and val.startswith(base + os.sep):
             setattr(mod, name, os.path.join(tmp, os.path.relpath(val, base)))
 
 
@@ -90,6 +94,5 @@ def signed(mod, state, item):
     qid = mod._answered_id(state, item)
     if qid:
         frags = mod.queue_index(state)["frags"]
-        item["reply_nonce"] = mod.reply_nonce_mint(
-            state, mod.trigger_of(state, qid, frags))
+        item["reply_nonce"] = mod.reply_nonce_mint(state, mod.trigger_of(state, qid, frags))
     return item

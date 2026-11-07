@@ -11,9 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 sys.path.insert(
     0,
-    os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settingsui"
-    ),
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "settingsui"),
 )
 import harness as H
 from test_native import interaction
@@ -40,9 +38,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
         # host whose egress goes through a proxy the Gateway connect
         # is attempted directly and dies, so Connection must hand the
         # environment's proxy over.
-        with patch.dict(
-            os.environ, {"HTTPS_PROXY": "http://proxy.example:3128"}, clear=True
-        ):
+        with patch.dict(os.environ, {"HTTPS_PROXY": "http://proxy.example:3128"}, clear=True):
             client = DC.Connection(
                 self.inbox,
                 self.status,
@@ -51,9 +47,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
                 33281,
             )
             try:
-                self.assertEqual(
-                    client.http.proxy, "http://proxy.example:3128"
-                )
+                self.assertEqual(client.http.proxy, "http://proxy.example:3128")
             finally:
                 await client.close()
 
@@ -93,9 +87,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
                 await client.close()
 
     async def event(self, event, data):
-        await self.client.on_socket_raw_receive(
-            json.dumps({"op": 0, "t": event, "d": data})
-        )
+        await self.client.on_socket_raw_receive(json.dumps({"op": 0, "t": event, "d": data}))
 
     async def test_raw_dispatch_keeps_message_typing_guild_and_permission_data(self):
         msg = {
@@ -110,9 +102,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.status["wake"].is_set())
         self.assertEqual(self.status["application"]["id"], "5")
         await self.event("TYPING_START", {"channel_id": "2", "user_id": "3"})
-        self.assertEqual(
-            self.inbox.get_nowait(), {"_typing": {"channel_id": "2", "user_id": "3"}}
-        )
+        self.assertEqual(self.inbox.get_nowait(), {"_typing": {"channel_id": "2", "user_id": "3"}})
         await self.event("GUILD_DELETE", {"id": "6", "unavailable": True})
         self.assertTrue(self.inbox.empty())
         await self.event("GUILD_DELETE", {"id": "6"})
@@ -158,9 +148,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
         )
         old = interaction(self.ctx, data={"custom_id": "mdset:3:pg:x:h"})
         await self.client.on_interaction(old)
-        self.assertIn(
-            "古い形式", old.edit_original_response.call_args.kwargs["content"]
-        )
+        self.assertIn("古い形式", old.edit_original_response.call_args.kwargs["content"])
 
     async def test_native_dispatch_restores_user_bound_action_from_real_components(
         self,
@@ -169,9 +157,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
         await DC.settings_ui.open_settings(ix, self.ctx)
         view = ix.edit_original_response.call_args.kwargs["view"]
         await self.client.setup_hook()
-        action = next(
-            i for i in view.walk_children() if isinstance(i, DC.settings_ui.Action)
-        )
+        action = next(i for i in view.walk_children() if isinstance(i, DC.settings_ui.Action))
         match = action.template.fullmatch(action.custom_id)
         restored = await DC.settings_ui.Action.from_custom_id(ix, action.item, match)
         self.assertEqual(restored.token, action.token)
@@ -184,9 +170,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
         ]
         for failure in failures:
             status = {"wake": threading.Event()}
-            with patch.object(
-                DC.Connection, "start", new=AsyncMock(side_effect=failure)
-            ):
+            with patch.object(DC.Connection, "start", new=AsyncMock(side_effect=failure)):
                 await DC.run(
                     "dummy",
                     self.inbox,
@@ -296,9 +280,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(finished.wait(), 2)
             adapter.create_interaction_response.assert_awaited_once()
             self.assertEqual(screen.draft, {"style.length": "brief"})
-            self.assertEqual(
-                self.ctx.value("style.length", H.MS.Place.server(H.G1)), "normal"
-            )
+            self.assertEqual(self.ctx.value("style.length", H.MS.Place.server(H.G1)), "normal")
         finally:
             async_context.reset(token)
 

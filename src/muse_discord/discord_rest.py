@@ -6,6 +6,9 @@ limit buckets, HTTP retries and multipart encoding without model conversions.
 Internal SDK usage is confined here and covered by local HTTP contract tests.
 """
 
+from collections.abc import Iterable
+from typing import Any
+
 import asyncio
 import atexit
 import io
@@ -20,14 +23,12 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 import aiohttp
 import discord
-from discord.http import HTTPClient, Route
+from discord.http import HTTPClient, Route, handle_message_parameters
 
 # SDK HTTP traces include interaction tokens in URLs and arbitrary response
 # data. Callers log the sanitized errors below instead.
 if not (2, 7, 1) <= discord.version_info[:3] < (2, 8, 0):
-    raise ImportError(
-        "discord.py 2.7.x (>=2.7.1) is required; run uv sync"
-    )
+    raise ImportError("discord.py 2.7.x (>=2.7.1) is required; run uv sync")
 logging.getLogger("discord.http").disabled = True
 API = "https://discord.com/api/v10"
 
@@ -41,22 +42,18 @@ def _proxy_for(base):
     host = urlsplit(base).hostname
     if host in ("127.0.0.1", "localhost", "::1"):
         return None
-    if host and urllib.request.proxy_bypass_environment(host):
+    if host and urllib.request.proxy_bypass(host):
         return None
-    return os.environ.get("HTTPS_PROXY") \
-        or os.environ.get("https_proxy") or None
+    return os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
 
 
 class DiscordError(RuntimeError):
     def __init__(self, status, discord_code=None, retry_after=None):
         self.status = self.code = status  # legacy monitor checks HTTP .code
         self.discord_code = discord_code
-        self.headers = (
-            {"Retry-After": str(retry_after)} if retry_after is not None else {}
-        )
+        self.headers = {"Retry-After": str(retry_after)} if retry_after is not None else {}
         super().__init__(
-            f"Discord HTTP {status}"
-            + (f" (code {discord_code})" if discord_code else "")
+            f"Discord HTTP {status}" + (f" (code {discord_code})" if discord_code else "")
         )
 
 
@@ -88,7 +85,7 @@ class _Session(HTTPClient):
         return await super().request(route, **kwargs)
 
 
-def route_for(method, path, base=API):
+def route_for(method: str, path: str, base: str = API) -> tuple[Route, dict[str, str]]:
     parsed = urlsplit(path)
     if (
         not path.startswith("/")
@@ -118,9 +115,7 @@ def route_for(method, path, base=API):
             and pieces[i - 2] in ("webhooks", "interactions")
         ):
             key = major or (
-                "webhook_token"
-                if i > 2 and pieces[i - 2] == "webhooks"
-                else f"part_{i}"
+                "webhook_token" if i > 2 and pieces[i - 2] == "webhooks" else f"part_{i}"
             )
             params[key] = unquote(piece)
             template.append("{" + key + "}")
@@ -143,26 +138,36 @@ def route_for(method, path, base=API):
 
 
 class Rest:
-    def __init__(self, token, base=API):
+    def __init__(self, token: str, base: str = API) -> None:
         self.token, self.base = token, base
-        self._http = None
+        self._http: _Session | None = None
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._loop.run_forever, daemon=True, name="discord-rest"
         )
         self._thread.start()
 
-    def request(self, method, path, data=None, *, files=(), timeout=20):
+    def request(
+        self,
+        method: str,
+        path: str,
+        data: Any = None,
+        *,
+        files: Iterable[tuple[str, bytes]] = (),
+        timeout: float = 20,
+    ) -> Any:
         future = asyncio.run_coroutine_threadsafe(
             self._request(method, path, data, files, timeout), self._loop
         )
         try:
             return future.result(timeout=timeout + 1)
-        except (FutureTimeoutError, asyncio.TimeoutError, TimeoutError):
+        except FutureTimeoutError, asyncio.TimeoutError, TimeoutError:
             future.cancel()
             raise TimeoutError("Discord request timed out") from None
 
-    async def _request(self, method, path, data, files, timeout):
+    async def _request(
+        self, method: str, path: str, data: Any, files: Iterable[tuple[str, bytes]], timeout: float
+    ) -> Any:
         route, query = route_for(method, path, self.base)
         is_message = (
             method == "POST"
@@ -176,9 +181,7 @@ class Rest:
         retry_safe = (
             method != "POST"
             or path == "/users/@me/channels"
-            or bool(
-                is_message and data and data.get("nonce") and data.get("enforce_nonce")
-            )
+            or bool(is_message and data and data.get("nonce") and data.get("enforce_nonce"))
         )
         http = self._http
         try:
@@ -186,21 +189,19 @@ class Rest:
                 trace = aiohttp.TraceConfig()
                 trace.on_request_end.append(_no_ambiguous_retry)
                 http = self._http = _Session(
-                    asyncio.get_running_loop(), http_trace=trace,
+                    asyncio.get_running_loop(),
+                    http_trace=trace,
                     proxy=_proxy_for(self.base),
                 )
                 await http.open(self.token)
 
-            async def send():
-                kwargs = {"params": query} if query else {}
+            async def send() -> Any:
+                kwargs: dict[str, Any] = {"params": query} if query else {}
                 kwargs["trace_request_ctx"] = {"retry_safe": retry_safe}
-                handles = [
-                    discord.File(io.BytesIO(blob), filename=name)
-                    for name, blob in files
-                ]
+                handles = [discord.File(io.BytesIO(blob), filename=name) for name, blob in files]
                 try:
                     if handles:
-                        with discord.http.handle_message_parameters(
+                        with handle_message_parameters(
                             content=discord.utils.MISSING, files=handles
                         ) as multipart:
                             # Preserve nested forum payloads, nonces, references
@@ -213,9 +214,10 @@ class Rest:
                                 "attachments",
                                 [handle.to_dict(i) for i, handle in enumerate(handles)],
                             )
-                            multipart.multipart[0]["value"] = discord.utils._to_json(
-                                payload
-                            )
+                            assert (
+                                multipart.multipart is not None
+                            )  # files always produce a multipart form
+                            multipart.multipart[0]["value"] = discord.utils._to_json(payload)
                             return await http.request(
                                 route, files=handles, form=multipart.multipart, **kwargs
                             )
@@ -232,15 +234,13 @@ class Rest:
         except discord.RateLimited as exc:
             raise DiscordError(429, retry_after=exc.retry_after) from None
         except discord.HTTPException as exc:
-            retry = (
-                exc.response.headers.get("Retry-After") if exc.status == 429 else None
-            )
+            retry = exc.response.headers.get("Retry-After") if exc.status == 429 else None
             raise DiscordError(exc.status, exc.code, retry) from None
-        except (asyncio.TimeoutError, TimeoutError):
+        except asyncio.TimeoutError, TimeoutError:
             # Cancellation during an SDK global-limit sleep can leave its gate
             # closed. Replace the session so later requests can recover.
             if self._http is http:
-                self._http = None
+                self._http: _Session | None = None
             if http:
                 await http.close()
             raise TimeoutError("Discord request timed out") from None
@@ -254,9 +254,7 @@ class Rest:
         async def stop():
             if self._http:
                 await self._http.close()
-            pending = [
-                t for t in asyncio.all_tasks() if t is not asyncio.current_task()
-            ]
+            pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
             for task in pending:
                 task.cancel()
             await asyncio.gather(*pending, return_exceptions=True)

@@ -42,6 +42,7 @@ check what the monitor queued (run.py copies it into the transcript;
 the queue_item check reads it). Runs until SIGTERM. Never reads the
 token.
 """
+
 import argparse
 import json
 import os
@@ -65,7 +66,7 @@ def load_json(path, default):
     try:
         with open(path) as f:
             return json.load(f)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return default
 
 
@@ -73,6 +74,7 @@ def driver_a_id(pkg):
     """Driver A is the test config's (only) owner: `owners: [id]`."""
     try:
         import yaml
+
         with open(os.path.join(pkg, "config.yaml")) as f:
             cfg = yaml.safe_load(f) or {}
         owners = cfg.get("owners") or []
@@ -85,8 +87,7 @@ def item_texts(item):
     """The trigger's text plus every fragment's (content already joins
     them for bursts; fragments are checked too in case it is cut)."""
     texts = [item.get("content") or ""]
-    texts += [f.get("content") or "" for f in item.get("burst_fragments")
-              or []]
+    texts += [f.get("content") or "" for f in item.get("burst_fragments") or []]
     return "\n".join(texts)
 
 
@@ -114,16 +115,18 @@ def say_text(item):
 
 def item_record(item):
     """What e2e_worker_items.json keeps about one queue item."""
-    return {"message_id": item.get("message_id"),
-            "fragment_ids": [f.get("message_id") for f in
-                             item.get("burst_fragments") or []
-                             if isinstance(f, dict)],
-            "channel_id": item.get("channel_id"),
-            "kind": item.get("kind"),
-            "follow_up": item.get("follow_up"),
-            "from_bot": item.get("from_bot"),
-            "owner_command": item.get("owner_command"),
-            "settings": item.get("settings")}
+    return {
+        "message_id": item.get("message_id"),
+        "fragment_ids": [
+            f.get("message_id") for f in item.get("burst_fragments") or [] if isinstance(f, dict)
+        ],
+        "channel_id": item.get("channel_id"),
+        "kind": item.get("kind"),
+        "follow_up": item.get("follow_up"),
+        "from_bot": item.get("from_bot"),
+        "owner_command": item.get("owner_command"),
+        "settings": item.get("settings"),
+    }
 
 
 def record_items(pkg, items):
@@ -148,11 +151,13 @@ def build_reply(item, a_id=None):
     n = 1 + len(frags)
     last = frags[-1]["message_id"] if frags else item.get("message_id")
     flags = directives(item)
-    out = {"item": item.get("message_id"),
-           "channel_id": item.get("channel_id"),
-           "channel_name": item.get("channel_name"),
-           "author": item.get("author"),
-           "reply_to": last}
+    out = {
+        "item": item.get("message_id"),
+        "channel_id": item.get("channel_id"),
+        "channel_name": item.get("channel_name"),
+        "author": item.get("author"),
+        "reply_to": last,
+    }
     if item.get("owner_dm_nonce"):
         # An owner-DM-only wake's payload: every item for the DM echoes it.
         out["owner_dm_nonce"] = item["owner_dm_nonce"]
@@ -182,12 +187,14 @@ def build_reply(item, a_id=None):
     changes = []
     if "remind" in flags:
         secs, note = REMIND_RE.search(item_texts(item)).groups()
-        changes.append({"op": "add", "kind": "remind", "after": int(secs),
-                        "note": (note or "").strip()})
+        changes.append(
+            {"op": "add", "kind": "remind", "after": int(secs), "note": (note or "").strip()}
+        )
     if "watch" in flags:
         word = WATCH_RE.search(item_texts(item)).group(1).strip()
-        changes.append({"op": "add", "kind": "watch", "note": word,
-                        "match": {"words": [word], "in": "here"}})
+        changes.append(
+            {"op": "add", "kind": "watch", "note": word, "match": {"words": [word], "in": "here"}}
+        )
     if changes:
         out["schedule"] = {"v": 1, "changes": changes}
     return out, delay
@@ -196,11 +203,11 @@ def build_reply(item, a_id=None):
 def append_outbox(pkg, items):
     """Append through the package's own tool (locks, validates)."""
     tool = os.path.join(pkg, "bin", "outbox-append.py")
-    p = subprocess.run([sys.executable, tool], input=json.dumps(items),
-                       capture_output=True, text=True, timeout=30)
+    p = subprocess.run(
+        [sys.executable, tool], input=json.dumps(items), capture_output=True, text=True, timeout=30
+    )
     if p.returncode != 0:
-        print(f"outbox-append failed ({p.returncode}): {p.stderr.strip()}",
-              flush=True)
+        print(f"outbox-append failed ({p.returncode}): {p.stderr.strip()}", flush=True)
     return p.returncode == 0
 
 
@@ -209,8 +216,8 @@ class Worker:
         self.pkg = os.path.abspath(pkg)
         self.a_id = a_id
         self.clock = clock
-        self.answered = set()   # queue message_ids handled (or scheduled)
-        self.scheduled = []     # [(due, outbox item)] for [[slow]]
+        self.answered = set()  # queue message_ids handled (or scheduled)
+        self.scheduled = []  # [(due, outbox item)] for [[slow]]
         # Items already answered in the outbox (a restarted worker) are
         # never answered again.
         for name in ("reply_outbox.json", "reply_outbox.processing.json"):
@@ -237,7 +244,7 @@ class Worker:
             if nonces.get(mid):
                 item = dict(item, reply_nonce=nonces[mid])
             elif os.path.exists(os.path.join(self.pkg, "item_nonces.json")):
-                continue   # minted within seconds: the next tick
+                continue  # minted within seconds: the next tick
             self.answered.add(mid)
             seen.append(item)
             if item.get("kind") == "proactive":
@@ -245,8 +252,11 @@ class Worker:
                 # this worker reads, so it lets the slot expire.
                 continue
             out, delay = build_reply(item, self.a_id)
-            print(f"item {mid}: {sorted(directives(item)) or 'ack'}"
-                  f"{f' (in {delay:.0f}s)' if delay else ''}", flush=True)
+            print(
+                f"item {mid}: {sorted(directives(item)) or 'ack'}"
+                f"{f' (in {delay:.0f}s)' if delay else ''}",
+                flush=True,
+            )
             self.scheduled.append((now + delay, out))
         try:
             record_items(self.pkg, seen)
@@ -266,13 +276,13 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--pkg", required=True, help="the SUT package dir")
     ap.add_argument("--interval", type=float, default=1.0)
-    ap.add_argument("--a-id", default=None,
-                    help="driver A's user id (default: first owner)")
+    ap.add_argument("--a-id", default=None, help="driver A's user id (default: first owner)")
     args = ap.parse_args(argv)
     stop = {"now": False}
 
     def on_term(signum, frame):
         stop["now"] = True
+
     signal.signal(signal.SIGTERM, on_term)
     signal.signal(signal.SIGINT, on_term)
     w = Worker(args.pkg, a_id=args.a_id)

@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.5
+    rev: v0.17.4
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -16,7 +16,7 @@ repos:
     hooks:
       - id: pyright
         name: pyright
-        entry: uv run pyright
+        entry: uv run --group apps pyright
         language: system
         pass_filenames: false
         types: [python]

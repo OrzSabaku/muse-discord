@@ -97,9 +97,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
             )
             ix = interaction(self.ctx, data={"values": [json.dumps(val)]})
             await item.callback(ix)
-            self.assertEqual(
-                self.ctx.value("style.length", MS.Place.server(H.G1)), "normal"
-            )
+            self.assertEqual(self.ctx.value("style.length", MS.Place.server(H.G1)), "normal")
         self.assertEqual(self.screen.draft, {"style.length": "detailed"})
         self.screen.key = "limits.per_day"
         self.act("input", ["73"])
@@ -117,9 +115,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.screen.place_text, f"server:{H.G1}")
         self.act("discard")
         self.act("scope", ["dms"])
-        self.assertEqual(
-            self.ctx.value("style.length", MS.Place.server(H.G1)), "normal"
-        )
+        self.assertEqual(self.ctx.value("style.length", MS.Place.server(H.G1)), "normal")
         self.assertEqual(self.screen.draft, {})
 
     async def test_exact_number_null_and_invalid_input(self):
@@ -144,9 +140,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         modal.input._value = "短く日本語で"
         await modal.on_submit(interaction(self.ctx))
         self.assertEqual(self.screen.draft["style.notes"], "短く日本語で")
-        self.assertNotEqual(
-            self.ctx.value("style.notes", MS.Place.server(H.G1)), "短く日本語で"
-        )
+        self.assertNotEqual(self.ctx.value("style.notes", MS.Place.server(H.G1)), "短く日本語で")
 
     async def test_modal_refuses_expired_or_changed_setting(self):
         self.screen.key = "style.notes"
@@ -164,16 +158,10 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         self.act("save")
         self.assertIn("warnings", self.screen.pending)
         self.assertTrue(self.screen.pending["warnings"])
-        self.assertEqual(
-            self.ctx.value("privacy.memory", MS.Place.server(H.G1)), "public-only"
-        )
-        self.assertIn(
-            "確認して適用", [c.label for c in components(self.panel(), UI.ui.Button)]
-        )
+        self.assertEqual(self.ctx.value("privacy.memory", MS.Place.server(H.G1)), "public-only")
+        self.assertIn("確認して適用", [c.label for c in components(self.panel(), UI.ui.Button)])
         self.act("confirm")
-        self.assertEqual(
-            self.ctx.value("privacy.memory", MS.Place.server(H.G1)), "everything"
-        )
+        self.assertEqual(self.ctx.value("privacy.memory", MS.Place.server(H.G1)), "everything")
         with self.assertRaises(MS.SettingsError):
             self.act("confirm")
 
@@ -198,9 +186,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         )
         with self.assertRaises(MS.SettingsError):
             self.act("save")
-        self.assertEqual(
-            self.ctx.value("style.length", MS.Place.server(H.G1)), "detailed"
-        )
+        self.assertEqual(self.ctx.value("style.length", MS.Place.server(H.G1)), "detailed")
 
     async def test_inherit_and_undo_preserve_engine_semantics(self):
         self.screen.key = "style.length"
@@ -208,9 +194,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         self.act("save")
         self.act("inherit")
         self.act("save")
-        self.assertEqual(
-            self.ctx.value("style.length", MS.Place.server(H.G1)), "normal"
-        )
+        self.assertEqual(self.ctx.value("style.length", MS.Place.server(H.G1)), "normal")
         self.panel()
         self.act("undo")
         self.assertIn("undo", self.screen.pending)
@@ -252,9 +236,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
             self.screen.authorize(interaction(self.ctx), self.ctx)
 
     async def test_expired_and_wrong_user_dynamic_buttons_write_nothing(self):
-        item = UI.Action(
-            UI.ui.Button(label="保存", custom_id=f"mset:{self.screen.token}:save")
-        )
+        item = UI.Action(UI.ui.Button(label="保存", custom_id=f"mset:{self.screen.token}:save"))
         for user in [H.OWNER, H.OWNER2]:
             ix = interaction(self.ctx, user)
             await item.callback(ix)
@@ -284,11 +266,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(screen.key, key)
                     self.assertLessEqual(view.content_length(), 4000)
                     self.assertLessEqual(len(list(view.walk_children())), 40)
-                    ids = [
-                        i.custom_id
-                        for i in view.walk_children()
-                        if hasattr(i, "custom_id")
-                    ]
+                    ids = [i.custom_id for i in view.walk_children() if hasattr(i, "custom_id")]
                     self.assertEqual(len(ids), len(set(ids)))
                     self.assertTrue(all(len(i) <= 100 for i in ids))
 
@@ -297,13 +275,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
             ("servers", len(self.ctx.guilds())),
             (
                 "channels",
-                len(
-                    [
-                        c
-                        for c in self.ctx.channels(H.G1)
-                        if c["type"] != 4 and c["readable"]
-                    ]
-                ),
+                len([c for c in self.ctx.channels(H.G1) if c["type"] != 4 and c["readable"]]),
             ),
         ]:
             self.screen.browse, self.screen.page = kind, 0
@@ -313,9 +285,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
                 for sel in components(view, UI.ui.Select):
                     seen.update(o.value for o in sel.options)
                     self.assertLessEqual(len(sel.options), 25)
-                next_ = next(
-                    b for b in components(view, UI.ui.Button) if b.label == "次へ"
-                )
+                next_ = next(b for b in components(view, UI.ui.Button) if b.label == "次へ")
                 if next_.disabled:
                     break
                 self.act("next")
@@ -337,9 +307,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         outcome = next(o for o in self.ctx.outcomes if o.get("guild_id") == H.G1)
         ix = interaction(self.ctx, gid=H.G2, data={"target_id": outcome["message_id"]})
         await UI.why_message(ix, self.ctx)
-        self.assertIn(
-            "記録はありません", ix.edit_original_response.call_args.kwargs["content"]
-        )
+        self.assertIn("記録はありません", ix.edit_original_response.call_args.kwargs["content"])
 
     async def test_guard_checks_the_native_payload_before_send(self):
         ix = interaction(self.ctx)
@@ -369,9 +337,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
     async def test_many_warnings_cannot_be_confirmed_without_being_shown(self):
         self.screen.pending = {"warnings": [f"warning {n}" for n in range(6)]}
         view = self.panel()
-        confirm = next(
-            b for b in components(view, UI.ui.Button) if b.label == "確認して適用"
-        )
+        confirm = next(b for b in components(view, UI.ui.Button) if b.label == "確認して適用")
         self.assertTrue(confirm.disabled)
         with self.assertRaises(MS.SettingsError):
             self.act("confirm")
@@ -388,15 +354,11 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
     async def test_server_preset_is_staged_and_admin_cannot_apply_it(self):
         self.act("preset", ["community"])
         self.assertTrue(self.screen.draft)
-        self.assertEqual(
-            self.ctx.value("who.replies", MS.Place.server(H.G1)), "conversational"
-        )
+        self.assertEqual(self.ctx.value("who.replies", MS.Place.server(H.G1)), "conversational")
         self.act("save")
         if self.screen.pending:
             self.act("confirm")
-        self.assertEqual(
-            self.ctx.value("who.replies", MS.Place.server(H.G1)), "when-addressed"
-        )
+        self.assertEqual(self.ctx.value("who.replies", MS.Place.server(H.G1)), "when-addressed")
         with self.assertRaises(MS.SettingsError):
             self.act("preset", ["work"], "admin")
 

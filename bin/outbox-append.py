@@ -27,6 +27,7 @@ that mis-copied it finds out at once. The monitor re-validates every
 item on its side. Never needs the bot token and never touches the
 network.
 """
+
 import fcntl
 import json
 import os
@@ -36,7 +37,8 @@ import tempfile
 
 PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
-from muse_discord import muse_watches, reply_protocol
+from muse_discord import muse_watches, reply_protocol  # noqa: E402 (local import path bootstrap)
+
 OUTBOX = os.path.join(PACKAGE_DIR, "reply_outbox.json")
 LOCK = os.path.join(PACKAGE_DIR, "reply.lock")
 
@@ -52,7 +54,7 @@ def _live(name):
     try:
         with open(os.path.join(PACKAGE_DIR, name)) as f:
             data = json.load(f)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -66,13 +68,16 @@ def nonce_problems(item):
     mid = str(item.get("item") or item.get("reply_to") or "")
     dm = item.get("owner_dm_nonce")
     for field, given, name in (
-            ("reply_nonce", item.get("reply_nonce"), "item_nonces.json"),
-            ("owner_dm_nonce", dm, "owner_dm_nonces.json")):
+        ("reply_nonce", item.get("reply_nonce"), "item_nonces.json"),
+        ("owner_dm_nonce", dm, "owner_dm_nonces.json"),
+    ):
         live = _live(name).get(mid)
         if isinstance(live, str) and given is not None and given != live:
-            out.append(f'{field} does not match item {mid}\'s: copy its '
-                       f'"{field}" from the wake payload again, exactly '
-                       f'({len(live)} characters)')
+            out.append(
+                f"{field} does not match item {mid}'s: copy its "
+                f'"{field}" from the wake payload again, exactly '
+                f"({len(live)} characters)"
+            )
     return out
 
 
@@ -82,16 +87,19 @@ def problems(item):
     out = reply_protocol.shape_problems(item)
     if out:
         return out
-    if "proactive" in item and (item["proactive"] not in ("opt-out",
-                                                          "opt-in")
-                                or not item.get("item")):
-        out.append('proactive is "opt-out" or "opt-in", on the reply to the '
-                   'person\'s own message (with its "item")')
+    if "proactive" in item and (
+        item["proactive"] not in ("opt-out", "opt-in") or not item.get("item")
+    ):
+        out.append(
+            'proactive is "opt-out" or "opt-in", on the reply to the '
+            'person\'s own message (with its "item")'
+        )
     nonce = item.get("owner_dm_nonce")
     if nonce is not None:
         if not (isinstance(nonce, str) and NONCE_RE.fullmatch(nonce)):
-            out.append('owner_dm_nonce: copy the item\'s "owner_dm_nonce" '
-                       'from the wake payload exactly')
+            out.append(
+                'owner_dm_nonce: copy the item\'s "owner_dm_nonce" from the wake payload exactly'
+            )
     out += nonce_problems(item)
     if out:
         return out
@@ -105,8 +113,7 @@ def problems(item):
 
 def main():
     if len(sys.argv) > 2:
-        print("usage: outbox-append.py [FILE]  (JSON on stdin by default)",
-              file=sys.stderr)
+        print("usage: outbox-append.py [FILE]  (JSON on stdin by default)", file=sys.stderr)
         return 2
     try:
         if len(sys.argv) == 2:
@@ -116,15 +123,12 @@ def main():
             raw = sys.stdin.read()
         data = json.loads(raw)
     except (OSError, ValueError) as e:
-        print(f"error: could not read a JSON item list ({e}); nothing "
-              f"appended", file=sys.stderr)
+        print(f"error: could not read a JSON item list ({e}); nothing appended", file=sys.stderr)
         return 1
     items = data if isinstance(data, list) else [data]
-    errors = [f"item {i + 1}: {p}"
-              for i, item in enumerate(items) for p in problems(item)]
+    errors = [f"item {i + 1}: {p}" for i, item in enumerate(items) for p in problems(item)]
     if errors:
-        print("error: nothing appended; fix these and run it again:",
-              file=sys.stderr)
+        print("error: nothing appended; fix these and run it again:", file=sys.stderr)
         for e in errors:
             print(f"  {e}", file=sys.stderr)
         return 1
@@ -142,14 +146,15 @@ def main():
             except ValueError:
                 outbox = None
             if not isinstance(outbox, list):
-                print("error: reply_outbox.json is not a JSON array; the "
-                      "monitor sets a bad file aside within seconds. "
-                      "Run this again in a moment.", file=sys.stderr)
+                print(
+                    "error: reply_outbox.json is not a JSON array; the "
+                    "monitor sets a bad file aside within seconds. "
+                    "Run this again in a moment.",
+                    file=sys.stderr,
+                )
                 return 1
         outbox += items
-        tmp_fd, tmp = tempfile.mkstemp(dir=PACKAGE_DIR,
-                                       prefix=".reply_outbox.json.",
-                                       suffix=".tmp")
+        tmp_fd, tmp = tempfile.mkstemp(dir=PACKAGE_DIR, prefix=".reply_outbox.json.", suffix=".tmp")
         try:
             with os.fdopen(tmp_fd, "w") as f:
                 os.fchmod(f.fileno(), 0o644)
@@ -166,9 +171,12 @@ def main():
     missing = sum(1 for item in items if not item.get("item"))
     print(f"appended {len(items)} item(s) to the outbox")
     if missing:
-        print(f'note: {missing} item(s) without "item" (the queue item\'s '
-              f'message_id); the monitor can only match those by '
-              f'reply_to', file=sys.stderr)
+        print(
+            f'note: {missing} item(s) without "item" (the queue item\'s '
+            f"message_id); the monitor can only match those by "
+            f"reply_to",
+            file=sys.stderr,
+        )
     return 0
 
 

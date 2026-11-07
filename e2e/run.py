@@ -37,6 +37,7 @@ and prints the plan: no env, no network.
 Tokens never reach any file this writes: every string that goes to
 results, summary, transcripts, or the copied logs is redacted.
 """
+
 import argparse
 import importlib.util
 import json
@@ -60,14 +61,12 @@ import sut  # noqa: E402
 E2E_DIR = os.path.dirname(os.path.abspath(__file__))
 SCENARIO_DIR = os.path.join(E2E_DIR, "scenarios")
 FIXTURE_DIR = os.path.join(E2E_DIR, "fixtures")
-REQUIRED_ENV = ("E2E_GUILD_ID", "E2E_SUT_TOKEN", "E2E_DRIVER_A_TOKEN",
-                "E2E_DRIVER_B_TOKEN")
-TOKEN_ENV = ("E2E_SUT_TOKEN", "E2E_DRIVER_A_TOKEN", "E2E_DRIVER_B_TOKEN",
-             "CLAUDE_CODE_OAUTH_TOKEN")
+REQUIRED_ENV = ("E2E_GUILD_ID", "E2E_SUT_TOKEN", "E2E_DRIVER_A_TOKEN", "E2E_DRIVER_B_TOKEN")
+TOKEN_ENV = ("E2E_SUT_TOKEN", "E2E_DRIVER_A_TOKEN", "E2E_DRIVER_B_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")
 SUMMARY_MARKER = "<!-- muse-discord-e2e -->"
 READY_TIMEOUT = 180
-POLL_SECS = 1.5           # history polling cadence while waiting
-OUTBOX_POLL_SECS = 0.02   # wait_for outbox_processing (spec: <= 50 ms)
+POLL_SECS = 1.5  # history polling cadence while waiting
+OUTBOX_POLL_SECS = 0.02  # wait_for outbox_processing (spec: <= 50 ms)
 CONVERSE_SETTLE_SECS = 6  # quiet gap that ends a multi-part SUT turn
 STALE_CHANNEL_SECS = 6 * 3600
 LOG_TAIL_LINES = 200
@@ -78,10 +77,13 @@ SCENARIO_LOG_BYTES = 256 * 1024
 # queue_item check reads it; fake_worker.WORKER_ITEMS).
 WORKER_ITEMS = "e2e_worker_items.json"
 # Discord bot-token shape, redacted even when it is not one of ours.
-TOKEN_RE = re.compile(
-    r"[A-Za-z0-9_-]{23,28}\.[A-Za-z0-9_-]{6,7}\.[A-Za-z0-9_-]{27,}")
-SAMPLE_IDS = {"SUT": "100000000000000001", "A": "100000000000000002",
-              "B": "100000000000000003", "SUT_NAME": "muse-test"}
+TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{23,28}\.[A-Za-z0-9_-]{6,7}\.[A-Za-z0-9_-]{27,}")
+SAMPLE_IDS = {
+    "SUT": "100000000000000001",
+    "A": "100000000000000002",
+    "B": "100000000000000003",
+    "SUT_NAME": "muse-test",
+}
 SAMPLE_GUILD = "100000000000000000"
 # settings step: how long to wait for the monitor to log the reload
 # (its main loop re-checks the files at least every ~2 s), and how
@@ -121,9 +123,9 @@ def fixture_path(name):
 
 # --- redaction -------------------------------------------------------
 
+
 def _secrets():
-    return [os.environ[k] for k in TOKEN_ENV
-            if len(os.environ.get(k, "")) >= 8]
+    return [os.environ[k] for k in TOKEN_ENV if len(os.environ.get(k, "")) >= 8]
 
 
 def redact(obj):
@@ -153,15 +155,14 @@ def log(msg):
 
 # --- results ---------------------------------------------------------
 
-def scenario_status(sc, check_results, judge_result, error=None,
-                    flake=False):
+
+def scenario_status(sc, check_results, judge_result, error=None, flake=False):
     """pass | fail | warn | flake, per the spec."""
     if flake:
         return "flake"
     if error or any(not c.get("ok") for c in check_results):
         return "fail"
-    if int(sc.get("tier", 1)) == 2 and judge_result \
-            and judge_result.get("verdict") != "pass":
+    if int(sc.get("tier", 1)) == 2 and judge_result and judge_result.get("verdict") != "pass":
         return "warn"
     return "pass"
 
@@ -173,7 +174,7 @@ def exit_code(results):
 def _cell(text, limit=300):
     text = " ".join(str(text or "").split())
     if len(text) > limit:
-        text = text[:limit - 3] + "..."
+        text = text[: limit - 3] + "..."
     return text.replace("|", "\\|")
 
 
@@ -208,38 +209,41 @@ def render_summary(results, tier, note=None):
         headline = "PASS with flakes"
     else:
         headline = "PASS"
-    lines = [SUMMARY_MARKER, f"## muse-discord e2e (tier {tier}): "
-             f"{headline}", ""]
+    lines = [SUMMARY_MARKER, f"## muse-discord e2e (tier {tier}): {headline}", ""]
     if counts:
         lines.append(", ".join(f"{n} {s}" for s, n in sorted(counts.items())))
         lines.append("")
     if counts.get("flake"):
-        lines += ["> [!WARNING]",
-                  f"> {counts['flake']} scenario(s) FLAKED: Discord or the "
-                  "test infrastructure misbehaved, so they prove nothing "
-                  "either way. Re-run the job; investigate if it repeats.",
-                  ""]
+        lines += [
+            "> [!WARNING]",
+            f"> {counts['flake']} scenario(s) FLAKED: Discord or the "
+            "test infrastructure misbehaved, so they prove nothing "
+            "either way. Re-run the job; investigate if it repeats.",
+            "",
+        ]
     if results:
-        lines += ["| scenario | tier | status | notes |",
-                  "| --- | --- | --- | --- |"]
+        lines += ["| scenario | tier | status | notes |", "| --- | --- | --- | --- |"]
         for r in results:
-            lines.append(f"| {_cell(r['scenario'])} | {r['tier']} | "
-                         f"**{r['status']}** | {_cell(_notes(r))} |")
+            lines.append(
+                f"| {_cell(r['scenario'])} | {r['tier']} | **{r['status']}** | {_cell(_notes(r))} |"
+            )
         lines.append("")
     judged = [r for r in results if r.get("judge")]
     if judged:
         lines += ["### Judge (tier 2)", ""]
         for r in judged:
             j = r["judge"]
-            lines.append(f"- **{r['scenario']}**: {j.get('verdict')}: "
-                         f"{_cell(j.get('reason'), 1000)}")
+            lines.append(
+                f"- **{r['scenario']}**: {j.get('verdict')}: {_cell(j.get('reason'), 1000)}"
+            )
         lines.append("")
     where = "the `out/transcripts/` folder of this run's artifacts"
-    if os.environ.get("GITHUB_RUN_ID") and os.environ.get(
-            "GITHUB_REPOSITORY"):
-        url = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}"
-               f"/{os.environ['GITHUB_REPOSITORY']}/actions/runs/"
-               f"{os.environ['GITHUB_RUN_ID']}")
+    if os.environ.get("GITHUB_RUN_ID") and os.environ.get("GITHUB_REPOSITORY"):
+        url = (
+            f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}"
+            f"/{os.environ['GITHUB_REPOSITORY']}/actions/runs/"
+            f"{os.environ['GITHUB_RUN_ID']}"
+        )
         where += f" ([workflow run]({url}))"
     lines.append(f"Transcripts: {where}.")
     return redact("\n".join(lines) + "\n")
@@ -252,6 +256,7 @@ def write_outputs(out_dir, results, tier, note=None):
 
 
 # --- transcript ------------------------------------------------------
+
 
 def author_role(author_id, ids):
     for role, key in (("sut", "SUT"), ("a", "A"), ("b", "B")):
@@ -271,10 +276,8 @@ def transcript_message(m, ids, thread=None):
         "author_id": author.get("id"),
         "ts": m.get("timestamp"),
         "content": m.get("content") or "",
-        "reply_to": ref.get("message_id") if m.get("type") == 19
-        else None,
-        "attachments": [a.get("filename") for a in m.get("attachments")
-                        or []],
+        "reply_to": ref.get("message_id") if m.get("type") == 19 else None,
+        "attachments": [a.get("filename") for a in m.get("attachments") or []],
         "mentions": [u.get("id") for u in m.get("mentions") or []],
         "mention_everyone": bool(m.get("mention_everyone")),
         "mention_roles": list(m.get("mention_roles") or []),
@@ -291,16 +294,25 @@ def _state_holds(the_sut):
     return st.get("holds") if isinstance(st, dict) else None
 
 
-def build_transcript(sc, channel_id, started_at, ids, labels,
-                     converse_turns, messages, the_sut, log_mark=None,
-                     threads=None, monitor_restarts=None):
+def build_transcript(
+    sc,
+    channel_id,
+    started_at,
+    ids,
+    labels,
+    converse_turns,
+    messages,
+    the_sut,
+    log_mark=None,
+    threads=None,
+    monitor_restarts=None,
+):
     """threads: {thread label: thread id} for the threads the scenario
     started; messages from those channels get their `thread` label."""
     threads = dict(threads or {})
     thread_of = {str(tid): lab for lab, tid in threads.items()}
     scenario_log = ""
-    if the_sut is not None and log_mark is not None \
-            and hasattr(the_sut, "log_since"):
+    if the_sut is not None and log_mark is not None and hasattr(the_sut, "log_since"):
         scenario_log = the_sut.log_since(log_mark, SCENARIO_LOG_BYTES)
     return {
         "scenario": sc["id"],
@@ -311,25 +323,21 @@ def build_transcript(sc, channel_id, started_at, ids, labels,
         "converse_turns": converse_turns,
         "threads": threads,
         "monitor_restarts": monitor_restarts,
-        "messages": [transcript_message(
-            m, ids, thread_of.get(str(m.get("channel_id"))))
-            for m in messages],
+        "messages": [
+            transcript_message(m, ids, thread_of.get(str(m.get("channel_id")))) for m in messages
+        ],
         "sut_files": {
-            "quarantine": the_sut.read_json("quarantine.json")
-            if the_sut else None,
-            "ledger": the_sut.read_json("mention_ledger.json")
-            if the_sut else None,
+            "quarantine": the_sut.read_json("quarantine.json") if the_sut else None,
+            "ledger": the_sut.read_json("mention_ledger.json") if the_sut else None,
             "holds": _state_holds(the_sut) if the_sut else None,
-            "worker_items": the_sut.read_json(WORKER_ITEMS)
-            if the_sut else None,
+            "worker_items": the_sut.read_json(WORKER_ITEMS) if the_sut else None,
             # config.discord.yaml (what Discord-side changes wrote),
             # parsed; None when nothing was written.
             "overlay": the_sut.read_yaml(sut.OVERLAY_NAME)
             if the_sut is not None and hasattr(the_sut, "read_yaml")
             else None,
         },
-        "monitor_log_tail": the_sut.log_tail(LOG_TAIL_LINES)
-        if the_sut else "",
+        "monitor_log_tail": the_sut.log_tail(LOG_TAIL_LINES) if the_sut else "",
         # monitor.log since just before this scenario's config restart.
         "monitor_log": scenario_log,
     }
@@ -341,16 +349,19 @@ def iso_now():
 
 # --- scenario execution ------------------------------------------------
 
+
 def missing_thread_permission(driver, perm, doing):
     """The Flake message for a 403 from a thread call: the driver's
     role predates the thread permissions (e2e/README.md)."""
     want = DRIVER_PERMISSIONS.get(driver, 0) | SEND_MESSAGES_IN_THREADS
     if perm == "Create Public Threads":
         want |= CREATE_PUBLIC_THREADS
-    return (f"driver {driver.upper()} lacks {perm} (HTTP 403 {doing}). In "
-            f"the test server, Server Settings > Roles > driver-{driver}: "
-            f"enable Create Public Threads and Send Messages in Threads; "
-            f"or re-invite it with permissions={want} (e2e/README.md)")
+    return (
+        f"driver {driver.upper()} lacks {perm} (HTTP 403 {doing}). In "
+        f"the test server, Server Settings > Roles > driver-{driver}: "
+        f"enable Create Public Threads and Send Messages in Threads; "
+        f"or re-invite it with permissions={want} (e2e/README.md)"
+    )
 
 
 class Runner:
@@ -358,11 +369,10 @@ class Runner:
     their own (a timeout just moves on; the checks judge the result);
     Flake and SUTError mean the run says nothing about the PR."""
 
-    def __init__(self, the_sut, drivers, reader, ids, base_cfg,
-                 sleep=time.sleep, clock=time.time):
+    def __init__(self, the_sut, drivers, reader, ids, base_cfg, sleep=time.sleep, clock=time.time):
         self.sut = the_sut
         self.drivers = drivers  # {"a": Bot, "b": Bot}
-        self.reader = reader    # Bot used to read history
+        self.reader = reader  # Bot used to read history
         self.ids = ids
         self.base_cfg = base_cfg
         self.sleep = sleep
@@ -370,15 +380,18 @@ class Runner:
         self.monitor_expected = True
         self.notes = []  # per scenario: timeouts and the like
         self.threads = {}  # per scenario: thread label -> thread id
-        self.starts = 0    # monitor (re)starts during the steps
-        self._ms = None    # the SUT's muse_settings module
+        self.starts = 0  # monitor (re)starts during the steps
+        self._ms = None  # the SUT's muse_settings module
 
     def history(self, channel_id):
         """One channel's (or thread's) messages, oldest first. Reading
         after the channel's own id skips a thread's starter message,
         which shares the id of the message the thread was started on."""
-        return [m for m in self.reader.history(channel_id, after=channel_id)
-                if m.get("type") not in THREAD_SYSTEM_TYPES]
+        return [
+            m
+            for m in self.reader.history(channel_id, after=channel_id)
+            if m.get("type") not in THREAD_SYSTEM_TYPES
+        ]
 
     def scenario_history(self, channel_id):
         """The channel plus every thread this scenario started, as one
@@ -392,15 +405,12 @@ class Runner:
     def sut_messages(self, channel_id, threads=False):
         """The SUT's messages in one channel or thread; threads=True:
         in the channel and all of its threads."""
-        hist = self.scenario_history(channel_id) if threads \
-            else self.history(channel_id)
-        return [m for m in hist
-                if (m.get("author") or {}).get("id") == self.ids["SUT"]]
+        hist = self.scenario_history(channel_id) if threads else self.history(channel_id)
+        return [m for m in hist if (m.get("author") or {}).get("id") == self.ids["SUT"]]
 
     def check_alive(self):
         if self.monitor_expected and not self.sut.alive():
-            raise Flake("monitor exited unexpectedly:\n"
-                        + self.sut.log_tail(15))
+            raise Flake("monitor exited unexpectedly:\n" + self.sut.log_tail(15))
 
     def overlay_path(self):
         return os.path.join(self.sut.pkg_dir, sut.OVERLAY_NAME)
@@ -416,15 +426,17 @@ class Runner:
         monitor.log's size where the scenario's log starts (None when
         nothing changed)."""
         overlay = os.path.exists(self.overlay_path())
-        same = self.sut.alive() and self.sut.gateway \
+        same = (
+            self.sut.alive()
+            and self.sut.gateway
             and self.sut.config == self.sut.effective_config(cfg)
+        )
         if same and not overlay:
             return None
         if same:
             mark = self.sut.log_size()
             os.unlink(self.overlay_path())
-            if self._wait_reload(mark, SETTINGS_TIMEOUT,
-                                 "clearing config.discord.yaml"):
+            if self._wait_reload(mark, SETTINGS_TIMEOUT, "clearing config.discord.yaml"):
                 log("cleared config.discord.yaml (live reload)")
                 return self.sut.log_size()
             log("no reload after clearing config.discord.yaml: restarting")
@@ -435,8 +447,7 @@ class Runner:
             os.unlink(self.overlay_path())
         except FileNotFoundError:
             pass
-        mark = self.sut.log_size() if hasattr(self.sut, "log_size") \
-            else None
+        mark = self.sut.log_size() if hasattr(self.sut, "log_size") else None
         self.sut.start(gateway=True, config=cfg)
         self.starts += 1
         self.sut.wait_ready(READY_TIMEOUT)
@@ -445,8 +456,9 @@ class Runner:
 
     def run(self, sc, channel_id):
         """Play one scenario; returns its transcript."""
-        cfg = sut.scenario_config(self.base_cfg, sc, self.ids["A"],
-                                  self.ids["B"], channel_id=channel_id)
+        cfg = sut.scenario_config(
+            self.base_cfg, sc, self.ids["A"], self.ids["B"], channel_id=channel_id
+        )
         # The scenario's log starts just before its config (re)start, so
         # it includes what the config prints at startup and nothing the
         # previous process wrote; with no restart, it starts now.
@@ -469,17 +481,24 @@ class Runner:
         self.check_alive()
         self.sleep(float((sc.get("expect") or {}).get("settle", 0) or 0))
         msgs = self.scenario_history(channel_id)
-        return build_transcript(sc, channel_id, started_at, self.ids,
-                                labels, state["converse_turns"], msgs,
-                                self.sut, log_mark=log_mark,
-                                threads=self.threads,
-                                monitor_restarts=self.starts)
+        return build_transcript(
+            sc,
+            channel_id,
+            started_at,
+            self.ids,
+            labels,
+            state["converse_turns"],
+            msgs,
+            self.sut,
+            log_mark=log_mark,
+            threads=self.threads,
+            monitor_restarts=self.starts,
+        )
 
     def step(self, step, channel_id, labels, state, index):
         kind, arg = next(iter(step.items()))
         if kind == "send":
-            self.send(arg, channel_id, labels, state.get("senders"),
-                      state.get("posted_in"))
+            self.send(arg, channel_id, labels, state.get("senders"), state.get("posted_in"))
         elif kind == "wait":
             self.sleep(float(arg))
         elif kind == "wait_for":
@@ -489,8 +508,9 @@ class Runner:
         elif kind == "converse":
             state["converse_turns"] = self.converse(arg, channel_id)
         elif kind == "delete":
-            self.delete(arg, channel_id, labels, state.get("senders") or {},
-                        state.get("posted_in") or {})
+            self.delete(
+                arg, channel_id, labels, state.get("senders") or {}, state.get("posted_in") or {}
+            )
         elif kind == "thread":
             self.thread(arg, channel_id, labels)
         elif kind == "settings":
@@ -521,23 +541,26 @@ class Runner:
         files = None
         if arg.get("attach"):
             files = [fixture_path(arg["attach"])]
-        target = self._thread_id(arg["in"]) if arg.get("in") \
-            else channel_id
+        target = self._thread_id(arg["in"]) if arg.get("in") else channel_id
         if arg.get("typing"):
             # Like a person writing the next line: the SUT keeps a burst
             # open while its author types, however long Discord takes to
             # deliver the post itself.
             bot.typing(target)
         try:
-            msg = bot.send(target, text,
-                           reply_to=self._reply_target(arg.get("reply_to"),
-                                                       target, labels),
-                           files=files)
+            msg = bot.send(
+                target,
+                text,
+                reply_to=self._reply_target(arg.get("reply_to"), target, labels),
+                files=files,
+            )
         except discord_rest.DiscordError as e:
             if arg.get("in") and e.status == 403:
-                raise Flake(missing_thread_permission(
-                    arg["as"], "Send Messages in Threads",
-                    f"posting in thread {arg['in']!r}")) from None
+                raise Flake(
+                    missing_thread_permission(
+                        arg["as"], "Send Messages in Threads", f"posting in thread {arg['in']!r}"
+                    )
+                ) from None
             raise
         if arg.get("label"):
             labels[arg["label"]] = msg["id"]
@@ -554,7 +577,8 @@ class Runner:
         if label not in labels:
             raise ValueError(f"delete: unknown label {label!r}")
         self.drivers[senders.get(label, "a")].delete_message(
-            (posted_in or {}).get(label, channel_id), labels[label])
+            (posted_in or {}).get(label, channel_id), labels[label]
+        )
 
     def thread(self, arg, channel_id, labels):
         """A driver (default a) starts a public thread on a labelled
@@ -564,13 +588,14 @@ class Runner:
         if src not in labels:
             raise ValueError(f"thread: unknown label {src!r}")
         try:
-            th = self.drivers[who].start_thread(channel_id, labels[src],
-                                                arg["name"])
+            th = self.drivers[who].start_thread(channel_id, labels[src], arg["name"])
         except discord_rest.DiscordError as e:
             if e.status == 403:
-                raise Flake(missing_thread_permission(
-                    who, "Create Public Threads",
-                    f"starting a thread on {src!r}")) from None
+                raise Flake(
+                    missing_thread_permission(
+                        who, "Create Public Threads", f"starting a thread on {src!r}"
+                    )
+                ) from None
             raise
         self.threads[arg["label"]] = th["id"]
         return th
@@ -583,10 +608,8 @@ class Runner:
         if self._ms is None:
             path = os.path.join(self.sut.pkg_dir, "src/muse_discord/muse_settings.py")
             if not os.path.isfile(path):
-                raise ValueError("settings step: the tree under test has "
-                                 "no muse_settings.py")
-            spec = importlib.util.spec_from_file_location(
-                "_e2e_sut_muse_settings", path)
+                raise ValueError("settings step: the tree under test has no muse_settings.py")
+            spec = importlib.util.spec_from_file_location("_e2e_sut_muse_settings", path)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             self._ms = mod
@@ -598,8 +621,7 @@ class Runner:
             return (scope,)
         gid = sut.guild_of(self.base_cfg)
         if not gid:
-            raise ValueError("settings step: the base config names no "
-                             "test server")
+            raise ValueError("settings step: the base config names no test server")
         if scope == "server":
             return ("servers", gid)
         if scope == "channel":
@@ -636,9 +658,7 @@ class Runner:
                 return False
             what = f"undo {key}"
         log(f"settings: {what}")
-        return self._wait_reload(mark, float(arg.get("timeout",
-                                                     SETTINGS_TIMEOUT)),
-                                 what)
+        return self._wait_reload(mark, float(arg.get("timeout", SETTINGS_TIMEOUT)), what)
 
     def _wait_reload(self, mark, timeout, what):
         deadline = self.clock() + timeout
@@ -647,14 +667,14 @@ class Runner:
             if RELOADED_MARKER in text:
                 return True
             if RELOAD_FAILED_MARKER in text:
-                note = (f"settings {what}: the monitor rejected the change "
-                        f"({RELOAD_FAILED_MARKER})")
+                note = f"settings {what}: the monitor rejected the change ({RELOAD_FAILED_MARKER})"
                 log(note)
                 self.notes.append(note)
                 return False
             if self.clock() >= deadline:
-                note = (f"settings {what}: no \"{RELOADED_MARKER}\" in "
-                        f"monitor.log after {timeout:.0f}s")
+                note = (
+                    f'settings {what}: no "{RELOADED_MARKER}" in monitor.log after {timeout:.0f}s'
+                )
                 log(note)
                 self.notes.append(note)
                 return False
@@ -667,11 +687,11 @@ class Runner:
         while True:
             if "sut_messages" in arg:
                 # The channel and every thread the scenario started.
-                done = len(self.sut_messages(channel_id, threads=True)) \
-                    >= int(arg["sut_messages"])
+                done = len(self.sut_messages(channel_id, threads=True)) >= int(arg["sut_messages"])
             elif arg.get("outbox_processing"):
-                done = os.path.exists(os.path.join(
-                    self.sut.pkg_dir, "reply_outbox.processing.json"))
+                done = os.path.exists(
+                    os.path.join(self.sut.pkg_dir, "reply_outbox.processing.json")
+                )
             else:
                 raise ValueError(f"wait_for: nothing to wait for: {arg}")
             if done:
@@ -714,18 +734,18 @@ class Runner:
         # SUT messages a driver already spoke after are old turns; one
         # still unanswered (the reply to the opening line) is turn 1.
         hist = self.history(channel_id)
-        last_other = max((i for i, m in enumerate(hist)
-                          if (m.get("author") or {}).get("id")
-                          != self.ids["SUT"]), default=-1)
-        seen = {m["id"] for m in hist[:last_other + 1]}
+        last_other = max(
+            (i for i, m in enumerate(hist) if (m.get("author") or {}).get("id") != self.ids["SUT"]),
+            default=-1,
+        )
+        seen = {m["id"] for m in hist[: last_other + 1]}
         turns = 0
         lines = list(arg.get("lines") or [])
         # One wait per line, plus one for the answer to the last line.
         for i in range(len(lines) + 1):
             new = self._wait_new_sut(channel_id, seen, per_turn)
             if not new:
-                self.notes.append(f"converse: the SUT went quiet after "
-                                  f"{turns} turn(s)")
+                self.notes.append(f"converse: the SUT went quiet after {turns} turn(s)")
                 break
             turns += 1
             seen.update(m["id"] for m in new)
@@ -737,16 +757,14 @@ class Runner:
     def _wait_new_sut(self, channel_id, seen, timeout):
         deadline = self.clock() + timeout
         while True:
-            new = [m for m in self.sut_messages(channel_id)
-                   if m["id"] not in seen]
+            new = [m for m in self.sut_messages(channel_id) if m["id"] not in seen]
             if new:
                 # A multi-part reply arrives over several seconds (typing
                 # beats between parts): the turn ends once no further
                 # part has come for CONVERSE_SETTLE_SECS.
                 for _ in range(10):
                     self.sleep(CONVERSE_SETTLE_SECS)
-                    more = [m for m in self.sut_messages(channel_id)
-                            if m["id"] not in seen]
+                    more = [m for m in self.sut_messages(channel_id) if m["id"] not in seen]
                     if len(more) == len(new):
                         break
                     new = more
@@ -759,35 +777,39 @@ class Runner:
 
 # --- run modes ---------------------------------------------------------
 
+
 def select(scenarios, wanted):
     if not wanted:
         return scenarios
     by_id = {s["id"]: s for s in scenarios}
     unknown = [w for w in wanted if w not in by_id]
     if unknown:
-        raise scenario.ScenarioError(
-            f"unknown scenario id(s) for this tier: {', '.join(unknown)}")
+        raise scenario.ScenarioError(f"unknown scenario id(s) for this tier: {', '.join(unknown)}")
     return [by_id[w] for w in wanted]
 
 
 def dry_run(args, scenarios):
     cfg = sut.scenario_config(
         sut.base_config(SAMPLE_GUILD, SAMPLE_IDS["A"], SAMPLE_IDS["B"]),
-        {}, SAMPLE_IDS["A"], SAMPLE_IDS["B"])
+        {},
+        SAMPLE_IDS["A"],
+        SAMPLE_IDS["B"],
+    )
     import yaml
-    print("# Sample SUT config (ids are placeholders; sut.py also sets "
-          "token_from, persona, presence, updates and "
-          "rest_poll_seconds):")
+
+    print(
+        "# Sample SUT config (ids are placeholders; sut.py also sets "
+        "token_from, persona, presence, updates and "
+        "rest_poll_seconds):"
+    )
     print(yaml.safe_dump(cfg, sort_keys=False).rstrip())
     print()
-    print(f"# Plan: tier {args.tier}, worker {args.worker}, "
-          f"{len(scenarios)} scenario(s)")
+    print(f"# Plan: tier {args.tier}, worker {args.worker}, {len(scenarios)} scenario(s)")
     for sc in scenarios:
         steps = sc.get("steps") or []
         kinds = [describe_step(s) for s in steps]
         expect = (sc.get("expect") or {}).get("checks") or []
-        names = [next(iter(c)) if isinstance(c, dict) else str(c)
-                 for c in expect]
+        names = [next(iter(c)) if isinstance(c, dict) else str(c) for c in expect]
         extra = []
         if sc.get("config"):
             extra.append("config overrides (monitor restart)")
@@ -796,8 +818,7 @@ def dry_run(args, scenarios):
         print(f"- {sc['id']} (tier {sc.get('tier')}): {sc.get('title')}")
         print(f"    channel: {channel_name('<run>', sc['id'])}")
         print(f"    steps: {len(steps)} ({', '.join(kinds)})")
-        print(f"    checks: {', '.join(names) or 'none'}"
-              f"{'; judge' if sc.get('judge') else ''}")
+        print(f"    checks: {', '.join(names) or 'none'}{'; judge' if sc.get('judge') else ''}")
         if extra:
             print(f"    {'; '.join(extra)}")
     return 0
@@ -812,14 +833,12 @@ def describe_step(step):
     if kind == "send" and arg.get("in"):
         return f"send in {arg['in']}"
     if kind == "thread":
-        return (f"thread {arg.get('label')} on {arg.get('from')} "
-                f"(as {arg.get('as', 'a')})")
+        return f"thread {arg.get('label')} on {arg.get('from')} (as {arg.get('as', 'a')})"
     if kind == "settings":
         if "undo" in arg:
             return f"settings undo @{arg['undo']}"
         if "set" in arg:
-            return (f"settings set {arg['set']}={arg.get('value')!r} "
-                    f"@{arg.get('scope')}")
+            return f"settings set {arg['set']}={arg.get('value')!r} @{arg.get('scope')}"
         if "reset" in arg:
             return f"settings reset {arg['reset']} @{arg.get('scope')}"
     return kind
@@ -837,10 +856,13 @@ def run_tag(tree):
             tag += f"-{os.environ['GITHUB_RUN_ATTEMPT']}"
         return tag
     try:
-        sha = subprocess.run(["git", "-C", tree, "rev-parse", "--short",
-                              "HEAD"], capture_output=True, text=True,
-                             timeout=10).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
+        sha = subprocess.run(
+            ["git", "-C", tree, "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+    except OSError, subprocess.SubprocessError:
         sha = ""
     return sha or time.strftime("%m%d%H%M%S")
 
@@ -862,17 +884,23 @@ def cleanup_stale_channels(bot, guild_id):
 
 def start_worker(kind, pkg_dir, log_path):
     script = os.path.join(E2E_DIR, f"{kind}_worker.py")
-    env = {k: v for k, v in os.environ.items()
-           if k not in ("E2E_SUT_TOKEN", "E2E_DRIVER_A_TOKEN",
-                        "E2E_DRIVER_B_TOKEN")}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in ("E2E_SUT_TOKEN", "E2E_DRIVER_A_TOKEN", "E2E_DRIVER_B_TOKEN")
+    }
     if kind != "claude":
         env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
     f = open(log_path, "a")
     try:
-        return subprocess.Popen([sys.executable, script, "--pkg", pkg_dir],
-                                stdout=f, stderr=subprocess.STDOUT,
-                                stdin=subprocess.DEVNULL, env=env,
-                                start_new_session=True)
+        return subprocess.Popen(
+            [sys.executable, script, "--pkg", pkg_dir],
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            env=env,
+            start_new_session=True,
+        )
     finally:
         f.close()
 
@@ -883,7 +911,7 @@ def stop_worker(proc):
     try:
         os.killpg(proc.pid, signal.SIGTERM)
         proc.wait(timeout=20)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
+    except ProcessLookupError, subprocess.TimeoutExpired:
         try:
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
@@ -894,9 +922,11 @@ def copy_logs(run_dir, out_dir):
     """Redacted copies of monitor.log and worker.log into out/logs."""
     dest = os.path.join(out_dir, "logs")
     os.makedirs(dest, exist_ok=True)
-    for src in (os.path.join(run_dir, "pkg", "monitor.log"),
-                os.path.join(run_dir, "pkg", "claude_worker.log"),
-                os.path.join(run_dir, "worker.log")):
+    for src in (
+        os.path.join(run_dir, "pkg", "monitor.log"),
+        os.path.join(run_dir, "pkg", "claude_worker.log"),
+        os.path.join(run_dir, "worker.log"),
+    ):
         try:
             with open(src, errors="replace") as f:
                 text = f.read()
@@ -909,9 +939,16 @@ def copy_logs(run_dir, out_dir):
 def run_one(runner, sc, channel_id, out_dir, use_judge):
     """Play, record, check, judge one scenario; returns its result."""
     t0 = time.time()
-    result = {"scenario": sc["id"], "tier": int(sc.get("tier", 1)),
-              "status": "fail", "checks": [], "judge": None,
-              "duration": 0.0, "error": None, "notes": []}
+    result = {
+        "scenario": sc["id"],
+        "tier": int(sc.get("tier", 1)),
+        "status": "fail",
+        "checks": [],
+        "judge": None,
+        "duration": 0.0,
+        "error": None,
+        "notes": [],
+    }
     transcript = None
     try:
         transcript = runner.run(sc, channel_id)
@@ -925,17 +962,14 @@ def run_one(runner, sc, channel_id, out_dir, use_judge):
         else:
             result.update(status="fail", error=f"Discord: {e}")
     except Exception as e:
-        result.update(status="fail",
-                      error=f"harness error: {type(e).__name__}: {e}")
+        result.update(status="fail", error=f"harness error: {type(e).__name__}: {e}")
     if transcript is not None:
         transcript = redact(transcript)
-        write_json(os.path.join(out_dir, "transcripts", f"{sc['id']}.json"),
-                   transcript)
+        write_json(os.path.join(out_dir, "transcripts", f"{sc['id']}.json"), transcript)
         result["checks"] = checks.evaluate(sc, transcript)
         if use_judge and int(sc.get("tier", 1)) == 2:
             result["judge"] = judge.judge(sc, transcript)
-        result["status"] = scenario_status(sc, result["checks"],
-                                           result["judge"])
+        result["status"] = scenario_status(sc, result["checks"], result["judge"])
     result["notes"] = list(runner.notes)
     result["duration"] = round(time.time() - t0, 1)
     return redact(result)
@@ -957,10 +991,13 @@ def live_run(args, scenarios):
             me_sut, me_a, me_b = sut_bot.me(), bot_a.me(), bot_b.me()
         except discord_rest.DiscordError as e:
             raise Flake(f"identity lookup failed: {e}")
-        ids = {"SUT": me_sut["id"], "A": me_a["id"], "B": me_b["id"],
-               "SUT_NAME": me_sut.get("username") or "muse"}
-        log(f"SUT {ids['SUT_NAME']} ({ids['SUT']}), A {ids['A']}, "
-            f"B {ids['B']}")
+        ids = {
+            "SUT": me_sut["id"],
+            "A": me_a["id"],
+            "B": me_b["id"],
+            "SUT_NAME": me_sut.get("username") or "muse",
+        }
+        log(f"SUT {ids['SUT_NAME']} ({ids['SUT']}), A {ids['A']}, B {ids['B']}")
         cleanup_stale_channels(bot_a, guild_id)
         tag = run_tag(args.tree)
         for sc in scenarios:
@@ -969,23 +1006,19 @@ def live_run(args, scenarios):
             log(f"created #{ch.get('name')} ({ch['id']})")
         base = sut.base_config(guild_id, ids["A"], ids["B"])
         first = sut.scenario_config(base, {}, ids["A"], ids["B"])
-        the_sut = sut.SUT(args.tree, run_dir, first,
-                          token=env["E2E_SUT_TOKEN"])
+        the_sut = sut.SUT(args.tree, run_dir, first, token=env["E2E_SUT_TOKEN"])
         the_sut.start(gateway=True)
-        worker = start_worker(args.worker, the_sut.pkg_dir,
-                              os.path.join(run_dir, "worker.log"))
+        worker = start_worker(args.worker, the_sut.pkg_dir, os.path.join(run_dir, "worker.log"))
         the_sut.wait_ready(READY_TIMEOUT)
         log("SUT ready")
         runner = Runner(the_sut, {"a": bot_a, "b": bot_b}, bot_a, ids, base)
         for i, sc in enumerate(scenarios):
             log(f"scenario {sc['id']} ({i + 1}/{len(scenarios)})")
-            r = run_one(runner, sc, channels[sc["id"]], args.out,
-                        use_judge=True)
+            r = run_one(runner, sc, channels[sc["id"]], args.out, use_judge=True)
             log(f"  -> {r['status']}{': ' + r['error'] if r['error'] else ''}")
             results.append(r)
             if worker.poll() is not None:
-                raise Flake(f"{args.worker} worker exited (code "
-                            f"{worker.returncode})")
+                raise Flake(f"{args.worker} worker exited (code {worker.returncode})")
     except (Flake, sut.SUTError, discord_rest.DiscordError) as e:
         log(f"infrastructure trouble: {e}")
         done = {r["scenario"] for r in results}
@@ -994,10 +1027,19 @@ def live_run(args, scenarios):
             status = "fail"  # e.g. 403 creating channels: setup is broken
         for sc in scenarios:
             if sc["id"] not in done:
-                results.append(redact({
-                    "scenario": sc["id"], "tier": int(sc.get("tier", 1)),
-                    "status": status, "checks": [], "judge": None,
-                    "duration": 0.0, "error": str(e)}))
+                results.append(
+                    redact(
+                        {
+                            "scenario": sc["id"],
+                            "tier": int(sc.get("tier", 1)),
+                            "status": status,
+                            "checks": [],
+                            "judge": None,
+                            "duration": 0.0,
+                            "error": str(e),
+                        }
+                    )
+                )
     finally:
         stop_worker(worker)
         if the_sut is not None:
@@ -1026,20 +1068,22 @@ def _on_sigterm(signum, frame):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(
-        description="muse-discord end-to-end test runner")
-    ap.add_argument("--tree", default=".",
-                    help="checkout whose monitor.py is under test")
+    ap = argparse.ArgumentParser(description="muse-discord end-to-end test runner")
+    ap.add_argument("--tree", default=".", help="checkout whose monitor.py is under test")
     ap.add_argument("--tier", type=int, choices=(1, 2), required=True)
-    ap.add_argument("--worker", choices=("fake", "claude"), default=None,
-                    help="default: fake for tier 1, claude for tier 2")
-    ap.add_argument("--scenario", action="append", default=[],
-                    help="run only this scenario id (repeatable)")
+    ap.add_argument(
+        "--worker",
+        choices=("fake", "claude"),
+        default=None,
+        help="default: fake for tier 1, claude for tier 2",
+    )
+    ap.add_argument(
+        "--scenario", action="append", default=[], help="run only this scenario id (repeatable)"
+    )
     ap.add_argument("--out", default="out")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--keep-channels", action="store_true")
-    ap.add_argument("--scenario-dir", default=SCENARIO_DIR,
-                    help=argparse.SUPPRESS)
+    ap.add_argument("--scenario-dir", default=SCENARIO_DIR, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     args.worker = args.worker or ("fake" if args.tier == 1 else "claude")
     args.out = os.path.abspath(args.out)
@@ -1050,29 +1094,31 @@ def main(argv=None):
         log(f"skipped: secrets missing ({', '.join(missing)})")
         os.makedirs(args.out, exist_ok=True)
         try:
-            listed = select(scenario.load_all(args.scenario_dir,
-                                              tier=args.tier),
-                            args.scenario)
+            listed = select(scenario.load_all(args.scenario_dir, tier=args.tier), args.scenario)
         except Exception:
             listed = []
-        results = [{"scenario": s["id"], "tier": int(s.get("tier", 1)),
-                    "status": "skip", "checks": [], "judge": None,
-                    "duration": 0.0, "error": "secrets missing"}
-                   for s in listed]
-        write_outputs(args.out, results, args.tier,
-                      note="skipped: secrets missing")
+        results = [
+            {
+                "scenario": s["id"],
+                "tier": int(s.get("tier", 1)),
+                "status": "skip",
+                "checks": [],
+                "judge": None,
+                "duration": 0.0,
+                "error": "secrets missing",
+            }
+            for s in listed
+        ]
+        write_outputs(args.out, results, args.tier, note="skipped: secrets missing")
         return 0
 
     try:
-        scenarios = select(scenario.load_all(args.scenario_dir,
-                                             tier=args.tier),
-                           args.scenario)
+        scenarios = select(scenario.load_all(args.scenario_dir, tier=args.tier), args.scenario)
     except scenario.ScenarioError as e:
         print(f"scenario error: {e}", file=sys.stderr)
         if not args.dry_run:
             os.makedirs(args.out, exist_ok=True)
-            write_outputs(args.out, [], args.tier,
-                          note=f"FAIL: scenarios do not load: {e}")
+            write_outputs(args.out, [], args.tier, note=f"FAIL: scenarios do not load: {e}")
         return 1
     if args.dry_run:
         return dry_run(args, scenarios)

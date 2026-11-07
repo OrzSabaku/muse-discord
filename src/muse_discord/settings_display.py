@@ -4,7 +4,11 @@ This module reads schema metadata and caller-supplied server information.
 It does not load, resolve or write configuration files.
 """
 
+from collections.abc import Callable, Mapping
+
 from muse_discord.settings_schema import CORE, TOP
+
+type Names = Mapping[str, str] | Callable[[str], str | None] | None
 
 
 # -- words --------------------------------------------------------------------
@@ -74,20 +78,22 @@ VALUE_LABELS = {
 CATEGORY_TYPE = 4
 
 
-def label(key):
+def label(key: str) -> str:
     """A setting's name in plain words (raw key only for unknown ones)."""
     return LABELS.get(key, key)
 
 
-def name_lookup(names):
+def name_lookup(names: Names) -> Callable[[str], str | None]:
     if names is None:
         return lambda _i: None
     if callable(names):
+
         def look(i):
             try:
                 return names(str(i))
             except Exception:
                 return None
+
         return look
     return lambda i: names.get(str(i))
 
@@ -96,8 +102,7 @@ def person_name(pid, look):
     pid = str(pid)
     if pid.startswith("role:"):
         n = look(pid[5:])
-        return (n if str(n).startswith("@") else f"@{n}") if n \
-            else f"role {pid[5:]}"
+        return (n if str(n).startswith("@") else f"@{n}") if n else f"role {pid[5:]}"
     n = look(pid)
     return (n if str(n).startswith("@") else f"@{n}") if n else f"user {pid}"
 
@@ -113,7 +118,7 @@ def people_text(ids, look):
 
 def clip(text, n):
     text = str(text)
-    return text if len(text) <= n else text[:n - 1] + "…"
+    return text if len(text) <= n else text[: n - 1] + "…"
 
 
 def value_label(key, value, names=None):
@@ -142,8 +147,8 @@ def value_label(key, value, names=None):
     return str(value)
 
 
-def place_name(place, names=None):
-    """"Defaults", "DMs", the server's name, "#channel"."""
+def place_name(place, names: Names = None) -> str:
+    """ "Defaults", "DMs", the server's name, "#channel"."""
     look = name_lookup(names)
     if place.kind == "defaults":
         return "Defaults"
@@ -159,15 +164,16 @@ def place_name(place, names=None):
 
 
 def change_location(place, key, names=None, path=None):
-    """"In #general", "In DMs", "By default", "By default in servers",
+    """ "In #general", "In DMs", "By default", "By default in servers",
     "Bot-wide": how a sentence about key at place starts."""
     if place.kind == "defaults":
         if key in TOP or path == ("top",):
             return "Bot-wide"
         if path == ("dms",) or (path is None and key == "who.dms_from"):
             return "In DMs"
-        if path == ("all_servers",) or (path is None and (
-                key == "who.replies" or key in ("media.enabled", "proactive.enabled"))):
+        if path == ("all_servers",) or (
+            path is None and (key == "who.replies" or key in ("media.enabled", "proactive.enabled"))
+        ):
             return "By default in servers"
         return "By default"
     return "In " + place_name(place, names)
@@ -181,8 +187,7 @@ def describe_change(place, key, old, new, names=None, path=None):
     head = f"{change_location(place, key, names, path)}, {label(key)}"
     if old == new:
         return f"{head} is already {value_label(key, new, names)}"
-    return (f"{head}: {value_label(key, old, names)} → "
-            f"{value_label(key, new, names)}")
+    return f"{head}: {value_label(key, old, names)} → {value_label(key, new, names)}"
 
 
 # -- info about servers (member counts, channel lists, names) ----------------
@@ -206,8 +211,7 @@ class ServerInfo:
             try:
                 if isinstance(src, dict):
                     raw = src.get("guilds") or []
-                elif src is not None and callable(getattr(src, "guilds",
-                                                          None)):
+                elif src is not None and callable(getattr(src, "guilds", None)):
                     raw = src.guilds() or []
             except Exception:
                 raw = []
@@ -232,13 +236,13 @@ class ServerInfo:
             try:
                 if isinstance(src, dict):
                     raw = (src.get("channels") or {}).get(gid)
-                elif src is not None and callable(getattr(src, "channels",
-                                                          None)):
+                elif src is not None and callable(getattr(src, "channels", None)):
                     raw = src.channels(gid)
             except Exception:
                 raw = None
-            self._chans[gid] = None if raw is None else [
-                c for c in raw if isinstance(c, dict) and c.get("id")]
+            self._chans[gid] = (
+                None if raw is None else [c for c in raw if isinstance(c, dict) and c.get("id")]
+            )
         return self._chans[gid]
 
     def channel(self, gid, cid):
@@ -250,8 +254,7 @@ class ServerInfo:
     def category_of(self, gid, cid):
         ch = self.channel(gid, cid)
         parent = str((ch or {}).get("parent_id") or "") or None
-        if parent and (self.channel(gid, parent) or {}).get(
-                "type") == CATEGORY_TYPE:
+        if parent and (self.channel(gid, parent) or {}).get("type") == CATEGORY_TYPE:
             return parent
         return None
 
