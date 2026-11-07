@@ -1,4 +1,4 @@
-"""Offline harness: load monitor.py / presence.py from $MUT_DIR with every
+"""Offline harness: load monitor.py from $MUT_DIR with every
 network call stubbed and every file redirected to a scratch dir. Used by
 the reliability, fastloop, updatedm and settingsplumb suites."""
 import importlib.util
@@ -6,9 +6,8 @@ import os
 import sys
 import time
 
-from common import FAKEWS, MUT_DIR, redirect_files, scratch
+from common import MUT_DIR, redirect_files, scratch
 
-sys.path.insert(0, FAKEWS)
 
 BOT = "999"
 OWNER = "111"
@@ -128,18 +127,6 @@ def load_monitor(tmp=None, cfg_extra=""):
     mod.BOT_ID = mod.BOT_USER_ID = BOT
     mod.BOT_NAME = "musebot"
     mod.TMP = tmp
-    return mod
-
-
-def load_presence(tmp=None):
-    tmp = tmp or scratch("muse-run-")
-    os.environ["MUSE_DISCORD_CONFIG"] = write_cfg(tmp)
-    sys.argv = ["x", "dummy-token"]
-    _seq[0] += 1
-    spec = importlib.util.spec_from_file_location(
-        f"mut_presence_{_seq[0]}", os.path.join(MUT_DIR, "src/muse_discord/presence.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
     return mod
 
 

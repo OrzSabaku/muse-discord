@@ -31,7 +31,6 @@ MUT_DIR = os.path.abspath(os.environ.get("MUT_DIR") or REPO)
 sys.path.insert(0, os.path.join(MUT_DIR, "src"))
 os.environ["MUT_DIR"] = MUT_DIR   # subprocesses see the same tree
 
-FAKEWS = os.path.join(LIB, "fakews")          # offline `websockets`
 FAKE_PROC = os.path.join(LIB, "fake_proc.py")  # monitor/presence stand-in
 HOOK_RUNTIME = os.path.join(LIB, "hook_runtime.sh")  # hatch hook stubs
 

@@ -18,7 +18,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 import monitor_harness as H  # noqa: E402
-from common import (FAKE_PROC, FAKEWS, HOOK_RUNTIME as RUNTIME,  # noqa: E402
+from common import (FAKE_PROC, HOOK_RUNTIME as RUNTIME,  # noqa: E402
                     MUT_DIR, copy_watchdog, scratch)
 
 V0 = "v1.0.0"
@@ -380,9 +380,7 @@ class Watchdog(unittest.TestCase):
                        check=True, capture_output=True)
         git(self.seed, "checkout", "-q", "-b", "main")
         copy_watchdog(self.seed)
-        for n in ("monitor.py", "presence.py"):
-            shutil.copy(FAKE_PROC,
-                        os.path.join(self.seed, "bin", n))
+        shutil.copy(FAKE_PROC, os.path.join(self.seed, "bin", "monitor.py"))
         with open(os.path.join(self.seed, ".gitignore"), "w") as f:
             f.write("config.yaml\nbot_token\n*.log\n*.log.1\n*.json\n"
                     "monitor.heartbeat\n.*.tmp\n")
@@ -426,7 +424,6 @@ updates:
 
     def run_wd(self):
         e = os.environ.copy()
-        e["PYTHONPATH"] = FAKEWS
         p = subprocess.run(
             ["unshare", "--user", "--map-root-user", "--pid", "--fork",
              "--mount-proc", "bash", "-c",

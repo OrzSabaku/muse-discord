@@ -1,6 +1,5 @@
 # Runtime dependencies for muse-discord.
 # Python 3.10+ required.
-websockets>=12.0
 PyYAML>=6.0
 pydantic>=2.10,<3
 discord.py>=2.6,<3
