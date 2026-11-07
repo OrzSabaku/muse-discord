@@ -380,8 +380,7 @@ leases=$(jq -cn --argjson ids "$queued" --argjson due "$due" \
         + ($due | map({key: .message_id, value: $now}) | from_entries))}')
 hook_state_set "$leases"
 
-# The persona text (persona in config.yaml, old layout persona.file,
-# relative to the package dir; default persona.md), so the worker need
+# The persona text (persona in config.yaml, relative to the package dir; default persona.md), so the worker need
 # not read it. null when unreadable: the worker then reads the file
 # itself.
 CONFIG="${MUSE_DISCORD_CONFIG:-$PKG_DIR/config.yaml}"
@@ -392,8 +391,6 @@ try:
     import yaml
     with open(sys.argv[1]) as f:
         name = (yaml.safe_load(f) or {}).get("persona")
-    if isinstance(name, dict):
-        name = name.get("file")
     if not isinstance(name, str):
         name = None
 except Exception:

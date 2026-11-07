@@ -70,15 +70,12 @@ def load_json(path, default):
 
 
 def driver_a_id(pkg):
-    """Driver A is the test config's (only) owner: `owners: [id]`, or
-    owners.user_ids in the old layout."""
+    """Driver A is the test config's (only) owner: `owners: [id]`."""
     try:
         import yaml
         with open(os.path.join(pkg, "config.yaml")) as f:
             cfg = yaml.safe_load(f) or {}
         owners = cfg.get("owners") or []
-        if isinstance(owners, dict):
-            owners = owners.get("user_ids") or []
         return str(owners[0]) if owners else None
     except Exception:
         return None

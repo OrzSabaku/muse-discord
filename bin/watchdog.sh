@@ -19,12 +19,11 @@
 #     finish; a hook run just leaves the work to the run in progress.
 #
 # Fully automatic: both processes read the bot token themselves from
-# where token_from in config.yaml points (old layout: bot.token_file /
-# bot.token_env): a token file (mode 600), or an environment variable,
+# where token_from in config.yaml points: a token file (mode 600), or an environment variable,
 # which must then be set in this script's own environment (the processes
 # inherit it). This script never uses the token value; it only checks
 # that one of the two is present. Settings are read through
-# muse_settings.py, so both config layouts work.
+# muse_settings.py.
 #
 # Output contract (for whatever scheduler runs this, e.g. cron):
 #   - "OK ..." lines for healthy or recovered state.
@@ -115,47 +114,15 @@ alive() { pgrep -f "^python3 (bin/)?$1" >/dev/null 2>&1; }
 get_state() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("last_alert",""))' "$STATE" 2>/dev/null || echo ""; }
 set_state() { python3 -c 'import json,sys;json.dump({"last_alert":sys.argv[1]},open(sys.argv[2],"w"))' "$1" "$STATE" 2>/dev/null; }
 
-# Read one setting (token_file, token_env, presence_enabled,
-# updates_notify) the way the monitor does: through muse_settings.py,
-# which reads both config layouts. Without that module next to this
-# script, straight from the old layout's keys. Prints the fallback
-# (arg 2) when it cannot tell (an invalid config: the monitor then
-# refuses to start and says why in monitor.log).
+# Read through the shared, validated settings; use the supplied fallback
+# when dependencies or configuration are unavailable during startup.
 setting() {
-  python3 - "$DIR" "$CONFIG" "$1" "$2" <<'PYEOF' 2>/dev/null || echo "$2"
+  python3 - "$DIR" "$CONFIG" "$1" <<'PYEOF' 2>/dev/null || echo "$2"
 import os
 import sys
-d, cfg, name, fallback = sys.argv[1:5]
-sys.path.insert(0, os.path.join(d, "src"))
-try:
-    from muse_discord import muse_settings
-except ImportError:
-    muse_settings = None
-try:
-    if muse_settings is not None:
-        st = muse_settings.load(cfg)
-        print(muse_settings.shell_value(st, name, d))
-        sys.exit(0)
-    import yaml
-    with open(cfg) as f:
-        cur = yaml.safe_load(f) or {}
-    old = {"token_file": "bot.token_file", "token_env": "bot.token_env",
-           "presence_enabled": "presence.enabled",
-           "updates_notify": "updates.check"}[name]
-    for part in old.split("."):
-        cur = (cur or {}).get(part)
-        if cur is None:
-            break
-    if cur is None:
-        print(fallback)
-    elif isinstance(cur, bool):
-        print("true" if cur else "false")
-    else:
-        print(cur)
-except SystemExit:
-    raise
-except Exception:
-    print(fallback)
+sys.path.insert(0, os.path.join(sys.argv[1], "src"))
+from muse_discord import muse_settings
+print(muse_settings.shell_value(muse_settings.load(sys.argv[2]), sys.argv[3], sys.argv[1]))
 PYEOF
 }
 

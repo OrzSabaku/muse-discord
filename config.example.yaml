@@ -48,9 +48,9 @@ everywhere:
     ignore: []            # people or roles it never answers (wins
                           # over allow)
     bots: when-addressed  # other bots and Muses: when-addressed or ignore
-    bot_exchange_limit: none
+    bot_exchange_limit: null
                           # most replies in a row to bots in one channel
-                          # before a person speaks: 1-50, or none
+                          # before a person speaks: 1-50, or null
   style:
     length: normal        # brief, normal, or detailed
     notes: ""             # house rules for your Muse, such as
@@ -77,18 +77,18 @@ everywhere:
                           # likely prompt-injection: hold-for-review (you
                           # decide) or ignore (dropped)
   limits:
-    per_day: none         # replies per day: a number, or none. A cap
+    per_day: null         # replies per day: a number, or null. A cap
                           # counts the place it is set: here, one
                           # total for all DMs and servers; under a
                           # server, that server only.
-    per_person_per_day: none
+    per_person_per_day: null
                           # replies per day to any one person. Owners are
                           # never limited.
   media:                  # images and video, when your Muse can make
                           # them: on by default, for owners only
     enabled: on
     who: owners           # owners, everyone, or a list like allow
-    per_day: none         # generated replies per day: a number, or none
+    per_day: null         # generated replies per day: a number, or null
   proactive:              # reaching out on its own, unprompted, now and
     enabled: off          # then: off by default. The Friends style turns
                           # it on for a server; under dms: below, on means
@@ -144,10 +144,10 @@ all_servers:
 #     channels:                   # a channel or a whole category
 #       "300000000000000002":
 #         name: "#announcements"
-#         replies: off
+#         replies: "off"
 #       "300000000000000003":     # a category: its channels follow it
 #         name: "Staff"
-#         replies: off
+#         replies: "off"
 #       "300000000000000004":
 #         name: "#muse-chat"
 #         notes: "Longer answers are welcome here."

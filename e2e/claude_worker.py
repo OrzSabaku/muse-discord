@@ -232,7 +232,7 @@ def open_items(pkg, answered=None):
 
 def persona_file(pkg, override=None):
     """The persona path: the override (the e2e test persona) when given,
-    else config.yaml `persona` (old layout: persona.file) relative to
+    else config.yaml `persona` relative to
     the package dir, default persona.md, the way the wake hook resolves
     it."""
     if override:
@@ -242,8 +242,6 @@ def persona_file(pkg, override=None):
         import yaml
         with open(os.path.join(pkg, "config.yaml")) as f:
             name = (yaml.safe_load(f) or {}).get("persona")
-        if isinstance(name, dict):
-            name = name.get("file")
         if not isinstance(name, str):
             name = None
     except Exception:

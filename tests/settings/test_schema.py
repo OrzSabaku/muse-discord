@@ -44,6 +44,12 @@ class Schema(unittest.TestCase):
             {"proactive": {"quiet_hours": " " * 25 + "off"}},
             {"proactive": {"timezone": "../UTC"}},
             {"proactive": {"frequncy": "often"}},
+            {"proactive": {"per_day": "35"}},
+            {"proactive": {"frequency": "OFTEN"}},
+            {"limits": {"per_day": "none"}},
+            {"who": {"dms_from": 123}},
+            {"who": {"ignore": "role:456"}},
+            {"privacy": {"suspicious": "answer"}},
             {"unknown": {}},
         ):
             with self.subTest(values=values), self.assertRaises(ValidationError):

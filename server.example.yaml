@@ -21,6 +21,6 @@ channels:
       enabled: off
   "300000000000000003":
     name: "#announcements"
-    replies: off
+    replies: "off"
     proactive:
       enabled: off

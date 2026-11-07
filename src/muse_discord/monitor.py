@@ -202,12 +202,6 @@ def _import_proactive():
 PRO = _import_proactive()
 # The raw file (test-only keys such as testing: live here).
 CFG = _S0.raw
-if _S0.notice:
-    print(_S0.notice, flush=True)
-if _S0.retired_notice:
-    print(_S0.retired_notice, flush=True)
-
-
 # The interaction thread (/settings) reads settings and writes the
 # overlay while the main loop reads them: the reload is serialized by
 # _SETTINGS_LOCK, and every read-modify-write of config.discord.yaml in
@@ -248,10 +242,6 @@ def _on_settings_changed(prev, cur):
     global OWNER_USER_IDS
     print("Settings reloaded (config.yaml or config.discord.yaml "
           "changed).", flush=True)
-    if cur.notice and not prev.notice:
-        print(cur.notice, flush=True)
-    if cur.retired_notice and not prev.retired_notice:
-        print(cur.retired_notice, flush=True)
     if sorted(cur.owners) != sorted(prev.owners):
         OWNER_USER_IDS = set(cur.owners)
         print(f"Owners are now: {', '.join(sorted(OWNER_USER_IDS)) or 'none'}",
@@ -288,18 +278,7 @@ def _cfg_num(section, key, default, cast, name, minimum=None,
 # --- Read once at import: identity and engine internals ---
 OWNER_USER_IDS = set(_S0.owners)
 GUILD_ALLOWLIST = set(_S0.guild_ids())
-_OLD_BEHAVIOR = (CFG.get("behavior") or {}) if _S0.layout == "old" else {}
-# An @mention and a reply to the bot always count; an old config could
-# narrow that (behavior.respond_to), and still does.
-RESPOND_TO = set(_S0.respond_to)
-if "name" in (_OLD_BEHAVIOR.get("respond_to") or []) \
-        or _OLD_BEHAVIOR.get("call_names"):
-    print("WARNING: the bare-name trigger was removed; \"name\" in "
-          "behavior.respond_to and behavior.call_names are ignored.",
-          flush=True)
-if _OLD_BEHAVIOR.get("max_bot_turns") is not None:
-    print("WARNING: behavior.max_bot_turns was removed and is ignored; "
-          "the worker ends bot conversations by judgment.", flush=True)
+RESPOND_TO = {"mention", "reply_to_bot"}
 # The conversational follow-up window (who.replies: conversational).
 FOLLOW_UP_WINDOW_SECS = 120
 # Test-only (the e2e harness's driver bots stand in for people): these
@@ -328,7 +307,7 @@ def is_bot_author(author):
 
 # 0 = no coalescing: every trigger is queued on the next tick.
 _ENGINE = _S0.engine or {}
-_ENG = "behavior" if _S0.layout == "old" else "engine"
+_ENG = "engine"
 COALESCE_SECS = _cfg_num(_ENGINE, "coalesce_seconds", 5, float,
                          f"{_ENG}.coalesce_seconds", minimum=0)
 # Bots running this package send long replies as 2-4 parts with a 2-4s
@@ -4609,16 +4588,11 @@ def note_media_sent(state, scope):
 def _media_counts(state):
     """Today's media.per_day counts in state ("media_sent": day,
     sent_today = the everywhere total, counts by server / dms), reset
-    each UTC day. Takes over the old media_generation plugin's counts
-    once, so a cap reached today stays reached across the update."""
+    each UTC day."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     g = state.get("media_sent")
     if not isinstance(g, dict):
-        old = (state.get("plugins") or {}).pop("media_generation", None)
-        g = old if isinstance(old, dict) else {}
-        if state.get("plugins") == {}:
-            state.pop("plugins")
-        state["media_sent"] = g
+        g = state["media_sent"] = {}
     if g.get("day") != today:
         g.clear()
         g.update(day=today, sent_today=0, counts={})

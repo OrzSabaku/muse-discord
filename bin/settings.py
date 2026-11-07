@@ -16,13 +16,6 @@
         (server admins' changes stay where they are).
         Rewrites config.yaml (its comments are lost) after saving a
         timestamped backup next to it. Does not prompt.
-    bin/settings.py migrate [--dry-run] [--state PATH]
-        Convert an old-layout config.yaml to the new layout. Resolves the
-        old and the new file for every known scope and refuses if any
-        behavior would change (except the announced new default,
-        who.replies: conversational). Saves a timestamped backup first;
-        comments in the old file are not carried over. Does not prompt.
-
 Changing settings (the muse.ai path; writes config.discord.yaml, as
 /settings does, and prints each change in plain words):
 
@@ -43,7 +36,7 @@ contains TEXT; --server only that server.
 PLACE is defaults (every server and DM without its own setting), dms,
 server:<server id> or channel:<server id>:<channel id>. KEY is a
 setting's key (who.replies) or its name ("When it answers"); VALUE a
-value or its name (when-addressed, "Only when @mentioned", none, on,
+value or its name (when-addressed, "Only when @mentioned", null, true,
 a list of user ids separated by commas). Undo reverts the newest
 change at that place with everything applied together with it (a
 server's Undo includes its channels). Risky changes (judged by what
@@ -138,7 +131,7 @@ def _info(cfg):
 
 
 def _fmt(spec, value):
-    v = MS.display(spec, value)
+    v = value
     if isinstance(v, str):
         return json.dumps(v) if v == "" or "\n" in v else v
     if isinstance(v, list):
@@ -150,11 +143,7 @@ def _fmt(spec, value):
 def cmd_validate(args):
     cfg = _cfg_path(args)
     st = MS.load(cfg)
-    print(f"{cfg}: valid ({st.layout} layout).")
-    if st.notice:
-        print(st.notice)
-        for line in st.mapping:
-            print(f"  {line}")
+    print(f"{cfg}: valid.")
     n = len(st.overlay)
     if n or st.retire:
         print(f"{MS.OVERLAY_NAME}: {n} Discord change(s) in effect.")
@@ -181,9 +170,7 @@ def cmd_show(args):
             print("--channel needs --server", file=sys.stderr)
             return 2
         scope = MS.Scope.everywhere()
-    print(f"Settings for: {scope.label()}"
-          + ("  (config.yaml uses the old layout)" if st.layout == "old"
-             else ""))
+    print(f"Settings for: {scope.label()}")
     if scope.kind == "everywhere":
         print(f"  owners                   {', '.join(st.owners) or '(none)'}")
         print(f"  persona                  {st.persona}")
@@ -238,26 +225,6 @@ def cmd_fold(args):
         print(f"  {k}")
     print("config.yaml was rewritten: its comments are gone (the backup "
           "has them).")
-    return 0
-
-
-def cmd_migrate(args):
-    cfg = _cfg_path(args)
-    bak, text, lines, notes = MS.migrate(cfg, args.state,
-                                         write=not args.dry_run)
-    print("What moved where:")
-    for line in lines or ["(nothing set; the defaults carry over)"]:
-        print(f"  {line}")
-    print("Behavior check: every known scope resolves the same, except:")
-    for n in notes:
-        print(f"  {n}")
-    if args.dry_run:
-        print("\nThe new config.yaml would be:\n")
-        print(text)
-        return 0
-    print(f"\nBacked up the old config.yaml to {bak}.")
-    print("Wrote config.yaml in the new layout. Comments in the old file "
-          "are not carried over (the backup has them).")
     return 0
 
 
@@ -463,11 +430,6 @@ def main(argv=None):
     fo = sub.add_parser("fold", help="copy Discord changes into "
                         "config.yaml")
     fo.add_argument("--dry-run", action="store_true")
-    mi = sub.add_parser("migrate", help="convert an old-layout config.yaml")
-    mi.add_argument("--dry-run", action="store_true")
-    mi.add_argument("--state", help="state.json (server names; default: "
-                    "next to config.yaml)")
-
     def changer(name, help_, *pos):
         p = sub.add_parser(name, help=help_)
         for a in pos:
@@ -508,7 +470,7 @@ def main(argv=None):
         return 2
     try:
         return {"validate": cmd_validate, "show": cmd_show,
-                "fold": cmd_fold, "migrate": cmd_migrate, "set": cmd_set,
+                "fold": cmd_fold, "set": cmd_set,
                 "reset": cmd_reset, "undo": cmd_undo, "preset": cmd_preset,
                 "pause": cmd_pause, "resume": cmd_resume,
                 "explain": cmd_explain, "places": cmd_places}[args.cmd](args)

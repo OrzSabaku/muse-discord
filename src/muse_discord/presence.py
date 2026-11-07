@@ -7,8 +7,7 @@ only an active gateway session does.
 
 - Identifies with intents=0 (no message events; detection happens in
   monitor.py, not here).
-- Shows ONE status from config (presence.status / presence.kind; old
-  layout presence.status_text / status_kind). There is deliberately no
+- Shows ONE status from config (presence.status / presence.kind). There is no
   rotation, scheduling, or profile/banner management.
 - Follows settings changes live: while connected it checks config.yaml
   and config.discord.yaml (the /settings overlay) every few seconds (a
@@ -27,7 +26,7 @@ only an active gateway session does.
   checks the same flag and won't try to restart it; turning it back on
   is the watchdog's job).
 
-Settings are read through muse_settings.py (both config layouts).
+Settings are read through muse_settings.py (the shared settings schema).
 Token resolution matches monitor.py: argv[1], else token_from in order
 (an env:NAME variable when set, a readable file). The token is never
 printed or written anywhere.

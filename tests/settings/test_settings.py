@@ -31,12 +31,12 @@ def read(path):
         return f.read()
 
 
-def load_text(text, overlay=None, legacy=False):
+def load_text(text, overlay=None):
     d = tmpdir("cfg_")
     cfg = write(os.path.join(d, "config.yaml"), text)
     if overlay is not None:
         write(os.path.join(d, "config.discord.yaml"), overlay)
-    return MS.load(cfg, legacy_defaults=legacy), cfg
+    return MS.load(cfg), cfg
 
 
 def error_of(text):
@@ -65,9 +65,12 @@ class Validation(unittest.TestCase):
             (f'servers:\n  "{G1}":\n    channels:\n      "{CH}":\n'
              "        privacy: {memory: nothing}\n", CH),
             ("everywhere:\n  who:\n    dms_from: anyone\n", "dms_from"),
-            ('servers:\n  "Muse Lounge":\n    who: {replies: off}\n',
+            ("""servers:
+  "Muse Lounge":
+    who: {replies: "off"}
+""",
              "Muse Lounge"),
-            ("everywhere:\n  who:\n    allow: [alice]\n", "alice"),
+            ("everywhere:\n  who:\n    allow: [alice]\n", "everywhere.who.allow"),
             ("everywhere:\n  limits:\n    per_day: -1\n", "per_day"),
             ("everywhere:\n  limits:\n    per_day: lots\n", "per_day"),
             ("everywhere:\n  who:\n    bot_exchange_limit: 0\n",
@@ -77,31 +80,37 @@ class Validation(unittest.TestCase):
             ("everywhere:\n  who:\n    repliez: off\n", "repliez"),
             ("everywhere:\n  media:\n    bogus: 1\n", "bogus"),
             ("everywhere:\n  plugins:\n    media:\n      bogus: 1\n",
-             "bogus"),
-            ("everywhere:\n  plugins:\n    nope: {enabled: on}\n", "nope"),
+             "plugins"),
+            ("everywhere:\n  plugins:\n    nope: {enabled: on}\n", "plugins"),
             ("colour: blue\n", "colour"),
             ("engine:\n  poll_secs: 3\n", "poll_secs"),
         ]
         for text, key in cases:
             with self.subTest(key):
                 self.assertIn(key, error_of(NEW_BASE + text))
-        # Two layouts mixed; a token pasted where its source belongs.
-        error_of("bot:\n  token_file: /x\neverywhere:\n  who: {}\n")
+        error_of('bot: {token_file: /x}\n')
+        error_of('plugins: {media_generation: {enabled: true}}\n')
         error_of("version: 1\ntoken_from: " + "A" * 60 + "\n")
 
     def test_defaults_and_yaml_booleans(self):
         st, _ = load_text("")
-        self.assertEqual(st.layout, "new")
         r = st.resolve(MS.Scope.dm())
         self.assertEqual(r["who.dms_from"], "owners")
         self.assertEqual(r["who.replies"], "conversational")
         self.assertEqual(st.token_sources(), [("file",
                                                MS.DEFAULT_TOKEN_FILE)])
         # YAML's off/on are booleans; the hidden testing block is kept.
-        st, _ = load_text(NEW_BASE + "testing:\n  treat_as_human: ['1']\n"
-                          "all_servers:\n  who:\n    replies: off\n"
-                          "everywhere:\n  abilities:\n    owner_commands: "
-                          "off\nupdates:\n  notify: off\n")
+        st, _ = load_text(NEW_BASE + """testing:
+  treat_as_human: ['1']
+all_servers:
+  who:
+    replies: "off"
+everywhere:
+  abilities:
+    owner_commands: off
+updates:
+  notify: off
+""")
         self.assertEqual(st.raw["testing"], {"treat_as_human": ["1"]})
         self.assertEqual(st.get("who.replies", S()), "off")
         self.assertIs(st.get("abilities.owner_commands", S()), False)
@@ -132,11 +141,11 @@ servers:
     style:
       notes: "S notes"
     limits:
-      per_day: none
+      per_day: null
     channels:
       "{CAT}":
         name: Staff
-        replies: off
+        replies: "off"
         notes: "Cat notes"
       "{CH}":
         notes: "C notes"
@@ -151,7 +160,7 @@ class ServerFiles(unittest.TestCase):
         root = os.path.join(os.path.dirname(cfg), "servers")
         os.makedirs(root)
         watcher = MS.Watcher(cfg)
-        path = write(os.path.join(root, G1 + ".yaml"), f'''name: Lounge
+        path = write(os.path.join(root, G1 + ".yaml"), f"""name: Lounge
 proactive:
   frequency: often
   enabled: on
@@ -161,8 +170,8 @@ channels:
     proactive:
       enabled: on
   "{CH2}":
-    replies: off
-''')
+    replies: "off"
+""")
         self.assertEqual(watcher.poll(), (True, None))
         st = watcher.current
         self.assertEqual(st.get("proactive.frequency", S()), "often")
@@ -222,7 +231,7 @@ class RemovedPlugins(unittest.TestCase):
 
     def test_custom_plugin_configuration_is_rejected(self):
         message = error_of(NEW_BASE + "everywhere:\n  plugins:\n    example: {enabled: on}\n")
-        self.assertIn("plugin support was removed", message)
+        self.assertIn("unknown section", message)
 
 
 class Resolution(unittest.TestCase):
@@ -262,8 +271,11 @@ class Resolution(unittest.TestCase):
                          ["everywhere", f"server:{G1}"])
         self.assertEqual(MS.Settings.counter_ids(MS.Scope.dm()),
                          ["everywhere", "dms"])
-        st, _ = load_text(NEW_BASE + "everywhere:\n  limits:\n    per_day: "
-                          "none\n    per_person_per_day: null\n")
+        st, _ = load_text(NEW_BASE + """everywhere:
+  limits:
+    per_day: null
+    per_person_per_day: null
+""")
         r = st.resolve(MS.Scope.everywhere())
         self.assertIsNone(r["limits.per_day"])
         self.assertIsNone(r["limits.per_person_per_day"])
@@ -313,7 +325,7 @@ class Overlay(unittest.TestCase):
         key = f'servers."{G1}".proactive.per_channel_per_day'
         MS.set_value(cfg, key, 30, OWNER)
         doc = MS._read_overlay_doc(MS.overlay_path_for(cfg))
-        self.assertEqual(doc["values"][key]["base"], "none")
+        self.assertIsNone(doc["values"][key]["base"])
         st = MS.load(cfg)
         self.assertEqual(st.retire, [])
         self.assertEqual(st.get("proactive.per_channel_per_day", S()), 30)
@@ -350,7 +362,7 @@ class Overlay(unittest.TestCase):
                          ('servers."Lounge".who.replies', "off")):
             with self.assertRaises(MS.SettingsError):
                 MS.set_value(cfg, key, val, OWNER)
-        MS.set_value(cfg, f'servers."{G1}".channels."{CH}".replies', False,
+        MS.set_value(cfg, f'servers."{G1}".channels."{CH}".replies', "off",
                      OWNER)
         st = MS.load(cfg)
         self.assertEqual(st.get("who.replies", S(ch=CH)), "off")
@@ -373,230 +385,6 @@ class Overlay(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Old layouts. Together the fixtures use every old key.
-_E2E_OLD = next((p for p in (os.path.join(MUT, "e2e", n)
-                              for n in ("config.legacy.yaml",
-                                        "config.test.yaml"))
-                 if os.path.exists(p)), None)
-OLD_FIXTURES = {
-    "minimal": f"""
-bot:
-  token_file: "~/.config/muse-discord/bot_token"
-owners:
-  user_ids: ["{OWNER}"]
-persona:
-  file: persona.md
-presence:
-  status_text: "Thinking about tea"
-""",
-    "community": f"""
-bot:
-  token_file: /srv/muse/token
-  guild_ids: ["{G1}", "{G2}"]
-owners:
-  user_ids: ["{OWNER}", "111000000000000002"]
-behavior:
-  respond_to: [mention, reply_to_bot]
-  active_guild_ids: ["{G1}"]
-  bots: direct
-  dm_policy: owner_only
-  coalesce_seconds: 3
-  max_reply_chars: 1500
-safety:
-  injection_quarantine: true
-  daily_reply_cap: null
-  per_user_daily_cap: 20
-engine:
-  rest_poll_seconds: 45
-  discovery_refresh_minutes: 20
-  sweep: {{every_cycles: 4, grace_seconds: 200, max_age_hours: 3,
-          max_recoveries: 1}}
-  backoff: {{initial_seconds: 30, max_seconds: 600}}
-presence:
-  enabled: true
-  status_text: ""
-  status_kind: watching
-updates:
-  check: true
-persona:
-  file: "personas/pip.md"
-plugins:
-  welcome:
-    enabled: true
-    channel:
-      default: system
-      per_guild: {{"{G1}": "{CH}", "{G2}": "intro"}}
-    prompt:
-      default: "Welcome {{user}} to {{server}}!"
-      per_guild: {{"{G1}": "Hi {{user}}, read the rules."}}
-    daily_cap: null
-    max_age_hours: 12
-    per_guild:
-      "{G1}": {{daily_cap: 5}}
-  media_generation:
-    enabled: true
-    allowed_user_ids: []
-    daily_cap: 4
-""",
-    "locked": f"""
-bot:
-  token_env: MUSE_TOKEN
-owners:
-  user_ids: ["{OWNER}"]
-behavior:
-  bots: "off"
-  dm_policy: "off"
-  max_bot_turns: 3
-safety:
-  daily_reply_cap: 0
-  per_user_daily_cap: 1
-presence:
-  enabled: false
-updates:
-  check: false
-plugins:
-  welcome:
-    enabled: false
-""",
-    "open": f"""
-bot:
-  token_file: /x/token
-  token_env: MUSE_TOKEN
-owners:
-  user_ids: ["{OWNER}"]
-behavior:
-  dm_policy: open
-  call_names: [Pip]
-safety:
-  injection_quarantine: false
-  daily_reply_cap: 300
-presence:
-  status_text: "on duty"
-  status_kind: custom
-plugins:
-  media_generation:
-    enabled: true
-    allowed_user_ids: ["{U1}"]
-    per_guild:
-      "{G2}": {{allowed_user_ids: ["{U2}"]}}
-      "Muse Lounge": {{daily_cap: 2}}
-testing:
-  treat_as_human: ["{U2}"]
-""",
-    # The e2e harness's old-layout config (config.legacy.yaml since the
-    # harness moved to the new layout; config.test.yaml before).
-    "e2e": open(_E2E_OLD).read()
-    .replace("{{TOKEN_FILE}}", "/tmp/t").replace("{{GUILD_ID}}", G1)
-    .replace("{{A_ID}}", OWNER).replace("{{B_ID}}", U1)
-    .replace("{{PERSONA_FILE}}", "p.md")
-    if _E2E_OLD else
-    "bot:\n  token_file: /tmp/t\n",
-}
-
-
-class OldLayout(unittest.TestCase):
-    def test_mapping_semantics(self):
-        for name, text in OLD_FIXTURES.items():
-            self.assertEqual(load_text(text)[0].layout, "old", name)
-        st, _ = load_text(OLD_FIXTURES["community"])
-        self.assertEqual(st.owners, [OWNER, "111000000000000002"])
-        self.assertEqual(st.persona, "personas/pip.md")
-        self.assertEqual(st.token_sources(), [("file", "/srv/muse/token")])
-        self.assertEqual(st.guild_ids(), [G1, G2])
-        self.assertEqual(st.engine["coalesce_seconds"], 3)
-        # The removed welcome plugin's block is ignored, never an error.
-        self.assertIsNone(st.spec("plugins.welcome.enabled"))
-        # media_generation (allowed_user_ids: [] = the owners, daily_cap)
-        # is media.* now, counted where it was.
-        self.assertTrue(st.get("media.enabled", S(G2)))
-        self.assertEqual(st.get("media.who", MS.Scope.dm()), "owners")
-        self.assertEqual(st.cap_layers("media.per_day", S()),
-                         [("everywhere", 4)])
-        self.assertEqual(st.cap_layers("limits.per_person_per_day", S()),
-                         [("everywhere", 20)])
-        st, _ = load_text(OLD_FIXTURES["locked"])
-        self.assertEqual(st.get("who.replies", MS.Scope.dm()), "off")
-        self.assertEqual(st.get("who.bots", S()), "ignore")
-        self.assertIs(st.presence_enabled, False)
-        self.assertIs(st.updates_notify, False)
-        self.assertEqual(st.token_sources(), [
-            ("env", "MUSE_TOKEN"), ("file", MS.DEFAULT_TOKEN_FILE)])
-        self.assertEqual(st.cap_layers("limits.per_day", S()),
-                         [("everywhere", 0)])
-        st, _ = load_text(OLD_FIXTURES["open"])
-        self.assertEqual(st.get("who.dms_from", MS.Scope.dm()), "anyone")
-        self.assertEqual(st.get("who.bots", MS.Scope.dm()), "ignore")
-        self.assertEqual(st.get("privacy.suspicious", S()), "answer")
-        self.assertEqual(st.presence_kind, "custom")
-        # per_guild keyed by a server NAME matches by name at runtime.
-        self.assertEqual(st.get("media.per_day", S(G1, "Muse Lounge")), 2)
-        self.assertEqual(st.get("media.who", S(G1)), [U1])
-        self.assertEqual(st.get("media.who", S(G2)), [U2])
-
-    def _migrate(self, name, known=None):
-        d = tmpdir("mig_")
-        cfg = write(os.path.join(d, "config.yaml"), OLD_FIXTURES[name])
-        if known:
-            write(os.path.join(d, "state.json"),
-                  json.dumps({"known_guilds": known}))
-        legacy = MS.load(cfg, legacy_defaults=True)
-        bak, text, lines, notes = MS.migrate(cfg)
-        return d, cfg, bak, legacy, lines, notes
-
-    def test_migrate_round_trip_identical(self):
-        known = {G1: "Muse Lounge", G2: "Other"}
-        for name in OLD_FIXTURES:
-            d, cfg, bak, legacy, lines, notes = self._migrate(name, known)
-            self.assertTrue(os.path.exists(bak), name)
-            self.assertEqual(read(bak), OLD_FIXTURES[name])
-            new = MS.load(cfg)
-            self.assertEqual(new.layout, "new", name)
-            self.assertEqual(MS.compare(legacy, new, known), [], name)
-            # The one announced difference, and nothing else.
-            if legacy.get("who.replies", S(G2)) != "off":
-                self.assertEqual(legacy.get("who.replies", S(G2)),
-                                 "when-addressed")
-                self.assertEqual(new.get("who.replies", S(G2)),
-                                 "conversational")
-            # Runtime of the old file == runtime of the converted file.
-            old_rt = MS.load(bak)
-            self.assertEqual(MS.compare(old_rt, new, known), [], name)
-
-    def test_migrate_refusals(self):
-        d = tmpdir("mig_")
-        cfg = write(os.path.join(d, "config.yaml"),
-                    "behavior:\n  respond_to: [mention]\n")
-        with self.assertRaises(MS.SettingsError):
-            MS.migrate(cfg)
-        cfg = write(os.path.join(d, "config.yaml"), OLD_FIXTURES["open"])
-        with self.assertRaises(MS.SettingsError):
-            MS.migrate(cfg)  # no state.json to resolve the name
-        self.assertEqual(read(cfg), OLD_FIXTURES["open"])
-        cfg = write(os.path.join(d, "config.yaml"), NEW_BASE)
-        with self.assertRaises(MS.SettingsError):
-            MS.migrate(cfg)
-        self.assertEqual(read(cfg), NEW_BASE)
-
-    def test_migrate_refuses_a_behavior_change(self):
-        d = tmpdir("mig_")
-        cfg = write(os.path.join(d, "config.yaml"), OLD_FIXTURES["minimal"])
-        real = MS.build_migrated
-
-        def broken(*a, **k):
-            text, lines, notes, st = real(*a, **k)
-            return (text + "dms:\n  who:\n    dms_from: anyone\n", lines,
-                    notes, st)
-        MS.build_migrated = broken
-        try:
-            with self.assertRaisesRegex(MS.SettingsError, "who.dms_from"):
-                MS.migrate(cfg)
-        finally:
-            MS.build_migrated = real
-        self.assertEqual(read(cfg), OLD_FIXTURES["minimal"])
-        self.assertEqual([f for f in os.listdir(d) if ".bak" in f], [])
-
-
-# ---------------------------------------------------------------------------
 def cli(*args, cfg):
     return subprocess.run([sys.executable, os.path.join(MUT, "bin",
                                                         "settings.py"),
@@ -605,7 +393,7 @@ def cli(*args, cfg):
 
 
 class CLI(unittest.TestCase):
-    def test_validate_fold_migrate(self):
+    def test_validate_and_fold(self):
         st, cfg = load_text(RES)
         self.assertEqual(cli("validate", cfg=cfg).returncode, 0)
         self.assertEqual(cli("show", "--server", G1, "--channel", CH,
@@ -621,13 +409,6 @@ class CLI(unittest.TestCase):
         write(cfg, NEW_BASE + "everywhere:\n  style:\n    length: x\n")
         r = cli("validate", cfg=cfg)
         self.assertEqual(r.returncode, 1)
-        write(cfg, OLD_FIXTURES["minimal"])
-        r = cli("migrate", "--dry-run", cfg=cfg)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(read(cfg), OLD_FIXTURES["minimal"])
-        r = cli("migrate", cfg=cfg)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(MS.load(cfg).layout, "new")
 
     def test_shell_shim(self):
         st, cfg = load_text(NEW_BASE + "presence:\n  enabled: off\n"
@@ -648,15 +429,19 @@ class CLI(unittest.TestCase):
             if with_module:
                 shutil.copytree(os.path.join(MUT, "src"), os.path.join(d, "src"))
             c = write(os.path.join(d, "config.yaml"),
-                      "bot:\n  token_file: /a/b\npresence:\n  enabled: "
-                      "false\nupdates:\n  check: false\n")
+                      """token_from: /a/b
+presence:
+  enabled: false
+updates:
+  notify: false
+""")
             out = subprocess.run(
                 ["bash", "-c", fn + f'\nDIR={d}; CONFIG={c}\n'
                  'echo "$(setting token_file x) $(setting presence_enabled '
                  'true) $(setting updates_notify true) '
                  '[$(setting token_env "")]"'],
                 capture_output=True, text=True).stdout.strip()
-            self.assertEqual(out, "/a/b false false []", with_module)
+            self.assertEqual(out, "/a/b false false []" if with_module else "x true true []", with_module)
 
 # ---------------------------------------------------------------------------
 MON = NEW_BASE + f"""everywhere:
@@ -719,15 +504,21 @@ class LiveReload(MonitorBase):
     def test_reload_without_restart(self):
         m = self.m
         self.assertEqual(self.kind(gmsg(U1, mention=True)), "mention")
-        self.rewrite(NEW_BASE + "all_servers:\n  who:\n    replies: off\n")
+        self.rewrite(NEW_BASE + """all_servers:
+  who:
+    replies: "off"
+""")
         self.assertIsNone(self.kind(gmsg(U1, mention=True)))
         # An invalid edit keeps the last good settings, logged once.
         self.rewrite(NEW_BASE + "all_servers:\n  who:\n    replies: maybe\n")
         with quiet():
             self.assertIsNone(m.trigger_kind(gmsg(U1, mention=True), G1))
         # The overlay is watched too.
-        self.rewrite(NEW_BASE + f'servers:\n  "{G1}":\n    who:\n'
-                     "      replies: off\n")
+        self.rewrite(NEW_BASE + f"""servers:
+  "{G1}":
+    who:
+      replies: "off"
+""")
         MS.set_value(m.cfg_path, f'servers."{G1}".who.replies',
                      "when-addressed", OWNER)
         bump(m._SETTINGS.overlay_path)
@@ -952,7 +743,10 @@ class Who(MonitorBase):
         self.rewrite(MON + "dms:\n  who:\n    dms_from: anyone\n"
                      "    bots: ignore\n")
         self.assertEqual(drain(dmsg(OTHER_BOT, "beep", bot=True)), [])
-        self.rewrite(MON + "dms:\n  who:\n    replies: off\n")
+        self.rewrite(MON + """dms:
+  who:
+    replies: "off"
+""")
         self.assertEqual(drain(dmsg(OWNER, "hi")), [])
         self.assertEqual(m.dm_poll_user_ids(), [])
 
@@ -978,8 +772,14 @@ class Who(MonitorBase):
         self.assertEqual(k(gmsg(U1, mention=True, channel=CH_G2, guild=G2,
                                 roles=[]), G2), "mention")
         # who.bots: ignore; who.replies: off in one server.
-        self.rewrite(NEW_BASE + "everywhere:\n  who:\n    bots: ignore\n"
-                     f'servers:\n  "{G2}":\n    who:\n      replies: off\n')
+        self.rewrite(NEW_BASE + f"""everywhere:
+  who:
+    bots: ignore
+servers:
+  "{G2}":
+    who:
+      replies: "off"
+""")
         self.assertIsNone(self.kind(gmsg(OTHER_BOT, mention=True, bot=True)))
         self.assertEqual(self.kind(gmsg(U1, mention=True)), "mention")
         self.assertIsNone(self.kind(gmsg(U1, mention=True, channel=CH_G2,
@@ -1033,8 +833,8 @@ servers:
             self.assertTrue(ok(gmsg(OWNER, mention=True)))
         self.assertEqual(self.st["rate"]["day_count"], 3)
         # Per person, in DMs only.
-        self.rewrite(self.cfg.replace("per_day: 3", "per_day: none")
-                     .replace("per_day: 1", "per_day: none")
+        self.rewrite(self.cfg.replace("per_day: 3", """per_day: null""")
+                     .replace("per_day: 1", """per_day: null""")
                      + "dms:\n  who:\n    dms_from: anyone\n"
                      "  limits:\n    per_person_per_day: 1\n")
         ok = lambda *a, **k: self.enqueue(*a, **k)[0]  # noqa: E731
@@ -1173,17 +973,6 @@ servers:
   "{G1}":
     media:
       who: everyone
-""", "plugins.media": NEW_BASE + f"""everywhere:
-  plugins:
-    media:
-      enabled: on
-      who: ["role:{ROLE}"]
-      per_day: 1
-servers:
-  "{G1}":
-    plugins:
-      media:
-        who: everyone
 """}
 
     def test_media_per_scope_both_spellings(self):
@@ -1209,96 +998,10 @@ servers:
                                      channel=CH_G2, guild=G2), guild=G2)
         self.assertFalse(item["may_generate"])  # everywhere per_day: 1
 
-    def test_old_plugin_count_carries_over(self):
-        """A cap the media_generation plugin counted today stays reached
-        after the update (its state moves to the core's)."""
-        self.m = load_monitor(self.SPELLINGS["media"])
-        self.st = state(self.m)
-        today = time.strftime("%Y-%m-%d", time.gmtime())
-        self.st["plugins"] = {"media_generation": {
-            "day": today, "sent_today": 1, "counts": {}}}
-        ok, item = self.enqueue(gmsg(U1, "draw", mention=True))
-        self.assertFalse(item["may_generate"])
 
 
 
 
-class MovedSettings(unittest.TestCase):
-    """An install from before media was core: config.yaml under
-    plugins.media / plugins.welcome, config.discord.yaml (values and
-    history) written by the old code under plugins.media.*."""
-    CFG = NEW_BASE + f"""everywhere:
-  plugins:
-    media: {{enabled: on, per_day: 5}}
-    welcome: {{enabled: on, channel: system, notes: hi}}
-servers:
-  "{G1}":
-    channels:
-      "{CH}":
-        plugins:
-          welcome: {{enabled: on}}
-"""
-    OVERLAY = f"""version: 1
-values:
-  servers."{G1}".plugins.media.who:
-    value: everyone
-    base: null
-    by: '{OWNER}'
-    at: '2026-10-01T00:00:00Z'
-  everywhere.plugins.media.per_day:
-    value: 3
-    base: 5
-    by: '{OWNER}'
-    at: '2026-10-01T00:00:00Z'
-  servers."{G1}".channels."{CH}".plugins.media.enabled:
-    value: 'off'
-    base: null
-    by: '{OWNER}'
-    at: '2026-10-01T00:00:00Z'
-  servers."{G1}".plugins.welcome.channel:
-    value: '{CH2}'
-    base: null
-    by: '{OWNER}'
-    at: '2026-10-01T00:00:00Z'
-history:
-- {{key: 'servers."{G1}".plugins.media.who', from: inherit, to: everyone,
-   by: '{OWNER}', at: '2026-10-01T00:00:00Z'}}
-- {{key: everywhere.plugins.media.per_day, from: 5, to: 3, by: '{OWNER}',
-   at: '2026-10-01T00:00:00Z'}}
-- {{key: 'servers."{G1}".channels."{CH}".plugins.media.enabled',
-   from: inherit, to: 'off', by: '{OWNER}', at: '2026-10-01T00:00:00Z'}}
-- {{key: 'servers."{G1}".plugins.welcome.channel', from: inherit,
-   to: '{CH2}', by: '{OWNER}', at: '2026-10-01T00:00:00Z'}}
-"""
-
-    def test_old_keys_load_and_undo(self):
-        st, cfg = load_text(self.CFG, self.OVERLAY)
-        self.assertEqual(st.retire, [])  # no owner notices either
-        self.assertEqual(st.get("media.per_day", MS.Scope.everywhere()), 3)
-        self.assertEqual(st.get("media.who", S(G2)), "owners")
-        self.assertEqual(st.get("media.who", S()), "everyone")
-        self.assertTrue(st.get("media.enabled", S(ch=CH2)))
-        self.assertFalse(st.get("media.enabled", S(ch=CH)))
-        # Undo still finds the old history lines, then a new change
-        # replaces the old entry instead of sitting beside it.
-        MS.undo_changes(cfg, f'servers."{G1}"', OWNER)
-        st = MS.load(cfg)
-        self.assertEqual(st.get("media.who", S()), "owners")
-        MS.set_value(cfg, "everywhere.media.per_day", 7, OWNER)
-        doc = MS._read_overlay_doc(st.overlay_path)
-        self.assertEqual([k for k in doc["values"] if "per_day" in k],
-                         ["everywhere.media.per_day"])
-        self.assertEqual(MS.load(cfg).get(
-            "media.per_day", MS.Scope.everywhere()), 7)
-        MS.undo_changes(cfg, "everywhere", OWNER)
-        self.assertEqual(MS.load(cfg).get(
-            "media.per_day", MS.Scope.everywhere()), 3)
-        # Folding writes media.* and drops the old spelling there.
-        MS.fold(cfg)
-        st = MS.load(cfg)
-        self.assertEqual(st.get("media.per_day", MS.Scope.everywhere()), 3)
-        self.assertFalse(st.get("media.enabled", S(ch=CH)))
-        self.assertNotIn("per_day", str(st.raw["everywhere"]["plugins"]))
 
 
 # ---------------------------------------------------------------------------

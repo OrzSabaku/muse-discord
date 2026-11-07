@@ -193,7 +193,7 @@ CORE_CODES = {
     "media.per_day": "mp",
 }
 CODE_KEYS = {v: k for k, v in CORE_CODES.items()}
-_MEDIA_CODE = re.compile(r"~(?:media|media_generation)\.([A-Za-z0-9_\-]{1,40})")
+_MEDIA_CODE = re.compile(r"~media\.([A-Za-z0-9_\-]{1,40})")
 _PLACE = re.compile(r"x|d|s(\d{1,25})|c(\d{1,25})\.(\d{1,25})")
 _ID = re.compile(r"\d{1,25}")
 _PART = re.compile(r"[^:]{1,100}")
@@ -212,7 +212,7 @@ def kdecode(code):
     if code in CODE_KEYS:
         return CODE_KEYS[code]
     if _MEDIA_CODE.fullmatch(code or ""):
-        key = ms.moved_key("plugins." + code[1:])
+        key = code[1:]
         return key if key in ms.CORE else None
     return None
 
@@ -2678,9 +2678,9 @@ def set_changes(R, place, code, v):
         return None
     if code == "pp":
         if v == "none":
-            return [ms.Change(place, "limits.per_person_per_day", "none")]
+            return [ms.Change(place, "limits.per_person_per_day", None)]
         if _ID.fullmatch(v):
-            ok, _n = ms.normalize(R.st.spec("limits.per_person_per_day"), v)
+            ok, _n = ms.normalize(R.st.spec("limits.per_person_per_day"), int(v))
             return [ms.Change(place, "limits.per_person_per_day",
                               int(v))] if ok else None
         return None
@@ -2702,10 +2702,10 @@ def set_changes(R, place, code, v):
         key = kdecode(code)
         spec = R.st.spec(key)
         if v == "none":
-            return [ms.Change(place, key, "none")] \
+            return [ms.Change(place, key, None)] \
                 if spec is not None and spec.none else None
         if _ID.fullmatch(v):
-            ok, _n = ms.normalize(spec, v)
+            ok, _n = ms.normalize(spec, int(v))
             return [ms.Change(place, key, int(v))] if ok else None
         return None
     if v == "=" and code != "df":

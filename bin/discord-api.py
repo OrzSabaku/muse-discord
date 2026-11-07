@@ -57,9 +57,7 @@ are shared with bin/discord-mcp.py; see docs/TOOLS.md.
 
 The bot token is resolved exactly like monitor.py's: token_from in the
 package config.yaml (../config.yaml relative to this file, or
-MUSE_DISCORD_CONFIG), read through muse_settings.py so both config
-layouts work (old layout: the bot.token_env env var first, then
-bot.token_file, mode 600). The token is never printed.
+MUSE_DISCORD_CONFIG), read through muse_settings.py. The token is never printed.
 """
 import hmac
 import json

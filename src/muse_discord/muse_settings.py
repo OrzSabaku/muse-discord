@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """muse-discord settings: schema, validation, scopes, the Discord overlay,
-and the mapping of the old config layout.
+and configuration persistence.
 
 One module, read by monitor.py, presence.py, watchdog.sh and the bin/
 tools. PyYAML handles input; settings_schema supplies Pydantic field validation.
@@ -24,10 +24,6 @@ Caps (limits.*, media.per_day) count within the scope WHERE THEY
 ARE SET: everywhere = one total, a server = that server, dms = all DMs.
 Every cap set along the chain is enforced (see Settings.cap_layers).
 
-An old-layout config.yaml (bot:, behavior:, safety:, owners.user_ids,
-...) still loads unchanged: it is mapped onto the new schema on every
-load (Settings.notice says so in one line), and `bin/settings.py
-migrate` converts the file for good.
 """
 import contextlib
 import copy
@@ -77,44 +73,6 @@ class SettingsError(Exception):
     reason and the valid values; several problems are one per line)."""
 
 
-# Settings that moved: the media_generation plugin (settings id media) is
-# core since 2026-10. Its keys, plugins.media.* and plugins.media_
-# generation.* (old param names too), still load from config.yaml and
-# config.discord.yaml (values and history) and mean media.*.
-MOVED_PLUGINS = {"media": "media", "media_generation": "media"}
-# Plugins that were removed: their settings in config.yaml are ignored
-# (one log line, see Settings.retired_notice), their Discord-side
-# changes dropped.
-RETIRED_PLUGINS = ("welcome",)
-# Core settings that were removed: ignored wherever they are set (one
-# log line, Settings.retired_notice; overlay entries dropped).
-# abilities.web_watches: web watches are the owners' only, always.
-RETIRED_KEYS = ("abilities.web_watches",)
-
-
-def moved_key(key):
-    """The current name of a settings key whose setting moved
-    ("plugins.media.who" -> "media.who", "plugins.media_generation.
-    daily_cap" -> "media.per_day"); any other key as is."""
-    parts = str(key).split(".", 2)
-    if len(parts) != 3 or parts[0] != "plugins" \
-            or parts[1] not in MOVED_PLUGINS:
-        return key
-    group = MOVED_PLUGINS[parts[1]]
-    for k, spec in CORE.items():
-        if k.startswith(group + ".") and spec.legacy == parts[2]:
-            return k
-    return f"{group}.{parts[2]}"
-
-
-def _retired_key(key):
-    if str(key) in RETIRED_KEYS:
-        return True
-    parts = str(key).split(".", 2)
-    return len(parts) == 3 and parts[0] == "plugins" \
-        and parts[1] in RETIRED_PLUGINS
-
-
 TOP_DISCORD_EDITABLE = ("presence.status", "presence.kind",
                         "updates.notify", "telemetry.usage_stats",
                         "memory.save_dms")
@@ -123,31 +81,11 @@ TOP_DISCORD_EDITABLE = ("presence.status", "presence.kind",
 # ---------------------------------------------------------------------------
 # Legacy media configuration
 # ---------------------------------------------------------------------------
-class LegacyMediaSettings:
-    """Old media_generation parameter names mapped to core media settings."""
-    def __init__(self, group, specs):
-        self.core_group = group
-        self.specs = specs
-
-    def spec_for(self, key):
-        if key in self.specs:
-            return key, self.specs[key]
-        for k, spec in self.specs.items():
-            if spec.legacy == key:
-                return k, spec
-        return None, None
 
 
 # ---------------------------------------------------------------------------
 # Values
 # ---------------------------------------------------------------------------
-def _norm_onoff(v):
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, str) and v.strip().lower() in ("on", "off", "true",
-                                                    "false", "yes", "no"):
-        return v.strip().lower() in ("on", "true", "yes")
-    return None
 
 
 def _id_str(v):
@@ -177,16 +115,6 @@ def _show(v):
     return str(v)
 
 
-def display(spec, v):
-    """A value as owners write it (on/off, none, lists as is)."""
-    if spec is not None and spec.type == "on-off" and isinstance(v, bool):
-        return "on" if v else "off"
-    if v is None and spec is not None and spec.type == "number":
-        return "none"
-    return v
-
-
-# ---------------------------------------------------------------------------
 # Keys: overlay form 'servers."1".channels."2".replies'
 # ---------------------------------------------------------------------------
 def parse_key(s):
@@ -231,7 +159,7 @@ def _canon(rest, channel):
     key = ".".join(rest)
     if channel and key in CHANNEL_SHORT:
         return CHANNEL_SHORT[key]
-    return moved_key(key)
+    return key
 
 
 def format_key(path, key):
@@ -307,263 +235,6 @@ class Scope:
 
 
 # ---------------------------------------------------------------------------
-# Old layout
-# ---------------------------------------------------------------------------
-OLD_TOP = ("bot", "behavior", "safety", "plugins")
-NEW_TOP = ("everywhere", "dms", "all_servers", "servers", "token_from",
-           "version")
-NOTICE = ("Note: config.yaml uses the old layout; it still works as is. "
-          "Run `python3 bin/settings.py migrate` to convert it.")
-
-
-def detect_layout(raw):
-    """"old" or "new" (an empty file is new). Raises when it mixes both."""
-    old, new = [], []
-    for k in OLD_TOP:
-        if k in raw:
-            old.append(k)
-    if isinstance(raw.get("owners"), dict):
-        old.append("owners.user_ids")
-    elif isinstance(raw.get("owners"), list):
-        new.append("owners")
-    if isinstance(raw.get("persona"), dict):
-        old.append("persona.file")
-    elif isinstance(raw.get("persona"), str):
-        new.append("persona")
-    pres = raw.get("presence")
-    if isinstance(pres, dict):
-        if "status_text" in pres or "status_kind" in pres:
-            old.append("presence.status_text")
-        if "status" in pres or "kind" in pres:
-            new.append("presence.status")
-    upd = raw.get("updates")
-    if isinstance(upd, dict):
-        if "check" in upd:
-            old.append("updates.check")
-        if "notify" in upd:
-            new.append("updates.notify")
-    new += [k for k in NEW_TOP if k in raw]
-    if old and new:
-        raise SettingsError(
-            "config.yaml mixes the old layout (" + ", ".join(old)
-            + ") and the new one (" + ", ".join(new) + "); use one. "
-            "`bin/settings.py migrate` converts an old file.")
-    return "old" if old else "new"
-
-
-def _old_cap(v, name):
-    if v is None:
-        return None
-    if isinstance(v, bool):
-        raise SettingsError(f"config.yaml (old layout): {name}: {v} is not "
-                            f"a number; use a number or null")
-    try:
-        n = float(v)
-    except (TypeError, ValueError):
-        raise SettingsError(f"config.yaml (old layout): {name}: {v!r} is "
-                            f"not a number; use a number or null")
-    # A negative cap blocked every stranger, exactly like 0.
-    return max(0, int(n)) if n == int(n) or n < 0 else int(n) + 1
-
-
-def map_old(raw):
-    """Map an old-layout config dict onto the new schema. Returns
-    (new-layout dict, aliases, respond_to, lines). aliases maps a server
-    key that is not an id (old per_guild keys could be server names) to
-    its settings block; it matches a server by id or by name, below that
-    server's own entry. lines describe the mapping in plain words."""
-    lines = []
-    out = {}
-    bot = raw.get("bot") or {}
-    beh = raw.get("behavior") or {}
-    saf = raw.get("safety") or {}
-    servers = {}
-    aliases = {}
-
-    def put(d, dotted, value):
-        cur = d
-        parts = dotted.split(".")
-        for p in parts[:-1]:
-            cur = cur.setdefault(p, {})
-        cur[parts[-1]] = value
-
-    def server_block(key):
-        key = str(key)
-        if _ID_RE.match(key):
-            return servers.setdefault(key, {})
-        return aliases.setdefault(key, {})
-
-    owners = (raw.get("owners") or {}).get("user_ids") or []
-    if owners:
-        out["owners"] = [str(u) for u in owners]
-        lines.append("owners.user_ids -> owners")
-    pfile = (raw.get("persona") or {}).get("file")
-    if pfile:
-        out["persona"] = str(pfile)
-        lines.append("persona.file -> persona")
-    env, tfile = bot.get("token_env"), bot.get("token_file")
-    if env:
-        out["token_from"] = [f"env:{env}", str(tfile or DEFAULT_TOKEN_FILE)]
-        lines.append("bot.token_env + bot.token_file -> token_from "
-                     "(the variable first, then the file)")
-    elif tfile:
-        out["token_from"] = str(tfile)
-        lines.append("bot.token_file -> token_from")
-    engine = copy.deepcopy(raw.get("engine") or {})
-    if not isinstance(engine, dict):
-        engine = {}
-    for k in ("coalesce_seconds", "max_reply_chars"):
-        if k in beh:
-            engine[k] = beh[k]
-            lines.append(f"behavior.{k} -> engine.{k}")
-    if bot.get("guild_ids"):
-        engine["guild_ids"] = [str(g) for g in bot["guild_ids"]]
-        lines.append("bot.guild_ids -> engine.guild_ids")
-    if engine:
-        out["engine"] = engine
-    respond = set(beh.get("respond_to") or ["mention", "reply_to_bot"])
-    respond.discard("name")
-    if "respond_to" in beh:
-        lines.append("behavior.respond_to: dropped (an @mention and a "
-                     "reply to the bot always count)")
-    bots = str(beh.get("bots") or "direct").lower()
-    if bots != "direct":
-        put(out, "everywhere.who.bots", "ignore")
-        lines.append("behavior.bots: off -> everywhere.who.bots: ignore")
-    elif beh.get("bots") is False:
-        # YAML reads an unquoted off as false, which the old code took
-        # for "direct": kept, so the bot behaves as it did.
-        lines.append("behavior.bots: off (unquoted, so YAML read false, "
-                     "which answered bots as direct) -> who.bots: "
-                     "when-addressed (the default); write ignore to stop")
-    elif "bots" in beh:
-        lines.append("behavior.bots: direct -> who.bots: when-addressed "
-                     "(the default)")
-    dm = str(beh.get("dm_policy") or "owner_only").lower()
-    if dm == "off":
-        put(out, "dms.who.replies", "off")
-        lines.append("behavior.dm_policy: off -> dms.who.replies: off")
-    elif dm != "owner_only":
-        put(out, "dms.who.dms_from", "anyone")
-        lines.append("behavior.dm_policy: open -> dms.who.dms_from: anyone")
-        if bots == "direct":
-            # Bots' DMs were never answered, whatever the policy.
-            put(out, "dms.who.bots", "ignore")
-            lines.append("(bots' DMs were never answered) -> "
-                         "dms.who.bots: ignore")
-    elif beh.get("dm_policy") is False:
-        lines.append("behavior.dm_policy: off (unquoted, so YAML read "
-                     "false, which the old code took for owner_only) -> "
-                     "who.dms_from: owners (the default)")
-    elif "dm_policy" in beh:
-        lines.append("behavior.dm_policy: owner_only -> who.dms_from: "
-                     "owners (the default)")
-    active = [str(g) for g in beh.get("active_guild_ids") or []]
-    if not bool(saf.get("injection_quarantine", True)):
-        put(out, "everywhere.privacy.suspicious", "answer")
-        lines.append("safety.injection_quarantine: false -> "
-                     "everywhere.privacy.suspicious: answer")
-    for old, new in (("daily_reply_cap", "per_day"),
-                     ("per_user_daily_cap", "per_person_per_day")):
-        if saf.get(old) is not None:
-            put(out, f"everywhere.limits.{new}",
-                _old_cap(saf[old], f"safety.{old}"))
-            lines.append(f"safety.{old} -> everywhere.limits.{new} (one "
-                         f"total across DMs and all servers)")
-    pres = raw.get("presence") or {}
-    if pres.get("enabled") is False:
-        put(out, "presence.enabled", "off")
-        lines.append("presence.enabled: false -> presence.enabled: off")
-    if str(pres.get("status_text") or "").strip():
-        put(out, "presence.status", str(pres["status_text"]).strip())
-        lines.append("presence.status_text -> presence.status")
-    kind = str(pres.get("status_kind") or "watching").lower()
-    if kind not in PRESENCE_KINDS:
-        kind = "watching"  # what presence.py did with an unknown kind
-    if kind != "watching":
-        put(out, "presence.kind", kind)
-        lines.append("presence.status_kind -> presence.kind")
-    if (raw.get("updates") or {}).get("check") is False:
-        put(out, "updates.notify", "off")
-        lines.append("updates.check: false -> updates.notify: off")
-    if (raw.get("telemetry") or {}).get("usage_stats") in (False, "off"):
-        put(out, "telemetry.usage_stats", "off")
-    if (raw.get("memory") or {}).get("save_dms") in (False, "off"):
-        put(out, "memory.save_dms", "off")
-    for name, block in (raw.get("plugins") or {}).items():
-        man = None
-        if name in MOVED_PLUGINS:
-            man = _moved_manifest(name)
-        if man is None or not isinstance(block, dict):
-            continue  # the old loader ignored config for absent plugins
-        label = f"plugins.{name}"
-        dest = man.core_group
-        if block.get("enabled"):
-            put(out, f"everywhere.{dest}.enabled", "on")
-            lines.append(f"{label}.enabled -> everywhere.{dest}.enabled")
-        for key, val in block.items():
-            if key in ("enabled", "per_guild"):
-                continue
-            skey, spec = man.spec_for(key)
-            if spec is None:
-                continue  # never read by the old loader either
-            if isinstance(val, dict) and ("default" in val
-                                          or "per_guild" in val):
-                if "default" in val:
-                    _put_plugin(out.setdefault("everywhere", {}), man, skey,
-                                spec, val["default"])
-                for g, v in (val.get("per_guild") or {}).items():
-                    _put_plugin(server_block(g), man, skey, spec, v)
-            else:
-                _put_plugin(out.setdefault("everywhere", {}), man, skey,
-                            spec, val)
-            if skey != key:
-                lines.append(f"{label}.{key} -> {dest}.{skey}")
-        for g, params in (block.get("per_guild") or {}).items():
-            if not isinstance(params, dict):
-                continue
-            for key, v in params.items():
-                skey, spec = man.spec_for(key)
-                if spec is not None:
-                    _put_plugin(server_block(g), man, skey, spec, v)
-        if f"plugins.{name}" != dest:
-            lines.append(f"plugins.{name} -> {dest}")
-    if active and not any("active_guild_ids" in ln for ln in lines):
-        lines.append("behavior.active_guild_ids: dropped (only welcomes "
-                     "used it, and they are gone)")
-    if servers:
-        out["servers"] = servers
-    if isinstance(raw.get("testing"), dict):
-        out["testing"] = copy.deepcopy(raw["testing"])
-    return out, aliases, respond, lines
-
-
-def _moved_manifest(name):
-    """A plugin that is core now, as a manifest over its core settings
-    (for map_old): its keys map onto the core group."""
-    group = MOVED_PLUGINS[name]
-    specs = {k.split(".", 1)[1]: s for k, s in CORE.items()
-             if k.startswith(group + ".")}
-    return LegacyMediaSettings(group, specs)
-
-
-def _put_plugin(block, man, key, spec, value):
-    if spec.legacy == "allowed_user_ids" or key == "who" \
-            and spec.type == "people" and isinstance(value, list) \
-            and not value:
-        # The old allowed_user_ids: [] meant the owners.
-        if isinstance(value, list) and not value:
-            value = "owners"
-        elif isinstance(value, list):
-            value = [str(v) for v in value]
-    if value is None and spec.type != "any" and not spec.none:
-        return  # null meant "the default" for these
-    if value is None and spec.type == "number":
-        value = "none"
-    block.setdefault(man.core_group, {})[key] = value
-
-
-# ---------------------------------------------------------------------------
 # Parsing a new-layout dict into layer values
 # ---------------------------------------------------------------------------
 CHANNEL_ONLY = ("a channel or category may set only replies, notes, "
@@ -584,14 +255,11 @@ def _settable_at(spec, kind, key):
 
 
 class _Parser:
-    def __init__(self, file_label, old=False):
+    def __init__(self, file_label):
         self.file = file_label
-        self.old = old
         self.errors = []
         self.values = {}       # (path, key) -> value
         self.labels = {}       # server/channel id -> name label
-        self.retired = set()   # removed plugins the file still sets
-        self.old_names = set()  # (path, key) set under a moved key
 
     def err(self, where, msg):
         self.errors.append(f"{self.file}: {where}: {msg}")
@@ -599,14 +267,9 @@ class _Parser:
     def spec(self, key):
         return spec_of(key)
 
-    def set(self, path, key, value, where, old_name=False):
-        """old_name: key came from a moved setting's old spelling, which
-        never overrides the current spelling at the same layer."""
+    def set(self, path, key, value, where):
         spec = self.spec(key)
         kind = _scope_kind(path)
-        if spec is None and key in RETIRED_KEYS:
-            self.retired.add(key)
-            return
         if spec is None:
             if key.startswith("plugins."):
                 self.err(where, f"unknown setting {key}: plugin support was removed")
@@ -627,13 +290,6 @@ class _Parser:
         if not ok:
             self.err(where, f"{v}; valid: {spec.valid_text()}")
             return
-        if old_name:
-            if (path, key) in self.values \
-                    and (path, key) not in self.old_names:
-                return
-            self.old_names.add((path, key))
-        else:
-            self.old_names.discard((path, key))
         self.values[(path, key)] = v
 
     def scope_block(self, path, block, where):
@@ -660,31 +316,6 @@ class _Parser:
                                  "name in `name:` inside")
                         continue
                     self.scope_block(path + ("channels", cid_s), cblock, cw)
-            elif top == "plugins":
-                if not isinstance(sub, dict):
-                    self.err(w, "expected plugin blocks")
-                    continue
-                for pid, pblock in sub.items():
-                    pw = f"{w}.{pid}"
-                    if pid in RETIRED_PLUGINS:
-                        self.retired.add(str(pid))
-                        continue
-                    if not isinstance(pblock, dict):
-                        self.err(pw, "expected a block like "
-                                 "{enabled: on}")
-                        continue
-                    moved = pid in MOVED_PLUGINS
-                    for k, v in pblock.items():
-                        if kind == "channel" and k != "enabled":
-                            self.err(f"{pw}.{k}", CHANNEL_ONLY)
-                            continue
-                        key = moved_key(f"plugins.{pid}.{k}")
-                        if moved and self.spec(key) is not None \
-                                and self.spec(key).legacy == k \
-                                and self.spec(key).type == "people" \
-                                and v == []:
-                            v = "owners"  # allowed_user_ids: [] = owners
-                        self.set(path, key, v, f"{pw}.{k}", old_name=moved)
             elif kind == "channel":
                 if top in CHANNEL_SHORT:
                     self.set(path, CHANNEL_SHORT[top], sub, w)
@@ -704,7 +335,7 @@ class _Parser:
                     self.set(path, f"{top}.{k}", v, f"{w}.{k}")
             else:
                 self.err(w, "unknown section; valid: "
-                         + ", ".join(CORE_GROUPS + ("plugins",)
+                         + ", ".join(CORE_GROUPS
                                      + (("name", "channels")
                                         if kind == "server" else ())))
 
@@ -748,25 +379,17 @@ class Settings:
     def __init__(self):
         self.path = None
         self.overlay_path = None
-        self.layout = "new"
-        self.notice = None
         self.raw = {}
         self.server_files = {}
-        self.mapping = []
         self.file_values = {}
         self.overlay = {}         # (path, key) -> entry dict (active ones)
         self.overlay_doc = {}
         self.retire = []          # [(keystr, entry, reason)]
-        self.aliases = {}         # name-or-id -> True (old layout only)
         self.labels = {}
-        self.respond_to = {"mention", "reply_to_bot"}
         self.engine = {}
         self.owners = []
         self.persona = DEFAULT_PERSONA
         self.token_from = DEFAULT_TOKEN_FILE
-        self.legacy_defaults = False
-        # One line when config.yaml still sets a removed plugin.
-        self.retired_notice = None
         self._cache = {}
 
     # -- top level ---------------------------------------------------------
@@ -813,8 +436,6 @@ class Settings:
         if path == ("builtin",):
             spec = self.spec(key)
             default = spec.default if spec is not None else None
-            if key == "who.replies" and self.legacy_defaults:
-                default = "when-addressed"
             return True, copy.deepcopy(default), ("built-in",)
         if path == ("builtin_all_servers",):
             return False, None, None
@@ -846,9 +467,6 @@ class Settings:
         if scope.kind == "all_servers" or not scope.guild_id:
             return out
         gid = scope.guild_id
-        for alias in sorted(self.aliases):
-            if alias in (gid, scope.guild_name):
-                out.append((("alias", alias), f'server "{alias}"'))
         out.append((("servers", gid), f"server {gid}"))
         if scope.category_id and scope.category_id != scope.channel_id:
             out.append((("servers", gid, "channels", scope.category_id),
@@ -1139,51 +757,6 @@ def _read_overlay_doc(path, strict=False):
     if not isinstance(doc.get("history"), list):
         doc["history"] = []
     doc["version"] = 1
-    return _upgrade_overlay(doc)
-
-
-def _upgrade_key(keystr):
-    """An overlay key in its current spelling (a moved setting's old key
-    -> its new one), or None for a removed plugin's setting."""
-    try:
-        path, key = parse_key(keystr)
-    except (ValueError, TypeError):
-        return keystr
-    if _retired_key(key):
-        return None
-    if key in CORE and "plugins." in str(keystr):
-        return format_key(path, key)
-    return keystr
-
-
-def _upgrade_overlay(doc):
-    """Bring an overlay document's keys up to date, in place: a moved
-    setting's entries and history lines take its new key (undo keeps
-    working), a removed plugin's are dropped. Writers save the result,
-    so the file converts on its next write. Returns doc."""
-    values = doc.get("values")
-    if isinstance(values, dict) and any(
-            _upgrade_key(k) != k for k in values):
-        out = {}
-        for k, entry in values.items():
-            nk = _upgrade_key(k)
-            if nk is not None and (nk == k or nk not in values):
-                out[nk] = entry
-        doc["values"] = out
-    hist = doc.get("history")
-    if isinstance(hist, list) and any(
-            isinstance(h, dict) and isinstance(h.get("key"), str)
-            and _upgrade_key(h["key"]) != h["key"] for h in hist):
-        out = []
-        for h in hist:
-            if isinstance(h, dict) and isinstance(h.get("key"), str):
-                nk = _upgrade_key(h["key"])
-                if nk is None:
-                    continue
-                if nk != h["key"]:
-                    h = dict(h, key=nk)
-            out.append(h)
-        doc["history"] = out
     return doc
 
 
@@ -1269,16 +842,14 @@ def _write_overlay_doc(path, doc):
     atomic_write_text(path, OVERLAY_HEADER + body)
 
 
-def load(config_path, overlay_path=None,
-         legacy_defaults=False, text=None):
+def load(config_path, overlay_path=None, text=None):
     """Load and validate config.yaml (+ its overlay). Raises SettingsError
     on an invalid hand-written file; overlay problems never raise (the
     entries are queued for retirement instead). text: parse this instead
-    of reading config_path (migrate's check)."""
+    of reading config_path (configuration preview)."""
     st = Settings()
     st.path = config_path
     st.overlay_path = overlay_path or overlay_path_for(config_path)
-    st.legacy_defaults = legacy_defaults
     label = os.path.basename(config_path)
     try:
         raw = _yload(text) if text is not None \
@@ -1293,25 +864,14 @@ def load(config_path, overlay_path=None,
         raise SettingsError(f"{label}: expected settings (key: value "
                             f"lines), got {type(raw).__name__}")
     st.raw = raw
-    st.layout = detect_layout(raw)
-    data = raw
-    if st.layout == "old":
-        st.notice = NOTICE
-        data, aliases, st.respond_to, st.mapping = map_old(raw)
-        label += " (old layout, mapped)"
-    else:
-        aliases = {}
-    p = _Parser(label, old=st.layout == "old")
-    # Server names the bot has seen (state.json), for "did you mean".
-    p.known = lambda: _known_guilds(os.path.join(os.path.dirname(
-        os.path.abspath(config_path)), "state.json"))
-    _parse_new(p, data, aliases, st)
+    p = _Parser(label)
+    _parse_new(p, raw, st)
     for path in server_config_paths(config_path):
         sid = os.path.basename(path)[:-5]
         if _id_str(sid) is None:
             p.err(path, "filename must be a Discord server id followed by .yaml")
             continue
-        inline = data.get("servers")
+        inline = raw.get("servers")
         if isinstance(inline, dict) and sid in {str(k) for k in inline}:
             p.err(path, f"server {sid} is also defined in config.yaml")
             continue
@@ -1323,29 +883,13 @@ def load(config_path, overlay_path=None,
         st.server_files[sid] = path
     if p.errors:
         raise SettingsError("\n".join(p.errors))
-    retired = p.retired | {str(n) for n in (raw.get("plugins") or {})
-                           if st.layout == "old" and n in RETIRED_PLUGINS}
-    keys = sorted(r for r in retired if r in RETIRED_KEYS)
-    plugins = sorted(r for r in retired if r not in RETIRED_KEYS)
-    notes = []
-    if plugins:
-        notes.append(f"config.yaml still sets the {', '.join(plugins)} "
-                     f"plugin, which was removed; those settings are "
-                     f"ignored.")
-    if keys:
-        notes.append(f"config.yaml still sets {', '.join(keys)}, which "
-                     f"was removed (web watches are for owners only); it "
-                     f"is ignored.")
-    if notes:
-        st.retired_notice = "Note: " + " ".join(notes)
     st.file_values = p.values
     st.labels = p.labels
-    st.aliases = {a: True for a in aliases}
     _apply_overlay(st)
     return st
 
 
-def _parse_new(p, data, aliases, st):
+def _parse_new(p, data, st):
     allowed = {"version", "owners", "persona", "token_from", "presence",
                "updates", "telemetry", "memory", "everywhere", "dms",
                "all_servers",
@@ -1414,38 +958,26 @@ def _parse_new(p, data, aliases, st):
                 sid_s = _id_str(sid)
                 where = f'servers."{sid}"'
                 if sid_s is None:
-                    if p.old:
-                        sid_s = str(sid)
-                    else:
-                        ids = [g for g, n in p.known().items()
-                               if n == str(sid)]
-                        hint = (f'; did you mean "{ids[0]}" ({sid})?'
-                                if len(ids) == 1 else "")
-                        p.err(where, "expected a Discord server id (digits) "
-                              "as the key; put the server's name in "
-                              "`name:` inside its block" + hint)
-                        continue
+                    p.err(where, "expected a Discord server id (digits) as the key")
+                    continue
                 p.scope_block(("servers", sid_s), block, where)
-    for alias, block in aliases.items():
-        p.scope_block(("alias", alias), block, f'servers."{alias}"')
     eng = data.get("engine")
     if eng is not None:
         if not isinstance(eng, dict):
             p.err("engine", "expected a block")
         else:
-            if not p.old:
-                for k, sub in eng.items():
-                    if k not in ENGINE_KEYS:
-                        p.err(f"engine.{k}", "unknown engine setting; "
-                              "valid: " + ", ".join(ENGINE_KEYS))
-                    elif isinstance(ENGINE_KEYS[k], set):
-                        if not isinstance(sub, dict):
-                            p.err(f"engine.{k}", "expected a block")
-                            continue
-                        for kk in sub:
-                            if kk not in ENGINE_KEYS[k]:
-                                p.err(f"engine.{k}.{kk}", "unknown; valid: "
-                                      + ", ".join(sorted(ENGINE_KEYS[k])))
+            for k, sub in eng.items():
+                if k not in ENGINE_KEYS:
+                    p.err(f"engine.{k}", "unknown engine setting; "
+                          "valid: " + ", ".join(ENGINE_KEYS))
+                elif isinstance(ENGINE_KEYS[k], set):
+                    if not isinstance(sub, dict):
+                        p.err(f"engine.{k}", "expected a block")
+                        continue
+                    for kk in sub:
+                        if kk not in ENGINE_KEYS[k]:
+                            p.err(f"engine.{k}.{kk}", "unknown; valid: "
+                                  + ", ".join(sorted(ENGINE_KEYS[k])))
             gids = eng.get("guild_ids")
             if gids is not None and not isinstance(gids, list):
                 p.err("engine.guild_ids", "expected a list of server ids")
@@ -1463,7 +995,6 @@ def _apply_overlay(st):
     st.overlay_error = None
     if not isinstance(doc, dict):
         doc = {}
-    _upgrade_overlay(doc)
     st.overlay_doc = doc
     values = doc.get("values") or {}
     if not isinstance(values, dict):
@@ -1504,15 +1035,7 @@ def _apply_overlay(st):
             cur = st.file_values.get((path, key))
             base = entry.get("base")
             if base is not None or (path, key) in st.file_values:
-                # display() writes a number's missing base as "none";
-                # read it back as None even when the spec itself does
-                # not take none (a cap with a built-in default), or
-                # every such entry would retire itself as file-changed.
-                if base is None or (spec.type == "number"
-                                    and base == "none"):
-                    okb, nbase = True, None
-                else:
-                    okb, nbase = normalize(spec, base)
+                okb, nbase = normalize(spec, base) if base is not None else (True, None)
                 if not okb or nbase != cur:
                     reason = "file changed"
         if reason is not None:
@@ -1665,10 +1188,10 @@ def _write_entry(st, doc, path, key, spec, value, by, now, group=None,
         role = _infer_role(by, st.owners)
     base = st.file_values.get((path, key))
     s, before, _src = st.layer(path, key)
-    entry = {"value": value, "base": display(spec, base),
+    entry = {"value": value, "base": base,
              "by": str(by), "at": now}
     hist = {"key": keystr,
-            "from": display(spec, before) if s else "inherit",
+            "from": before if s else "inherit",
             "to": value, "by": str(by), "at": now}
     if group:
         hist["group"] = group
@@ -1724,7 +1247,7 @@ def set_value(config_path, keystr, value, by, group=None,
             if not ok:
                 raise SettingsError(f"{keystr}: {norm}; valid: "
                                     f"{spec.valid_text()}")
-            value = display(spec, norm)
+            value = norm
         if _layer_noop(st, path, key, norm, role):
             return NO_CHANGE
         doc = _read_overlay_doc(st.overlay_path, strict=True)
@@ -2008,9 +1531,6 @@ def fold(config_path):
 
 def _fold(config_path):
     st = load(config_path)
-    if st.layout == "old":
-        raise SettingsError("config.yaml uses the old layout; run "
-                            "`bin/settings.py migrate` first")
     # A server admin's entry stays in the overlay: in config.yaml it
     # would be the owners' own value, no longer held to the quieter of
     # the two (Settings._resolve_key).
@@ -2035,7 +1555,6 @@ def _fold(config_path):
             block["channels"] = _by_str_id(block["channels"])
     folded = []
     for (path, key), entry in todo:
-        spec = st.spec(key)
         if path == ("top",):
             node_path = key.split(".")
         else:
@@ -2047,20 +1566,13 @@ def _fold(config_path):
             else:
                 node_path += key.split(".")
         target = data
-        prefix = list(_node_prefix(path)) if path != ("top",) else []
         if path[0] == "servers" and path[1] in external:
             target = external[path[1]]
             node_path = node_path[2:]
-            prefix = prefix[2:]
-        if path != ("top",):
-            # A moved setting's old spelling at this layer goes, so the
-            # file holds the folded value once.
-            for old in _old_spellings(key):
-                _del_path(target, prefix + old.split("."))
         if entry.get("value") == "inherit":
             _del_path(target, node_path)
         else:
-            _set_path(target, node_path, display(spec, entry["_norm"]))
+            _set_path(target, node_path, entry["_norm"])
         folded.append(format_key(path, key))
     with overlay_lock(st.overlay_path):
         doc = _read_overlay_doc(st.overlay_path, strict=True)
@@ -2099,16 +1611,6 @@ def _merged(a, b):
     return out
 
 
-def _old_spellings(key):
-    """The old keys a moved setting was written as (see moved_key)."""
-    group, _, name = key.partition(".")
-    spec = CORE.get(key)
-    names = [name] + ([spec.legacy] if spec is not None and spec.legacy
-                      else [])
-    return [f"plugins.{pid}.{n}" for pid, g in MOVED_PLUGINS.items()
-            if g == group for n in names]
-
-
 def _node_prefix(path):
     if path[0] == "servers":
         out = ["servers", path[1]]
@@ -2139,164 +1641,6 @@ def _del_path(d, parts):
     for parent, p in reversed(stack):
         if parent[p] == {}:
             del parent[p]
-
-
-# ---------------------------------------------------------------------------
-# Migration: old layout -> new layout, refusing any behavior change
-# ---------------------------------------------------------------------------
-def _known_guilds(state_path):
-    try:
-        with open(state_path) as f:
-            known = (json.load(f) or {}).get("known_guilds") or {}
-        return {str(k): str(v) for k, v in known.items()}
-    except (OSError, ValueError, AttributeError):
-        return {}
-
-
-def build_migrated(config_path, state_path=None):
-    """(new config text, mapping lines, notes) for an old-layout file, or
-    raise SettingsError explaining why it cannot be converted as is."""
-    st = load(config_path)
-    if st.layout != "old":
-        raise SettingsError("config.yaml already uses the new layout")
-    if st.respond_to != {"mention", "reply_to_bot"}:
-        raise SettingsError(
-            "behavior.respond_to is " + str(sorted(st.respond_to)) + "; the "
-            "new layout always answers both an @mention and a reply to the "
-            "bot. Remove behavior.respond_to (accepting that) and run "
-            "migrate again.")
-    data, aliases, _r, lines = map_old(st.raw)
-    known = _known_guilds(state_path or os.path.join(
-        os.path.dirname(os.path.abspath(config_path)), "state.json"))
-    by_name = {}
-    for gid, name in known.items():
-        by_name.setdefault(name, []).append(gid)
-    servers = data.setdefault("servers", {})
-    for sid in list(servers):
-        if _id_str(sid) is None:
-            raise SettingsError(
-                f'server "{sid}" (behavior.active_guild_ids) is not a '
-                f'Discord server id; fix it in the old file first')
-    for alias, block in aliases.items():
-        ids = by_name.get(alias) or []
-        if len(ids) != 1:
-            raise SettingsError(
-                f'plugins per_guild key "{alias}" is a server name the bot '
-                f'cannot match to one id (from state.json); replace it '
-                f'with the server id and run migrate again')
-        gid = ids[0]
-        tgt = servers.setdefault(gid, {})
-        _merge_below(tgt, block)
-        tgt.setdefault("name", alias)
-        lines.append(f'per_guild "{alias}" -> servers."{gid}"')
-    if not servers:
-        data.pop("servers", None)
-    for gid, block in list(servers.items()):
-        name = block.pop("name", None) or known.get(gid)
-        servers[gid] = ({"name": name} if name else {}) | block
-    order = ["version", "owners", "persona", "token_from", "presence",
-             "updates", "telemetry", "memory", "everywhere", "dms",
-             "all_servers",
-             "servers", "engine", "testing"]
-    data["version"] = 1
-    out = {k: data[k] for k in order if k in data}
-    header = ("# muse-discord settings (converted from the old layout by "
-              "bin/settings.py migrate).\n# See config.example.yaml for "
-              "every setting and its default.\n")
-    text = header + dump_config(out)
-    notes = ["who.replies: conversational (new default; an intended "
-             "change): after the bot answers someone, their next messages "
-             "in that channel within 2 minutes count as addressed. Set "
-             "all_servers.who.replies: when-addressed to keep the old "
-             "behavior."]
-    return text, lines, notes, st
-
-
-def _merge_below(tgt, src):
-    """Merge src into tgt, tgt's existing values winning (an id entry
-    beats a name entry)."""
-    for k, v in src.items():
-        if isinstance(v, dict) and isinstance(tgt.get(k), dict):
-            _merge_below(tgt[k], v)
-        elif k not in tgt:
-            tgt[k] = copy.deepcopy(v)
-
-
-def compare(old_st, new_st, known=None):
-    """[(scope label, key, old, new)] for every resolved difference over
-    every scope either file knows about (plus top-level values and the
-    caps that apply). Exactly one difference is expected and filtered
-    out: who.replies when-addressed -> conversational (old_st loaded
-    with legacy_defaults)."""
-    known = known or {}
-    scopes = [Scope.everywhere(), Scope.dm(), Scope.server(None)]
-    gids = set(old_st.servers_listed()) | set(new_st.servers_listed()) \
-        | set(known)
-    for gid in sorted(gids):
-        name = known.get(gid)
-        scopes.append(Scope.server(gid, name))
-        chans = set(old_st.channels_listed(gid)) \
-            | set(new_st.channels_listed(gid))
-        for cid in sorted(chans):
-            scopes.append(Scope.server(gid, name, channel_id=cid))
-    diffs = []
-    for sc in scopes:
-        a, b = old_st.resolve(sc), new_st.resolve(sc)
-        for key in sorted(set(a) | set(b)):
-            if a.get(key) == b.get(key):
-                continue
-            if key == "who.replies" and a.get(key) == "when-addressed" \
-                    and b.get(key) == "conversational":
-                continue
-            diffs.append((sc.label(), key, a.get(key), b.get(key)))
-        for cap in ("limits.per_day", "limits.per_person_per_day",
-                    "media.per_day"):
-            ca, cb = old_st.cap_layers(cap, sc), new_st.cap_layers(cap, sc)
-            if ca != cb:
-                diffs.append((sc.label(), cap + " (counted where set)",
-                              ca, cb))
-    for name, fa, fb in (
-            ("owners", old_st.owners, new_st.owners),
-            ("persona", old_st.persona, new_st.persona),
-            ("token_from", old_st.token_sources(), new_st.token_sources()),
-            ("engine", old_st.engine, new_st.engine),
-            ("respond_to", sorted(old_st.respond_to),
-             sorted(new_st.respond_to))):
-        if fa != fb:
-            diffs.append(("top level", name, fa, fb))
-    for key in TOP:
-        if old_st.top(key) != new_st.top(key):
-            diffs.append(("top level", key, old_st.top(key),
-                          new_st.top(key)))
-    return diffs
-
-
-def migrate(config_path, state_path=None, write=True):
-    """Convert an old-layout config.yaml. Verifies (by resolving both for
-    every known scope) that nothing but the announced who.replies default
-    changes, refusing otherwise. Writes a timestamped backup, then the new
-    file. Returns (backup path or None, text, lines, notes)."""
-    text, lines, notes, _st = build_migrated(config_path,
-                                             state_path)
-    legacy = load(config_path, legacy_defaults=True)
-    try:
-        new = load(config_path, text=text)
-    except SettingsError as e:
-        raise SettingsError("the converted file would not validate (a bug; "
-                            "nothing was written):\n" + str(e))
-    known = _known_guilds(state_path or os.path.join(
-        os.path.dirname(os.path.abspath(config_path)), "state.json"))
-    diffs = compare(legacy, new, known)
-    if diffs:
-        rows = "\n".join(f"  {where}: {key}: {a!r} -> {b!r}"
-                         for where, key, a, b in diffs[:40])
-        raise SettingsError("refusing to migrate: the converted file would "
-                            "behave differently:\n" + rows)
-    bak = None
-    if write:
-        bak = backup(config_path)
-        atomic_write_text(config_path, text)
-    return bak, text, lines, notes
 
 
 # ---------------------------------------------------------------------------
@@ -2441,7 +1785,7 @@ def parse_place(text, info=None):
 
 
 def place_of_path(path):
-    """The Place a layer path belongs to (None for an old-layout alias)."""
+    """The Place a layer path belongs to (None for an unsupported scope)."""
     if path[0] in ("everywhere", "all_servers", "top"):
         return Place.defaults()
     if path[0] == "dms":
@@ -2832,7 +2176,7 @@ def explain_lines(st, place, keys=None, names=None):
 
 def key_from_text(st, text):
     """A settings key from its key name or its label (any case)."""
-    t = moved_key(str(text).strip())
+    t = str(text).strip()
     if st.spec(t) is not None:
         return t
     low = t.lower()
@@ -2864,8 +2208,11 @@ def parse_value(st, key, text):
         if re.fullmatch(r"[\s,]*((role:)?\d{1,25}[\s,]*)+", t):
             return [p.strip() for p in t.replace(" ", ",").split(",")
                     if p.strip()]
-    if spec.type == "number" and low in ("no limit", "unlimited"):
-        return "none"
+    if spec.type == "number":
+        try:
+            return json.loads(t)
+        except ValueError:
+            pass
     return t
 
 
@@ -2976,7 +2323,7 @@ class Change:
     def __init__(self, place, key, value, path=None, revert=False):
         if isinstance(place, str):
             place = parse_place(place)
-        self.place, self.key, self.value = place, moved_key(key), value
+        self.place, self.key, self.value = place, key, value
         self.path = path
         self.revert = revert   # an admin's revert (see admin_changes)
 
@@ -3044,7 +2391,7 @@ def simulate(st, changes, role="owner"):
             raise SettingsError(f"{label(ch.key)}: {norm}; valid: "
                                 f"{spec.valid_text()}")
         new.overlay[(path, ch.key)] = dict(
-            extra, value=display(spec, norm), _norm=norm, by="", at="")
+            extra, value=norm, _norm=norm, by="", at="")
     return new
 
 
@@ -3111,11 +2458,7 @@ def plan_changes(st, changes, role="owner"):
             if not ok:
                 raise SettingsError(f"{label(ch.key)}: {norm}; valid: "
                                     f"{spec.valid_text()}")
-            if spec.type == "choice" and norm in spec.hidden_values \
-                    and not ch.revert:
-                raise SettingsError(f"{label(ch.key)}: {norm} can only be "
-                                    f"set in config.yaml")
-            write = display(spec, norm)
+            write = norm
         out.append(Planned(ch, path, spec, write, norm,
                            _place_noop(st, ch.place, path, ch.key, norm,
                                        role)))
@@ -3278,7 +2621,7 @@ def _revert(st, doc, picks, by, role=None, ugroup=None):
         below = owner_layer(doc, ks, st.owners)
         in_file = (path, key) in st.file_values
         cur = st.file_values.get((path, key))
-        entry = {"value": "inherit", "base": display(spec, cur),
+        entry = {"value": "inherit", "base": cur,
                  "by": str(by), "at": now}
         if target == "inherit":
             if in_file:
@@ -3293,7 +2636,7 @@ def _revert(st, doc, picks, by, role=None, ugroup=None):
             if in_file and norm == cur:
                 doc["values"].pop(ks, None)   # the file says it already
             else:
-                doc["values"][ks] = dict(entry, value=display(spec, norm))
+                doc["values"][ks] = dict(entry, value=norm)
         if role == "admin" and ks in doc["values"]:
             doc["values"][ks]["role"] = "admin"
             doc["values"][ks]["below"] = below
@@ -3470,7 +2813,7 @@ def _admin_translate(st, path, key, spec, value):
         if below:
             target = below.get("value")
         elif (path, key) in st.file_values:
-            target = display(spec, st.file_values[(path, key)])
+            target = st.file_values[(path, key)]
         else:
             target = "inherit"
         if value == "inherit":
