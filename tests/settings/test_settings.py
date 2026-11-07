@@ -172,6 +172,67 @@ servers:
 """
 
 
+class ServerFiles(unittest.TestCase):
+    def test_validation_reload_conflict_and_removal(self):
+        st, cfg = load_text(NEW_BASE + "everywhere:\n  proactive:\n    per_day: 73\n")
+        root = os.path.join(os.path.dirname(cfg), "servers")
+        os.makedirs(root)
+        watcher = MS.Watcher(cfg, PLUGINS)
+        path = write(os.path.join(root, G1 + ".yaml"), f'''name: Lounge
+proactive:
+  frequency: often
+  enabled: on
+channels:
+  "{CH}":
+    replies: freely
+    proactive:
+      enabled: on
+  "{CH2}":
+    replies: off
+''')
+        self.assertEqual(watcher.poll(), (True, None))
+        st = watcher.current
+        self.assertEqual(st.get("proactive.frequency", S()), "often")
+        self.assertEqual(st.get("who.replies", S(ch=CH)), "freely")
+        self.assertEqual(st.get("who.replies", S(ch=CH2)), "off")
+        self.assertEqual(st.get("proactive.per_day", MS.Scope.everywhere()), 73)
+        with self.assertRaises(MS.SettingsError):
+            MS.set_value(cfg, "everywhere.proactive.per_day", 10, OWNER, PLUGINS)
+        write(path, "proactive: {frequency: invalid}\n")
+        self.assertIsNotNone(watcher.poll()[1])
+        self.assertIs(watcher.current, st)
+        write(path, "proactive: {frequency: rarely}\n")
+        self.assertEqual(watcher.poll(), (True, None))
+        write(cfg, NEW_BASE + f'servers:\n  "{G1}": {{name: Duplicate}}\n')
+        self.assertIn("also defined", watcher.poll()[1])
+        write(cfg, NEW_BASE)
+        os.remove(path)
+        self.assertEqual(watcher.poll(), (True, None))
+        self.assertEqual(watcher.current.server_files, {})
+
+    def test_fold_keeps_server_changes_in_the_server_file(self):
+        st, cfg = load_text(NEW_BASE)
+        root = os.path.join(os.path.dirname(cfg), "servers")
+        os.makedirs(root)
+        path = write(os.path.join(root, G1 + ".yaml"),
+                     f'channels:\n  "{CH}": {{replies: when-addressed}}\n')
+        MS.set_value(cfg, f'servers."{G1}".channels."{CH}".replies',
+                     "freely", OWNER, PLUGINS)
+        bak, keys = MS.fold(cfg, PLUGINS)
+        self.assertTrue(os.path.exists(bak))
+        self.assertEqual(len(keys), 1)
+        self.assertNotIn("servers:", read(cfg))
+        self.assertIn("freely", read(path))
+        self.assertTrue(any(name.startswith(G1 + ".yaml.bak-")
+                            for name in os.listdir(root)))
+        self.assertEqual(MS.load(cfg, PLUGINS).get("who.replies", S(ch=CH)), "freely")
+
+    def test_freely_is_a_more_permissive_rule(self):
+        self.assertTrue(MS.loosens("who.replies", "conversational", "freely"))
+        self.assertEqual(MS._quieter("who.replies", "freely", "when-addressed"),
+                         "when-addressed")
+
+
 class Resolution(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -266,6 +327,26 @@ class Overlay(unittest.TestCase):
         self.assertEqual(st2.commit_retirements(), [])
         hist = MS._read_overlay_doc(st.overlay_path)["history"]
         self.assertEqual(hist[-1]["retired"], "file changed")
+
+    def test_number_cap_overlay_survives_reload(self):
+        """A number spec that does not take none (a proactive cap with
+        a built-in default) records its missing file base as "none";
+        reloading must read that back as None, not retire the entry
+        as file-changed."""
+        st, cfg = load_text(NEW_BASE)
+        key = f'servers."{G1}".proactive.per_channel_per_day'
+        MS.set_value(cfg, key, 30, OWNER, PLUGINS)
+        doc = MS._read_overlay_doc(MS.overlay_path_for(cfg))
+        self.assertEqual(doc["values"][key]["base"], "none")
+        st = MS.load(cfg, PLUGINS)
+        self.assertEqual(st.retire, [])
+        self.assertEqual(st.get("proactive.per_channel_per_day", S()), 30)
+        MS.set_value(cfg, "dms.proactive.per_person_per_day", 7,
+                     OWNER, PLUGINS)
+        st = MS.load(cfg, PLUGINS)
+        self.assertEqual(st.retire, [])
+        self.assertEqual(st.get("proactive.per_person_per_day",
+                                MS.Scope.dm()), 7)
 
     def test_invalid_overlay_never_blocks_startup(self):
         ov = ("version: 1\nvalues:\n"
@@ -854,6 +935,23 @@ class NeverShare(MonitorBase):
 
 
 class Who(MonitorBase):
+    def test_freely_participates_without_a_mention(self):
+        self.rewrite(NEW_BASE + f'''servers:
+  "{G1}":
+    channels:
+      "{CH}":
+        replies: freely
+      "{CH2}":
+        replies: when-addressed
+''')
+        m = self.m
+        self.assertEqual(m.trigger_kind(gmsg(U1, "hello"), G1, self.st),
+                         "follow_up")
+        self.assertIsNone(m.trigger_kind(gmsg(U1, "hello", channel=CH2), G1, self.st))
+        self.assertIsNone(m.trigger_kind(gmsg(OTHER_BOT, "beep", bot=True), G1, self.st))
+        self.assertEqual(m.trigger_kind(gmsg(OTHER_BOT, mention=True, bot=True), G1, self.st),
+                         "mention")
+
     def test_dms_from(self):
         m = self.m
 

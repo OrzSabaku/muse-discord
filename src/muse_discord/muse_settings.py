@@ -175,7 +175,7 @@ def check_timezone(text):
 
 CORE = {
     "who.replies": Spec("choice", "conversational", "DASC",
-                        values=("off", "when-addressed", "conversational")),
+                        values=("off", "when-addressed", "conversational", "freely")),
     # A list of user ids = the owners plus those people.
     "who.dms_from": Spec("choice", "owners", "D",
                          values=("owners", "shared-servers", "anyone"),
@@ -224,18 +224,16 @@ CORE = {
                       risky=True, legacy="allowed_user_ids"),
     "media.per_day": Spec("number", None, "ES", min=0, max=1000,
                           none=True, legacy="daily_cap"),
-    # Reaching out on its own, unprompted (proactive.py). Off by default;
-    # the Friends preset turns it on for its server. enabled scopes like
-    # images and video (Defaults = all servers; dms = check-ins with the
-    # owners and messages to people who DMed the bot first); the rest
-    # are bot-wide. The total a day follows frequency (rarely 2,
-    # sometimes 5, often 10).
+    # Independent server/DM heartbeat clocks; the explicit daily ceiling
+    # is bot-wide and file-only. Channel rules live in the server block.
+    "proactive.per_day": Spec("number", 30, "E", min=0, max=100000,
+                              discord_editable=False),
     "proactive.enabled": Spec("on-off", False, "EDASC"),
-    "proactive.frequency": Spec("choice", "rarely", "E",
+    "proactive.frequency": Spec("choice", "rarely", "EDS",
                                 values=("rarely", "sometimes", "often")),
-    "proactive.per_person_per_day": Spec("number", 1, "E", min=0, max=5),
-    "proactive.per_person_per_week": Spec("number", 3, "E", min=0, max=20),
-    "proactive.per_channel_per_day": Spec("number", 1, "E", min=0, max=5),
+    "proactive.per_person_per_day": Spec("number", 1, "ED", min=0, max=50),
+    "proactive.per_person_per_week": Spec("number", 3, "ED", min=0, max=100),
+    "proactive.per_channel_per_day": Spec("number", 1, "ES", min=0, max=50),
     "proactive.quiet_hours": Spec("text", "22:00-09:00", "E", maxlen=20,
                                   check=check_quiet_hours),
     "proactive.timezone": Spec("text", "UTC", "E", maxlen=64,
@@ -1152,6 +1150,15 @@ def _read_yaml(path):
     return data if data is not None else {}
 
 
+def server_config_paths(config_path):
+    """Optional server blocks next to config.yaml, named by Discord id."""
+    root = os.path.join(os.path.dirname(os.path.abspath(config_path)), "servers")
+    if not os.path.isdir(root):
+        return []
+    return [os.path.join(root, name) for name in sorted(os.listdir(root))
+            if name.endswith(".yaml")]
+
+
 class Settings:
     """A loaded, validated configuration (immutable; reload to change)."""
 
@@ -1161,6 +1168,7 @@ class Settings:
         self.layout = "new"
         self.notice = None
         self.raw = {}
+        self.server_files = {}
         self.mapping = []
         self.manifests = {}
         self.file_values = {}
@@ -1508,7 +1516,7 @@ class Settings:
 def _quieter(key, own, owners, spec=None):
     """The quieter of a server admin's value and the owners' value."""
     if key == "who.replies":
-        r = ("off", "when-addressed", "conversational")
+        r = ("off", "when-addressed", "conversational", "freely")
         if own in r and owners in r:
             return r[min(r.index(own), r.index(owners))]
         return own
@@ -1753,6 +1761,21 @@ def load(config_path, plugins_dir=None, overlay_path=None,
     p.known = lambda: _known_guilds(os.path.join(os.path.dirname(
         os.path.abspath(config_path)), "state.json"))
     _parse_new(p, data, aliases, st)
+    for path in server_config_paths(config_path):
+        sid = os.path.basename(path)[:-5]
+        if _id_str(sid) is None:
+            p.err(path, "filename must be a Discord server id followed by .yaml")
+            continue
+        inline = data.get("servers")
+        if isinstance(inline, dict) and sid in {str(k) for k in inline}:
+            p.err(path, f"server {sid} is also defined in config.yaml")
+            continue
+        try:
+            block = _read_yaml(path)
+        except (OSError, yaml.YAMLError) as e:
+            raise SettingsError(f"{path}: unreadable ({e})")
+        p.scope_block(("servers", sid), block, path)
+        st.server_files[sid] = path
     if p.errors:
         raise SettingsError("\n".join(p.errors))
     retired = p.retired | {str(n) for n in (raw.get("plugins") or {})
@@ -1936,8 +1959,15 @@ def _apply_overlay(st):
             cur = st.file_values.get((path, key))
             base = entry.get("base")
             if base is not None or (path, key) in st.file_values:
-                okb, nbase = normalize(spec, base) if base is not None \
-                    else (True, None)
+                # display() writes a number's missing base as "none";
+                # read it back as None even when the spec itself does
+                # not take none (a cap with a built-in default), or
+                # every such entry would retire itself as file-changed.
+                if base is None or (spec.type == "number"
+                                    and base == "none"):
+                    okb, nbase = True, None
+                else:
+                    okb, nbase = normalize(spec, base)
                 if not okb or nbase != cur:
                     reason = "file changed"
         if reason is not None:
@@ -2170,7 +2200,7 @@ def reset(config_path, keystr, by, plugins_dir=None, group=None, role=None):
 # Which way a change goes: the most permissive value last. Used by
 # /settings for the server-admin view (restrict-only) and risky changes.
 _RANKS = {
-    "who.replies": ("off", "when-addressed", "conversational"),
+    "who.replies": ("off", "when-addressed", "conversational", "freely"),
     "who.dms_from": ("owners", "shared-servers", "anyone"),
     "who.bots": ("ignore", "when-addressed"),
     "privacy.memory": ("nothing", "public-only", "everything"),
@@ -2452,6 +2482,12 @@ def _fold(config_path, plugins_dir):
             if isinstance(block, dict) \
                     and isinstance(block.get("channels"), dict):
                 block["channels"] = _by_str_id(block["channels"])
+    external = {sid: _read_yaml(filename)
+                for sid, filename in st.server_files.items()
+                if any(path[:2] == ("servers", sid) for (path, key), entry in todo)}
+    for block in external.values():
+        if isinstance(block.get("channels"), dict):
+            block["channels"] = _by_str_id(block["channels"])
     folded = []
     for (path, key), entry in todo:
         spec = st.spec(key)
@@ -2465,19 +2501,29 @@ def _fold(config_path, plugins_dir):
                               else key.split("."))
             else:
                 node_path += key.split(".")
+        target = data
+        prefix = list(_node_prefix(path)) if path != ("top",) else []
+        if path[0] == "servers" and path[1] in external:
+            target = external[path[1]]
+            node_path = node_path[2:]
+            prefix = prefix[2:]
         if path != ("top",):
             # A moved setting's old spelling at this layer goes, so the
             # file holds the folded value once.
             for old in _old_spellings(key):
-                _del_path(data, list(_node_prefix(path)) + old.split("."))
+                _del_path(target, prefix + old.split("."))
         if entry.get("value") == "inherit":
-            _del_path(data, node_path)
+            _del_path(target, node_path)
         else:
-            _set_path(data, node_path, display(spec, entry["_norm"]))
+            _set_path(target, node_path, display(spec, entry["_norm"]))
         folded.append(format_key(path, key))
     with overlay_lock(st.overlay_path):
         doc = _read_overlay_doc(st.overlay_path, strict=True)
         bak = backup(config_path)
+        for sid, block in external.items():
+            filename = st.server_files[sid]
+            backup(filename)
+            atomic_write_text(filename, dump_config(block))
         atomic_write_text(config_path, dump_config(data))
         now = _now()
         for k in folded:
@@ -3019,6 +3065,7 @@ LABELS = {
     "media.who": "Who can ask for images and video",
     "media.per_day": "Generations per day",
     "proactive.enabled": "Reaching out on its own",
+    "proactive.per_day": "Unprompted messages per day (all places)",
     "proactive.frequency": "How often it thinks of reaching out",
     "proactive.per_person_per_day": "Unprompted messages a person a day",
     "proactive.per_person_per_week": "Unprompted messages a person a week",
@@ -3032,6 +3079,7 @@ LABELS = {
     "memory.save_dms": "Save what you tell it in DMs to your Muse's memory",
 }
 VALUE_LABELS = {
+    ("who.replies", "freely"): "Freely (join conversations without a mention)",
     ("who.replies", "conversational"): "Chatty",
     ("who.replies", "when-addressed"): "Only when @mentioned",
     ("who.replies", "off"): "Off",
@@ -4556,10 +4604,10 @@ class Watcher:
 
     def _signature(self):
         out = []
-        for p in (self.config_path, self.overlay_path):
+        for p in [self.config_path, self.overlay_path] + server_config_paths(self.config_path):
             try:
                 s = os.stat(p)
-                out.append((s.st_mtime_ns, s.st_size, s.st_ino))
+                out.append((p, s.st_mtime_ns, s.st_size, s.st_ino))
             except OSError:
                 out.append(None)
         return tuple(out)

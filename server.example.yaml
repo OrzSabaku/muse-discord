@@ -1,0 +1,26 @@
+# Save as servers/<Discord-server-id>.yaml next to config.yaml.
+# This file contains one server block; no outer "servers:" key.
+name: Muse Lounge
+proactive:
+  enabled: off             # enable explicitly in the channels below
+  frequency: often          # rarely / sometimes / often; independent server timer
+  per_channel_per_day: 10   # each channel's daily unprompted-message ceiling
+who:
+  replies: when-addressed   # default for channels not listed below
+channels:
+  "300000000000000001":
+    name: "#muse-chat"
+    replies: freely         # may join human conversations without a mention
+    proactive:
+      enabled: on           # may also start conversations on server heartbeats
+    notes: "Join naturally; silence is fine when you have nothing to add."
+  "300000000000000002":
+    name: "#questions"
+    replies: when-addressed
+    proactive:
+      enabled: off
+  "300000000000000003":
+    name: "#announcements"
+    replies: off
+    proactive:
+      enabled: off

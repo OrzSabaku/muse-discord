@@ -88,3 +88,17 @@ python3 bin/settings.py undo --place dms --by muse.ai
 変更先は `defaults`・`dms`・`server:ID`・`channel:SERVER_ID:CHANNEL_ID` です。
 終了コード3の変更は未適用です。警告を確認し、その変更への明示的な承認後だけ `--yes` で再実行します。
 所有者は `/settings` の「Edit settings」→「Permissions」で所有者コマンドの許可と、全体の外部アプリ権限を変更できます。応答対象のユーザー・ロールは「People & replies」で指定します。[外部アプリ設定](EXTERNAL_APPS.md) を参照してください。
+
+### サーバーとチャンネルの発言設定
+
+[server.example.yaml](../server.example.yaml) を、`config.yaml` と同じディレクトリの `servers/<サーバーID>.yaml` にコピーして編集します。ファイル内には、そのサーバーの設定を直接書きます。`servers:` で囲む必要はありません。同じサーバーを `config.yaml` と別ファイルの両方に定義すると、検証エラーになります。
+
+| 設定 | 書く場所・動作 |
+| --- | --- |
+| `everywhere.proactive.per_day: 30` | `config.yaml`。全サーバーとDMを合わせた、直近24時間の自発発言数の上限。数値で指定し、`0` は自発発言を停止する。通常の返信数は含めない |
+| `proactive.frequency: often` | サーバー別ファイル。`rarely`・`sometimes`・`often` から指定し、サーバーごとに独立した間隔で自発発言を検討する。DMは `config.yaml` の `dms.proactive.frequency` に指定する |
+| `channels.<チャンネルID>.replies: freely` | サーバー別ファイル。呼びかけがなくても人の会話に参加できる。すべての発言に返信する義務はない |
+| `channels.<チャンネルID>.proactive.enabled: on` | サーバー別ファイル。自発発言を許可する。`freely` と併用すると、会話への参加と自発発言の両方を許可できる |
+| `replies: when-addressed` / `replies: off` | 各チャンネルで、呼びかけへの返信だけを許可する／返信を停止する。自発発言も止める場合は `proactive.enabled: off` を併記する |
+
+ファイル編集後は `python3 bin/settings.py validate` で確認します。モニターはファイルの追加・変更・削除を自動で読み直し、不正な編集の場合は直前の有効な設定を使い続けます。全体の日次上限はファイル編集専用です。所有者の在籍確認、ユーザーの拒否設定、静穏時間、未応答時の再送防止は引き続き適用されます。

@@ -427,7 +427,7 @@ SETTINGS REQUESTS (the owner's own DMs only):
   plugins.
 - What they say, and the key and values:
   - When it answers: chatty / only when @mentioned / off:
-    `who.replies`: `conversational`, `when-addressed`, `off`
+    `who.replies`: `freely`, `conversational`, `when-addressed`, `off`
   - Who can DM it (dms or defaults): `who.dms_from`: `owners`,
     `shared-servers`, `anyone`, or user ids (the owner plus those).
     Nobody: `who.replies` at `dms`: `off`.
@@ -458,13 +458,15 @@ SETTINGS REQUESTS (the owner's own DMs only):
   - Reaching out on its own (off by default): `proactive.enabled` (on,
     off). "Check in with me sometimes" is `dms` (the owner, and
     people who DMed you first); a server or channel for its quiet
-    channels; `defaults` for all servers. Defaults only:
-    `proactive.frequency` (`rarely`, `sometimes`, `often`),
-    `proactive.per_person_per_day` (0-5),
-    `proactive.per_person_per_week` (0-20),
-    `proactive.per_channel_per_day` (0-5), `proactive.quiet_hours`
-    (like `22:00-09:00`, or `off`), `proactive.timezone` (an IANA name
-    like `Europe/Paris`). "Stop messaging me" is not a setting
+    channels; `defaults` for all servers. `proactive.frequency`
+    (`rarely`, `sometimes`, `often`) has independent server and DM clocks.
+    `proactive.per_person_per_day` (0-50) and
+    `proactive.per_person_per_week` (0-100) apply to DMs;
+    `proactive.per_channel_per_day` (0-50) applies per channel and is set
+    on the server. `proactive.quiet_hours` (like `22:00-09:00`, or `off`)
+    and `proactive.timezone` (like `Europe/Paris`) are global defaults.
+    The global numeric `proactive.per_day` ceiling is file-only.
+    "Stop messaging me" is not a setting
     (REACHING OUT ON YOUR OWN).
   - An installed plugin: `plugins.<id>.enabled` (on, off).
   - Server presets: the `preset` op.
@@ -564,3 +566,7 @@ End the run as step 5 says, with `done`. Don't escalate routine
 replies. Only if an item was abusive or threatening, or truly needs
 the owner's personal attention, make that line `done; flag:
 <message_id> <a few words why>`, nothing more.
+
+When an item has `settings.replies: "freely"`, it may be ordinary human
+conversation without a mention. Join only when useful; `silent: true` is fine.
+Starting a conversation still requires a proactive slot and its nonce.

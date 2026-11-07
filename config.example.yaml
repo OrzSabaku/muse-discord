@@ -94,7 +94,10 @@ everywhere:
                           # it on for a server; under dms: below, on means
                           # check-ins with you and with people who DMed
                           # it first. Anyone can say "stop messaging me".
-    frequency: rarely     # rarely (1-2 times a day), sometimes (4-6), or
+    per_day: 30           # total unprompted messages across all servers and DMs
+                          # file-only numeric limit; 0 disables unprompted posts
+    frequency: rarely     # default; each server and DMs has its own timer
+                          # rarely (1-2 times a day), sometimes (4-6), or
                           # often (about hourly); most times it says nothing
     per_person_per_day: 1 # unprompted messages to one person a day
     per_person_per_week: 3
@@ -125,7 +128,10 @@ all_servers:
                           #   within ~2 minutes without @mentioning it.
                           # off: stays quiet.
 
-# --- One server at a time (example: remove the # marks to use) ----
+# --- One server at a time -----------------------------------------
+# Prefer servers/<server-id>.yaml (see server.example.yaml).
+# Inline blocks below still work; do not define the same server in both.
+# Example: remove the # marks to use.
 # servers:
 #   "200000000000000001":         # the server's id
 #     name: Muse Lounge           # a label for you; the bot ignores it

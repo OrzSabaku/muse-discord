@@ -1884,7 +1884,8 @@ def _join_summary(gid, ginfo, channels):
                 f"To let me talk there, press **Configure** and pick When "
                 f"it answers. To remove me, a server admin there can kick "
                 f"me.")
-    replies = {"off": "I stay quiet there",
+    replies = {"freely": "I may join conversations without being mentioned there",
+               "off": "I stay quiet there",
                "when-addressed": "I answer @mentions and replies to my "
                                  "messages there",
                "conversational": "I answer @mentions and replies to my "
@@ -4134,7 +4135,8 @@ def trigger_verdict(msg, guild_id=None, state=None):
                       if direct else None)
     if is_bot_author(author) and here["who.bots"] == "ignore":
         return None, "who.bots: ignore" if direct else None
-    if not direct and not (state is not None
+    freely = replies == "freely" and not is_bot_author(author)
+    if not direct and not freely and not (state is not None
                            and replies == "conversational"
                            and follow_up_open(state, msg)):
         return None, None
@@ -5766,6 +5768,7 @@ def settings_card(scope, here, author_id, from_bot, channel_id,
     card["audience"] = "private" if dm else "public"
     card["memory"] = "everything" if (dm and owner) \
         else here["privacy.memory"]
+    card["replies"] = here["who.replies"]
     card["length"] = here["style.length"]
     card["notes"] = here["style.notes"]
     if dm and owner and not from_bot:

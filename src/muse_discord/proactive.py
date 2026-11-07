@@ -82,7 +82,6 @@ TICK_SECS = 30
 INTERVALS = {"rarely": (12 * 3600, 24 * 3600),
              "sometimes": (4 * 3600, 6 * 3600),
              "often": (45 * 60, 75 * 60)}
-PER_DAY = {"rarely": 2, "sometimes": 5, "often": 10}   # in all, a day
 QUIET_SPREAD_SECS = 2 * 3600        # after quiet hours, a heartbeat lands
                                     # within this of their end
 TARGETS_MAX = 25
@@ -307,6 +306,61 @@ class Proactive:
                 return True
         return False
 
+    def heartbeat_scopes(self):
+        """Independent clocks: one per enabled server, and one for DMs.
+        Channel overrides decide whether a server needs a clock.
+        """
+        st, MS = self.st(), self.m.MS
+        scopes = {}
+        if st.get("proactive.enabled", MS.Scope.dm()):
+            scopes["dms"] = MS.Scope.dm()
+        for cid, info in self.m.CHANNELS.items():
+            gid = info.get("guild_id")
+            if gid and st.get("proactive.enabled", self.m.scope_for(gid, cid)):
+                scopes[str(gid)] = MS.Scope.server(gid)
+        return scopes
+
+    def heartbeat_key(self, target):
+        if target["type"] != "channel":
+            return "dms"
+        info = self.m.CHANNELS.get(target["channel_id"]) or {}
+        return str(info.get("guild_id"))
+
+    def due_heartbeats(self, now):
+        """Persist independent deadlines; a faster server cannot advance
+        another server's clock. Old single-clock state is ignored.
+        """
+        d = self.data()
+        clocks = d.get("heartbeats")
+        if not isinstance(clocks, dict):
+            clocks = d["heartbeats"] = {}
+            self._dirty = True
+        scopes = self.heartbeat_scopes()
+        for key in set(clocks) - scopes.keys():
+            del clocks[key]
+            self._dirty = True
+        due = set()
+        for key, scope in scopes.items():
+            freq = self.st().get("proactive.frequency", scope)
+            clock = clocks.get(key)
+            if not isinstance(clock, dict) or clock.get("freq") != freq \
+                    or not isinstance(clock.get("next"), (int, float)):
+                clocks[key] = {"freq": freq, "next": self.schedule(now, freq)}
+                self._dirty = True
+            elif now >= clock["next"]:
+                due.add(key)
+        return due
+
+    def advance_heartbeats(self, keys, now):
+        """Advance only clocks whose turn was actually considered.
+        Busy slots and targets left for the other side keep their turn.
+        """
+        clocks = self.data()["heartbeats"]
+        for key in keys:
+            clock = clocks[key]
+            clock["next"] = self.schedule(now, clock["freq"])
+            self._dirty = True
+
     def schedule(self, now, freq=None):
         """The next heartbeat: a uniform gap for the frequency, moved out
         of quiet hours (to within QUIET_SPREAD_SECS after they end)."""
@@ -434,12 +488,11 @@ class Proactive:
         if uid in d["opted_out"]:
             return "opted out"
         st = self.st()
+        dm = self.m.MS.Scope.dm()
         if self.sent_total(now) >= self.total_cap():
             return "the day's total is reached"
-        day = st.get("proactive.per_person_per_day",
-                     self.m.MS.Scope.everywhere())
-        week = st.get("proactive.per_person_per_week",
-                      self.m.MS.Scope.everywhere())
+        day = st.get("proactive.per_person_per_day", dm)
+        week = st.get("proactive.per_person_per_week", dm)
         if len(self.sent_to("user_id", uid, now - DAY)) >= day:
             return "per person per day cap"
         if len(self.sent_to("user_id", uid, now - WEEK)) >= week:
@@ -482,7 +535,7 @@ class Proactive:
             return "replies are off (or paused) there"
         if self.sent_total(now) >= self.total_cap():
             return "the day's total is reached"
-        cap = self.every("proactive.per_channel_per_day")
+        cap = here["proactive.per_channel_per_day"]
         if len(self.sent_to("channel_id", cid, now - DAY)) >= cap:
             return "per channel per day cap"
         hist = self.history(state, cid)
@@ -505,7 +558,8 @@ class Proactive:
         return None
 
     def total_cap(self):
-        return PER_DAY.get(self.every("proactive.frequency"), PER_DAY["rarely"])
+        """Explicit bot-wide daily ceiling, independent of frequency."""
+        return self.every("proactive.per_day")
 
     def sent_total(self, now):
         return len([e for e in self.data()["sent"]
@@ -758,23 +812,22 @@ class Proactive:
                 self.note_item(mid, meta)
             d["seeded"] = True
             self._dirty = True
-        freq = self.every("proactive.frequency")
-        if d.get("freq") != freq or not d.get("next"):
-            d["freq"], d["next"] = freq, self.schedule(now, freq)
-            self._dirty = True
-        elif now >= d["next"]:
-            d["next"] = self.schedule(now, freq)
-            self._dirty = True
+        due = self.due_heartbeats(now)
+        if due:
             if d.get("slot"):
-                print("Heartbeat skipped: the last one is still open.",
+                print("Heartbeat deferred: the last one is still open.",
                       flush=True)
             elif self.blocked():
                 print("Heartbeat skipped: a bad proactive.json is set aside "
                       "(docs/PROTOCOL.md, proactive.json).", flush=True)
-            elif self.enabled_anywhere() \
-                    and self.sent_total(now) < self.total_cap():
-                # (Quiet hours are per target: a person's own time zone.)
-                targets = self.pick_side(self.eligible(state, now))
+            elif self.sent_total(now) < self.total_cap():
+                candidates = [
+                    t for t in self.eligible(state, now)
+                    if self.heartbeat_key(t) in due]
+                targets = self.pick_side(candidates)
+                available = {self.heartbeat_key(t) for t in candidates}
+                selected = {self.heartbeat_key(t) for t in targets}
+                self.advance_heartbeats((due - available) | selected, now)
                 if targets:
                     self.make_slot(state, targets, now)
                     return

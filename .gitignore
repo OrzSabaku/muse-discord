@@ -1,6 +1,8 @@
 # Your filled-in config (the example stays tracked), the settings changed
 # from Discord, and the backups bin/settings.py migrate / fold keep
 config.yaml
+servers/*.yaml
+servers/*.yaml.bak-*
 config.discord.yaml
 config.discord.yaml.lock
 config.yaml.bak-*

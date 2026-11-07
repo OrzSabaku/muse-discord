@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "_lib"))
 from common import HOOK_RUNTIME, MUT_DIR, scratch  # noqa: E402
 from settings_harness import (BOT, CH, CH2, CH_G2, G1, OTHER_BOT,  # noqa: E402
-                              OWNER, U1, U2, MS, HTTPErr, bump, dmsg, gmsg,
+                              OWNER, U1, U2, G2, MS, HTTPErr, bump, dmsg, gmsg,
                               load_monitor, quiet, sf, state)
 
 DM_U1 = "400000000000000079"
@@ -103,8 +103,10 @@ class Base(unittest.TestCase):
         d = pro.data()
         if side:
             d["side"] = "public" if side == "private" else "private"
-        d["freq"] = pro.every("proactive.frequency")
-        d["next"] = self.now - 1
+        d["heartbeats"] = {
+            key: {"freq": pro.st().get("proactive.frequency", scope),
+                  "next": self.now - 1}
+            for key, scope in pro.heartbeat_scopes().items()}
         pro._next_tick = 0
         with quiet() as buf:
             pro.tick(self.st, self.now)
@@ -235,6 +237,95 @@ class OffByDefault(Base):
 
 
 class Schedule(Base):
+    def test_independent_server_and_dm_clocks(self):
+        m = load_monitor(f'''version: 1
+owners: ["{OWNER}"]
+token_from: env:MUSE_TEST_TOKEN
+everywhere:
+  proactive:
+    per_day: 17
+    quiet_hours: "off"
+dms:
+  proactive:
+    enabled: on
+    frequency: sometimes
+servers:
+  "{G1}":
+    proactive:
+      enabled: off
+      frequency: rarely
+    channels:
+      "{CH}":
+        proactive:
+          enabled: on
+  "{G2}":
+    proactive:
+      enabled: on
+      frequency: often
+''')
+        pro = m.PRO
+        self.assertEqual(pro.total_cap(), 17)
+        self.assertEqual(pro.due_heartbeats(self.now), set())
+        clocks = pro.data()["heartbeats"]
+        self.assertEqual(set(clocks), {G1, G2, "dms"})
+        self.assertTrue(12 * HOUR <= clocks[G1]["next"] - self.now <= 24 * HOUR)
+        self.assertTrue(45 * 60 <= clocks[G2]["next"] - self.now <= 75 * 60)
+        self.assertTrue(4 * HOUR <= clocks["dms"]["next"] - self.now <= 6 * HOUR)
+        slow_next = clocks[G1]["next"]
+        self.assertEqual(pro.due_heartbeats(self.now + 2 * HOUR), {G2})
+        self.assertEqual(clocks[G1]["next"], slow_next)
+        # A due fast server cannot expose a slow server or DM to a wake.
+        with quiet(), mock.patch.object(pro, "eligible", return_value=[
+                {"type": "channel", "channel_id": CH, "user_id": None},
+                {"type": "channel", "channel_id": CH_G2, "user_id": None},
+                {"type": "owner", "channel_id": OWNER_DM, "user_id": OWNER}]):
+            pro.tick(state(m), self.now + 2 * HOUR)
+        slot = pro.data()["slot"]
+        self.assertIsNotNone(slot)
+        self.assertEqual(set(slot["targets"]), {CH_G2})
+        # Persisted deadlines survive reload; invalid clock state resets.
+        pro.save()
+        pro._data = None
+        self.assertEqual(pro.data()["heartbeats"][G1]["next"], slow_next)
+        pro.data()["heartbeats"][G1] = None
+        pro.due_heartbeats(self.now)
+        self.assertEqual(pro.data()["heartbeats"][G1]["freq"], "rarely")
+
+    def test_busy_slot_keeps_the_due_server_pending_after_restart(self):
+        pro = self.m.PRO
+        # Open a private slot while only the public server's clock is due.
+        self.assertIsNotNone(self.heartbeat("private"))
+        clocks = pro.data()["heartbeats"]
+        clocks[G1]["next"] = self.now - 1
+        clocks["dms"]["next"] = self.now + HOUR
+        deadline = clocks[G1]["next"]
+        pro._next_tick = 0
+        with quiet():
+            pro.tick(self.st, self.now)
+        self.assertEqual(clocks[G1]["next"], deadline)
+        pro.save()
+        pro._data = None
+        self.assertEqual(pro.data()["heartbeats"][G1]["next"], deadline)
+        # As soon as the private slot finishes, the server gets its turn.
+        with quiet():
+            pro.end_slot(self.st, "test complete")
+            pro._next_tick = 0
+            pro.tick(self.st, self.now + 31)
+        self.assertEqual(set(pro.data()["slot"]["targets"]), {CH, CH2})
+        self.assertGreater(pro.data()["heartbeats"][G1]["next"], self.now + 31)
+
+    def test_public_turn_survives_a_simultaneous_private_turn(self):
+        pro = self.m.PRO
+        self.assertIsNotNone(self.heartbeat("private"))
+        # Only the selected DM clock advances; the public clock stays due.
+        self.assertLess(pro.data()["heartbeats"][G1]["next"], self.now)
+        self.assertGreater(pro.data()["heartbeats"]["dms"]["next"], self.now)
+        with quiet():
+            pro.end_slot(self.st, "test complete")
+            pro._next_tick = 0
+            pro.tick(self.st, self.now + 31)
+        self.assertEqual(set(pro.data()["slot"]["targets"]), {CH, CH2})
+
     def test_frequency_and_jitter_bounds(self):
         pro = self.m.PRO
         for freq, (lo, hi) in (("rarely", (12 * HOUR, 24 * HOUR)),
@@ -256,8 +347,8 @@ class Schedule(Base):
 
     def test_one_heartbeat_per_gap(self):
         """Ticking every minute for two days at "rarely" (12-24 h apart)
-        wakes 2 to 4 times, never with two slots open."""
-        self.m.PRO.data()["next"] = None
+        wakes 2 to 8 times across the two independent clocks, never with two slots open."""
+        self.m.PRO.data()["heartbeats"] = {}
         wakes, t0 = 0, self.now
         while self.now < t0 + 48 * HOUR:
             self.m.PRO._next_tick = 0
@@ -270,7 +361,7 @@ class Schedule(Base):
                 self.m.queue_edit(drop=lambda x: x["kind"] == "proactive")
                 self.m.PRO.data()["slot"] = None
             self.now += 60
-        self.assertTrue(2 <= wakes <= 4, wakes)
+        self.assertTrue(2 <= wakes <= 8, wakes)
 
 
 class Posting(Base):
@@ -391,11 +482,11 @@ class Posting(Base):
     def test_total_cap(self):
         pro = self.m.PRO
         pro.data()["sent"] += [{"at": self.now - 60, "channel_id": "1",
-                                "user_id": None, "type": "channel"}] * 2
+                                "user_id": None, "type": "channel"}] * pro.total_cap()
         self.outbox(self.post(self.slot, DM_U1))
         self.assert_refused()
         self.now += HOUR
-        self.assertIsNone(self.heartbeat(), self.out)   # rarely: 2 a day
+        self.assertIsNone(self.heartbeat(), self.out)   # explicit bot-wide daily ceiling
 
     def test_no_second_message_without_an_answer(self):
         self.outbox(self.post(self.slot, DM_U1))
