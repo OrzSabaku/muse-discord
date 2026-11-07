@@ -1,14 +1,10 @@
 """setup_common.py -- shared by bin/connect-discord.py and bin/doctor.py.
 
-The few Discord facts setup depends on, one small REST helper (stdlib
-urllib, no third-party packages), and the token lookup. Not a command.
+The few Discord facts setup depends on, one shared discord.py REST helper, and the token lookup. Not a command.
 """
-import json
 import os
 import sys
-import urllib.error
 import urllib.parse
-import urllib.request
 
 PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -29,6 +25,9 @@ def venv_python():
 # `python3 bin/<script>` always works.
 try:
     import yaml  # noqa: F401
+    import discord
+    if not (2, 7, 1) <= discord.version_info[:3] < (2, 8, 0):
+        raise ImportError("unsupported discord.py version")
     from pydantic import TypeAdapter  # noqa: F401 (Pydantic v2 required)
 except ImportError:
     _venv = venv_python()
@@ -92,28 +91,14 @@ def api_base():
 def call(method, path, token, body=None):
     """One REST call as the bot. Returns the parsed JSON (None for an
     empty body). Raises ApiError. Never puts the token in an error."""
-    data = None
-    headers = {"Authorization": f"Bot {token}",
-               "User-Agent": "DiscordBot (https://github.com/cszach/"
-                             "muse-discord, setup)"}
-    if body is not None:
-        data = json.dumps(body).encode()
-        headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(api_base() + path, data=data,
-                                 headers=headers, method=method)
+    from muse_discord.discord_rest import transport, DiscordError
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            raw = r.read()
-    except urllib.error.HTTPError as e:
-        try:
-            err = json.loads(e.read() or b"{}")
-        except ValueError:
-            err = {}
-        raise ApiError(e.code, err.get("code"),
-                       str(err.get("message") or e.reason)) from None
-    except (urllib.error.URLError, OSError) as e:
-        raise ApiError(0, None, str(getattr(e, "reason", e))) from None
-    return json.loads(raw) if raw else None
+        value = transport(token, api_base()).request(method, path, body, timeout=TIMEOUT)
+        return value if value != "" else None
+    except DiscordError as exc:
+        raise ApiError(exc.status, exc.discord_code, str(exc)) from None
+    except (OSError, TimeoutError) as exc:
+        raise ApiError(0, None, str(exc)) from None
 
 
 def invite_url(app_id):
