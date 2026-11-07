@@ -35,13 +35,13 @@ everywhere:
     allow: everyone
     ignore: []
     bots: when-addressed
-    bot_exchange_limit: none
+    bot_exchange_limit: null
   privacy:
     suspicious: hold-for-review
     never_share: ["blue pelican"]
   limits:
-    per_day: none
-    per_person_per_day: none
+    per_day: null
+    per_person_per_day: null
   media:
     enabled: "off"
 

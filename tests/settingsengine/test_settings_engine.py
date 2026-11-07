@@ -368,7 +368,9 @@ class NoOp(unittest.TestCase):
 
     def test_reset_and_file_value(self):
         # A reset over a config.yaml value still writes "inherit".
-        cfg = config(self, BASE + "    who:\n      replies: off\n")
+        cfg = config(self, BASE + """    who:
+      replies: "off"
+""")
         r = apply(cfg, [C(S1, "who.replies", "inherit")])
         self.assertTrue(r.changed)
         self.assertEqual(doc(cfg)["values"][KS]["value"], "inherit")
@@ -379,7 +381,9 @@ class NoOp(unittest.TestCase):
         self.assertEqual(doc(cfg)["values"][f'servers."{G2}".who.replies']
                          ["value"], "inherit")
         # Setting the file's own value again drops the entry (undoable).
-        cfg = config(self, BASE + "    who:\n      replies: off\n")
+        cfg = config(self, BASE + """    who:
+      replies: "off"
+""")
         apply(cfg, [C(S1, "who.replies", "when-addressed")])
         self.assertIn(KS, doc(cfg)["values"])
         apply(cfg, [C(S1, "who.replies", "off")])
@@ -394,8 +398,10 @@ class NoOp(unittest.TestCase):
         self.assertNotIn(KS, doc(cfg)["values"])
 
     def test_channel_with_unknown_category_is_written(self):
-        cfg = config(self, BASE + f'    channels:\n      "{CAT}":\n'
-                     "        replies: off\n")
+        cfg = config(self, BASE + f"""    channels:
+      "{CAT}":
+        replies: "off"
+""")
         # #general is in category Staff (off); without knowing that, a
         # "conversational" write must not be skipped
         r = apply(cfg, [C(P.channel(G1, CH), "who.replies",

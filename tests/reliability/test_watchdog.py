@@ -26,10 +26,10 @@ def scenario(steps, env=None, token_file=True, token_env=None,
         with open(tok, "w") as f:
             f.write("dummy\n")
     with open(os.path.join(d, "config.yaml"), "w") as f:
-        f.write(f"bot:\n  token_file: {tok}\n"
-                f"  token_env: {token_env or 'null'}\n"
-                f"presence:\n  enabled: {'true' if presence else 'false'}\n"
-                f"updates:\n  check: false\n")
+        import yaml
+        yaml.safe_dump({"token_from": [f"env:{token_env}", tok] if token_env else tok,
+                        "presence": {"enabled": presence},
+                        "updates": {"notify": False}}, f)
     if old_log:
         with open(os.path.join(d, "monitor.log"), "w") as f:
             f.write(old_log)

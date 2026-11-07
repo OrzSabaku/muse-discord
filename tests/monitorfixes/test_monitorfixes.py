@@ -189,7 +189,10 @@ class DailyCap(Base):
 class RefusedStaysRefused(Base):
     def test_replies_off_then_on(self):
         m = self.m
-        off = BASE + "all_servers:\n  who:\n    replies: off\n"
+        off = BASE + """all_servers:
+  who:
+    replies: "off"
+"""
         self.rewrite(off)
         mention = gmsg(U1, "@muse anyone?", mention=True, age=600)
         reply = gmsg(U2, "hey", reply_to_author=BOT, age=599)
@@ -230,7 +233,10 @@ class RefusedStaysRefused(Base):
 
     def test_owner_dm_with_dms_off(self):
         m = self.m
-        self.rewrite(BASE + "dms:\n  who:\n    replies: off\n")
+        self.rewrite(BASE + """dms:
+  who:
+    replies: "off"
+""")
         m.DM_CHANNELS[DM_CH] = "owner"
         dm = dmsg(OWNER, "you there?")
         dm["id"] = sf(600)

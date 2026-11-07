@@ -56,8 +56,13 @@ class GeneralPath(_B):
         are off, or the DM of someone the DM settings refuse."""
         self.mod.OWNER_IN_GUILD[G1] = False
         self.apply(MS.pause_changes(MS.Place.server(G1)))
-        self.config("all_servers:\n  who:\n    replies: off\n"
-                    "dms:\n  who:\n    dms_from: owners\n")
+        self.config("""all_servers:
+  who:
+    replies: "off"
+dms:
+  who:
+    dms_from: owners
+""")
         for cid in (CH, CH2, CH_G2, DM_U2):
             with self.subTest(cid):
                 self.outbox(self.forged(cid))

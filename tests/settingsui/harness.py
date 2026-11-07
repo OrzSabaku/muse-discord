@@ -106,7 +106,7 @@ servers:
   "{G2}":
     name: Study Group
     privacy:
-      suspicious: answer
+      suspicious: hold-for-review
 """
 
 

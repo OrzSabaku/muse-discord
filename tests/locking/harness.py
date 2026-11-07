@@ -19,8 +19,10 @@ ARGV = list(sys.argv)   # before the monitor import overwrites it
 SCRATCH = scratch("muse-locking-")
 CFG = os.path.join(SCRATCH, "config.yaml")
 with open(CFG, "w") as f:
-    f.write("bot:\n  token_file: /nonexistent\nbehavior:\n"
-            "  coalesce_seconds: 5\n")
+    f.write("""token_from: /nonexistent
+engine:
+  coalesce_seconds: 5
+""")
 os.environ["MUSE_DISCORD_CONFIG"] = CFG
 sys.argv = ["x", "dummy-token"]
 

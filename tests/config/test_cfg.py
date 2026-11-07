@@ -56,13 +56,14 @@ class Config(unittest.TestCase):
 
     def test_defaults_and_nulls(self):
         """Missing keys and explicit nulls -> defaults."""
-        for name, text in (("empty", "{}\n"), ("nulls", """
-        behavior: {coalesce_seconds: null, max_reply_chars: null,
-                   max_bot_turns: null}
-        engine:
-          rest_poll_seconds: null
-          sweep: {every_cycles: null, grace_seconds: null}
-        """)):
+        for name, text in (("empty", "{}\n"), ("nulls", """engine:
+  rest_poll_seconds: null
+  sweep:
+    every_cycles: null
+    grace_seconds: null
+  coalesce_seconds: null
+  max_reply_chars: null
+""")):
             d, w, _ = run(name, text)
             self.check(f"{name} COALESCE_SECS", d["COALESCE_SECS"], 5.0)
             self.check(f"{name} MAX_REPLY_CHARS", d["MAX_REPLY_CHARS"], 1800)
@@ -75,16 +76,24 @@ class Config(unittest.TestCase):
     def test_zeros_out_of_range_and_garbage(self):
         """Explicit zeros: honored where meaningful (caps), clamped where
         not (no hot loops)."""
-        d, w, _ = run("zeros", """
-        behavior: {coalesce_seconds: 0, max_reply_chars: 0, max_bot_turns: 0}
-        safety: {daily_reply_cap: 0, per_user_daily_cap: 0}
-        engine:
-          rest_poll_seconds: 0
-          discovery_refresh_minutes: 0
-          sweep: {every_cycles: 0, grace_seconds: 0, max_age_hours: 0,
-                  max_recoveries: 0}
-          backoff: {initial_seconds: 0, max_seconds: 0}
-        """)
+        d, w, _ = run("zeros", """engine:
+  rest_poll_seconds: 0
+  discovery_refresh_minutes: 0
+  sweep:
+    every_cycles: 0
+    grace_seconds: 0
+    max_age_hours: 0
+    max_recoveries: 0
+  backoff:
+    initial_seconds: 0
+    max_seconds: 0
+  coalesce_seconds: 0
+  max_reply_chars: 0
+everywhere:
+  limits:
+    per_day: 0
+    per_person_per_day: 0
+""")
         self.check("COALESCE_SECS", d["COALESCE_SECS"], 0.0)
         self.check("MAX_REPLY_CHARS", d["MAX_REPLY_CHARS"], 1)
         self.check("POLL_INTERVAL", d["POLL_INTERVAL"], 10)
@@ -95,11 +104,14 @@ class Config(unittest.TestCase):
         self.check("DAILY_REPLY_CAP", d["DAILY_REPLY_CAP"], 0)
         self.check("PER_USER_DAILY_CAP", d["PER_USER_DAILY_CAP"], 0)
         # Out of range above (Discord's 2000-character limit) / garbage.
-        d, w, _ = run("range", """
-        behavior: {max_reply_chars: 5000, coalesce_seconds: -3}
-        engine: {rest_poll_seconds: 45, discovery_refresh_minutes: 3,
-                 sweep: {every_cycles: "abc"}}
-        """)
+        d, w, _ = run("range", """engine:
+  rest_poll_seconds: 45
+  discovery_refresh_minutes: 3
+  sweep:
+    every_cycles: abc
+  coalesce_seconds: -3
+  max_reply_chars: 5000
+""")
         self.check("MAX_REPLY_CHARS", d["MAX_REPLY_CHARS"], 2000)
         self.check("COALESCE_SECS", d["COALESCE_SECS"], 0.0)
         self.check("POLL_INTERVAL", d["POLL_INTERVAL"], 45)

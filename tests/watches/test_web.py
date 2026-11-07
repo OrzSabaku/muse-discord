@@ -160,12 +160,8 @@ class Web(tw.Base):
         self.assertEqual(f["reminder"]["items"][0]["result"], "gave-up")
         self.assertEqual(self.items(), {})
 
-    def test_owners_only_whatever_an_old_config_says(self):
-        # An old config that opened web watches to everyone still loads
-        # (the setting is ignored, with one note), and changes nothing.
-        self.cfg = tw.CFG + "    abilities:\n      web_watches: everyone\n"
+    def test_only_owners_can_create_web_watches(self):
         self.boot()
-        self.assertIn("abilities.web_watches", self.mod.import_out)
         msg = self.web(U1, every=1800, dm=False)
         self.assertEqual(self.items(), {})
         self.assertEqual(self.ledger(msg["id"])["code"], "watch-not-allowed")

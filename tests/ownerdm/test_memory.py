@@ -138,11 +138,12 @@ class OwnerMemory(Base):
         self.assertIn("Likes ? tea", self.memory())
         self.assertEqual([s["content"] for s in self.sends(DM)], ["Noted!"])
 
-    def test_off_in_an_old_layout_config(self):
+    def test_memory_can_be_disabled(self):
         path = os.path.join(os.path.dirname(self.mem), "old.yaml")
         with open(path, "w") as f:
-            f.write(f'bot:\n  owners:\n    user_ids: ["{OWNER2}"]\n'
-                    f'memory:\n  save_dms: off\n')
+            f.write("""memory:
+  save_dms: false
+""")
         st = self.mod.MS.load(path)
         self.assertFalse(st.top("memory.save_dms"))
 

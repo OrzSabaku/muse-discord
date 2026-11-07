@@ -261,9 +261,15 @@ class ConnectDiscord(unittest.TestCase):
     def test_an_existing_config_is_never_lost(self):
         # Invalid (a typo): left untouched, nothing written at all, so
         # the running bot keeps its last good settings.
-        broken = ('version: 1\nowners: ["1100000000000000009"]\n'
-                  'all_servers:\n  who:\n    replies: off\n'
-                  'everywhere:\n  style:\n    lenght: brief\n')
+        broken = ("""version: 1
+owners: ["1100000000000000009"]
+all_servers:
+  who:
+    replies: "off"
+everywhere:
+  style:
+    lenght: brief
+""")
         with open(self.cfg, "w") as f:
             f.write(broken)
         r, out = self.connect(TOKEN)

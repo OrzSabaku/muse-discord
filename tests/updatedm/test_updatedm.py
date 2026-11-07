@@ -129,7 +129,7 @@ class Announce(unittest.TestCase):
         self.assertEqual(len(dm_posts(mod)), 1)
 
     def test_check_off_no_dm(self):
-        mod = load("updates:\n  check: false\n")
+        mod = load("updates:\n  notify: false\n")
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
         mod.announce_update({})
         self.assertEqual(mod.api.posts, [])
@@ -141,7 +141,7 @@ class Announce(unittest.TestCase):
         self.assertEqual(len(dm_posts(mod)), 1)
         cfg = os.environ["MUSE_DISCORD_CONFIG"]
         with open(cfg, "a") as f:
-            f.write("updates:\n  check: false\n")
+            f.write("updates:\n  notify: false\n")
         os.utime(cfg, (time.time() + 5, time.time() + 5))
         write_check(mod, V2, ["v1.2.0 (2026-11-01): Y"])
         mod.announce_update(state)
@@ -399,8 +399,12 @@ class Watchdog(unittest.TestCase):
         with open(tok, "w") as f:
             f.write("dummy\n")
         with open(os.path.join(self.inst, "config.yaml"), "w") as f:
-            f.write(f"bot:\n  token_file: {tok}\npresence:\n  enabled: "
-                    f"false\nupdates:\n  check: {str(check).lower()}\n")
+            f.write(f"""token_from: '{tok}'
+presence:
+  enabled: false
+updates:
+  notify: {str(check).lower()}
+""")
 
     def release(self, tag, text=None, annotated=True):
         """Commit a CHANGELOG with TEXT as the newest entry, tag it, push."""

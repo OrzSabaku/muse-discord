@@ -15,12 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__))), "_lib"))
 from common import MUT_DIR as REPO, scratch  # noqa: E402
 
-OLD_CFG = """bot:
-  token_file: /nonexistent
-behavior:
-  respond_to: [mention, reply_to_bot, name]
-  call_names: [Pip]
-  active_guild_ids: ["G"]
+OLD_CFG = """token_from: /nonexistent
 """
 PROBE = r"""
 import importlib.util, io, json, os, sys, contextlib

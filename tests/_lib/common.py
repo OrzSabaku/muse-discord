@@ -54,6 +54,8 @@ def copy_watchdog(dst_dir):
     with open(os.path.join(MUT_DIR, "bin", "watchdog.sh")) as f:
         text = f.read()
     os.makedirs(os.path.join(dst_dir, "bin"), exist_ok=True)
+    shutil.copytree(os.path.join(MUT_DIR, "src"), os.path.join(dst_dir, "src"),
+                    dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
     dst = os.path.join(dst_dir, "bin", "watchdog.sh")
     with open(dst, "w") as f:
         f.write(text.replace("    sleep 5\n", "    sleep 0.2\n"))

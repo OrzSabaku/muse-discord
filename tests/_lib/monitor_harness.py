@@ -91,13 +91,10 @@ def write_cfg(tmp, extra=""):
     path = os.path.join(tmp, "config.yaml")
     with open(path, "w") as f:
         f.write(f"""owners:
-  user_ids: ["{OWNER}"]
-behavior:
-  coalesce_seconds: 0.01
+- '{OWNER}'
 engine:
   rest_poll_seconds: 1
-plugins:
-  media_generation: {{enabled: false}}
+  coalesce_seconds: 0.01
 """ + extra)
     return path
 

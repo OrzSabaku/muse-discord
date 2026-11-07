@@ -69,7 +69,7 @@ class MentionWatchLeases(unittest.TestCase):
         out, _ = self.run_hook()
         self.assertIsNone(self.wake_ids(out), out)
 
-        self.put("config.yaml", 'persona:\n  file: "mypersona.md"\n')
+        self.put("config.yaml", 'persona: "mypersona.md"\n')
         self.put("mypersona.md", PERSONA)
         self.put("reply_queue.json", [
             {"message_id": "1", "channel_id": "9", "content": "hi"},

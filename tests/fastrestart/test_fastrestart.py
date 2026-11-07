@@ -74,9 +74,12 @@ class Base(unittest.TestCase):
         with open(tok, "w") as f:
             f.write("dummy\n")
         with open(os.path.join(self.d, "config.yaml"), "w") as f:
-            f.write(f"bot:\n  token_file: {tok}\n"
-                    "presence:\n  enabled: false\n"
-                    "updates:\n  check: false\n")
+            f.write(f"""token_from: '{tok}'
+presence:
+  enabled: false
+updates:
+  notify: false
+""")
         self.state = os.path.join(self.d, "hookstate.json")
         self.env = dict(os.environ,
                         HATCH_HOOK_RUNTIME=RUNTIME, HOOK_STATE=self.state,
