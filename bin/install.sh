@@ -45,7 +45,7 @@ else
 fi
 
 # ---- Python packages ----
-have_pkgs() { "$1" -c 'import websockets, yaml; from pydantic import TypeAdapter; from discord.ui import LayoutView' >/dev/null 2>&1; }
+have_pkgs() { "$1" -c 'import websockets, yaml; from pydantic import TypeAdapter; from discord.ui import LayoutView; import discord; assert (2,7,1) <= discord.version_info[:3] < (2,8,0)' >/dev/null 2>&1; }
 if have_pkgs "$PY"; then
   echo "OK Python packages ($PY)"
 elif python3 -m pip install --user -q -r "$REQ" >/dev/null 2>&1 \

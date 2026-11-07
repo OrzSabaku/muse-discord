@@ -495,7 +495,6 @@ def get_guilds():
 
 
 # Discord permission bits used by the talk-scope computation.
-PERM_ADMINISTRATOR = 1 << 3
 PERM_SEND_MESSAGES = 1 << 11
 PERM_SEND_IN_THREADS = 1 << 38
 
@@ -516,51 +515,30 @@ def _guild_base_perms(gid, gobj):
     roles = gobj.get("roles") or []
     if not roles:
         return None, [], joined_at
-    member_roles = set(member.get("roles") or [])
-    perms = 0
-    for r in roles:
-        if r.get("id") == gid or r.get("id") in member_roles:
-            try:
-                perms |= int(r.get("permissions") or 0)
-            except (TypeError, ValueError):
-                pass
+    member_roles = set(map(str, member.get("roles") or []))
+    role_values = {}
+    for role in roles:
+        try:
+            role_values[str(role["id"])] = int(role.get("permissions") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+    member_roles.intersection_update(role_values)
+    try:
+        from muse_discord.discord_permissions import guild_permissions
+        perms = guild_permissions(gid, role_values, gobj.get("owner_id"), BOT_ID, member_roles)
+    except (KeyError, TypeError, ValueError):
+        return None, [], joined_at
     return perms, member_roles, joined_at
 
 
-def _channel_perms(gid, base_perms, overwrites, member_role_ids,
-                   member_id=None):
-    """Discord's permission resolution for one channel: start from the
-    guild base permissions, then apply overwrites in order: the @everyone
-    overwrite (the @everyone role id equals the guild id), then all role
-    overwrites combined, then the member-specific overwrite (the bot's,
-    or member_id's: reminders and watches compute a requester's)."""
-    member_id = member_id or BOT_ID
-    if base_perms & PERM_ADMINISTRATOR:
-        return (1 << 62) - 1  # effectively every permission
-    allow = deny = 0
-    role_deny = role_allow = 0
-    member_deny = member_allow = 0
-    have_member = False
-    for ow in overwrites or []:
-        try:
-            o_allow = int(ow.get("allow") or 0)
-            o_deny = int(ow.get("deny") or 0)
-        except (TypeError, ValueError):
-            continue
-        if ow.get("type") == 0:  # role overwrite
-            if ow.get("id") == gid:
-                deny, allow = o_deny, o_allow
-            elif ow.get("id") in member_role_ids:
-                role_deny |= o_deny
-                role_allow |= o_allow
-        elif ow.get("type") == 1 and ow.get("id") == member_id:  # member
-            member_deny, member_allow = o_deny, o_allow
-            have_member = True
-    perms = (base_perms & ~deny) | allow
-    perms = (perms & ~role_deny) | role_allow
-    if have_member:
-        perms = (perms & ~member_deny) | member_allow
-    return perms
+def _channel_perms(gid, base_perms, overwrites, member_role_ids, member_id=None):
+    from muse_discord.discord_permissions import channel_permissions
+    roles = dict.fromkeys(map(str, member_role_ids), 0)
+    roles[str(gid)] = base_perms
+    try:
+        return channel_permissions(gid, roles, None, member_id or BOT_ID, member_role_ids, overwrites)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _no_access(e):
@@ -6460,7 +6438,6 @@ WEB_RESULTS_FILE = os.path.join(BASE_DIR, "web_watch_results.json")
 _WEB_DUE_WRITTEN = {"body": None, "path": None}
 _WATCH_STORE = {"store": None}
 PERM_VIEW_CHANNEL = 1 << 10
-PERM_ALL = (1 << 62) - 1
 _GUILD_PERMS = {}          # guild id -> {"roles": {id: perms}, "owner_id"}
 _CHANNEL_OVERWRITES = {}   # channel id -> its overwrites (discovery)
 _WATCH_MEMBERS = {}        # (guild, user) -> (role ids or None, fetched at)
@@ -6516,7 +6493,9 @@ def watch_member_roles(gid, uid):
         raise RuntimeError("REST is backing off")
     try:
         m = api_get(f"/guilds/{gid}/members/{uid}")
-        roles = {str(r) for r in (m or {}).get("roles") or []}
+        if not isinstance(m, dict) or not isinstance(m.get("roles"), list):
+            raise RuntimeError("member lookup returned no role information")
+        roles = {str(r) for r in m["roles"]}
     except Exception as e:
         if getattr(e, "code", None) != 404:
             _WATCH_MEMBERS[key] = ("error", now)
@@ -6552,10 +6531,14 @@ def watch_perm_event(ev):
                 _CHANNEL_OVERWRITES[str(d["id"])] = \
                     d.get("permission_overwrites") or []
             return
-        g = _GUILD_PERMS.get(str(d.get("guild_id")))
+        gid = d.get("id") if t == "GUILD_UPDATE" else d.get("guild_id")
+        g = _GUILD_PERMS.get(str(gid))
         if g is None:
             return
-        if t == "GUILD_ROLE_DELETE":
+        if t == "GUILD_UPDATE":
+            if "owner_id" in d:
+                g["owner_id"] = str(d["owner_id"] or "")
+        elif t == "GUILD_ROLE_DELETE":
             g["roles"].pop(str(d.get("role_id")), None)
         else:
             role = d.get("role") or {}
@@ -6582,13 +6565,12 @@ def user_channel_perms(gid, uid, cid):
         return None
     if roles is None or private:
         return 0
-    if str(uid) == g["owner_id"]:
-        return PERM_ALL
-    base = g["roles"].get(gid, 0)
-    for r in roles:
-        base |= g["roles"].get(r, 0)
-    return _channel_perms(gid, base, _CHANNEL_OVERWRITES[chan], roles,
-                          member_id=str(uid))
+    try:
+        from muse_discord.discord_permissions import channel_permissions
+        return channel_permissions(gid, g["roles"], g["owner_id"], str(uid), roles,
+                                   _CHANNEL_OVERWRITES[chan])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def user_can_view(gid, uid, cid):
@@ -6614,8 +6596,11 @@ def channel_public(gid, cid):
             return False
         if denies and ow.get("id") != gid:
             return False
-    p = _channel_perms(gid, g["roles"].get(gid, 0), ows, set(),
-                       member_id="-")
+    try:
+        from muse_discord.discord_permissions import channel_permissions
+        p = channel_permissions(gid, g["roles"], g["owner_id"], None, (), ows)
+    except (KeyError, TypeError, ValueError):
+        return False
     return bool(p & PERM_VIEW_CHANNEL)
 
 

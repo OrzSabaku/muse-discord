@@ -171,15 +171,16 @@ class F6Watermarks(unittest.TestCase):
 
 class F7Discovery(unittest.TestCase):
     def _guild(self, mod, channels, threads=()):
+        gid = "100000000000000001"  # SDK models require real snowflake-shaped IDs.
         perms = str((1 << 11) | (1 << 38) | (1 << 10))
         mod.api.routes.update({
-            "/users/@me/guilds": [{"id": G1, "name": "Srv"}],
-            f"/guilds/{G1}?with_counts=true": {"id": G1, "roles": [
-                {"id": G1, "permissions": perms}]},
-            f"/guilds/{G1}/members/{BOT}": {"roles": [],
+            "/users/@me/guilds": [{"id": gid, "name": "Srv"}],
+            f"/guilds/{gid}?with_counts=true": {"id": gid, "roles": [
+                {"id": gid, "permissions": perms}]},
+            f"/guilds/{gid}/members/{BOT}": {"roles": [],
                                             "joined_at": None},
-            f"/guilds/{G1}/channels": channels,
-            f"/guilds/{G1}/threads/active": {"threads": list(threads)},
+            f"/guilds/{gid}/channels": channels,
+            f"/guilds/{gid}/threads/active": {"threads": list(threads)},
         })
 
     def test_discovery_failures_keep_channels(self):
