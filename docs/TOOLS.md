@@ -30,12 +30,11 @@ python3 bin/discord-api.py --for ITEM_ID --nonce NONCE get-avatar CHANNEL_ID USE
 
 ## MCP
 
-Python 3.11以上で、必要な依存だけを入れます。
+Python 3.11以上で、MCP用の依存を追加します。
 
 ```bash
-python3 -m venv .venv-mcp
-.venv-mcp/bin/pip install -r requirements-mcp.txt
-.venv-mcp/bin/python bin/discord-mcp.py
+uv sync --group mcp
+uv run --group mcp python bin/discord-mcp.py
 ```
 
 クライアントには次の起動設定を登録します。絶対パスを配置先に合わせ、トークンを環境変数から読む場合は起動元にも設定します。
@@ -44,7 +43,7 @@ python3 -m venv .venv-mcp
 {
   "mcpServers": {
     "muse-discord": {
-      "command": "/path/to/muse-discord/.venv-mcp/bin/python",
+      "command": "/path/to/muse-discord/.venv/bin/python",
       "args": ["/path/to/muse-discord/bin/discord-mcp.py"]
     }
   }
@@ -55,5 +54,5 @@ stdio方式で、HTTPポートは開きません。Discord操作のツール名�
 引数は `for_id`・`nonce`・`channel_id` と操作固有の値。5MiB以下のPNG・JPEG・GIF・WebPは画像ブロックでも返します。
 失敗は `is_error`。中断・タイムアウト時は、送信結果を確認してから再試行してください。
 
-外部アプリには `external_app_plan`・`external_app_execute` を使い、`requirements-apps.txt` を追加します。
+外部アプリには `external_app_plan`・`external_app_execute` を使い、`uv sync --group apps` で依存を追加します。
 認可はDiscord操作とは独立です。[外部アプリ設定](EXTERNAL_APPS.md) を参照してください。

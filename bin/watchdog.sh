@@ -54,14 +54,11 @@
 
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# The package's own Python: bin/install.sh makes .venv when pip cannot
-# install into the system Python, and marks it .muse-ok once the
-# packages import there. Every python3 below (and the monitor it starts)
-# then has the packages.
-PIP_FLAGS=(--break-system-packages)
+# The package's own Python: bin/install.sh creates .venv with uv and marks
+# it .muse-ok once the packages import there. Every python3 below (and the
+# monitor it starts) then has the packages.
 if [ -x "$DIR/.venv/bin/python3" ] && [ -e "$DIR/.venv/.muse-ok" ]; then
   PATH="$DIR/.venv/bin:$PATH"
-  PIP_FLAGS=()
 fi
 LOG="$DIR/watchdog.log"
 STATE="$DIR/watchdog_state.json"
@@ -117,6 +114,9 @@ setting() {
   python3 - "$DIR" "$CONFIG" "$1" <<'PYEOF' 2>/dev/null || echo "$2"
 import os
 import sys
+if not os.path.isfile(os.path.join(sys.argv[1], "src", "muse_discord",
+                                   "muse_settings.py")):
+    raise ImportError("project source is unavailable")
 sys.path.insert(0, os.path.join(sys.argv[1], "src"))
 from muse_discord import muse_settings
 print(muse_settings.shell_value(muse_settings.load(sys.argv[2]), sys.argv[3], sys.argv[1]))
@@ -220,22 +220,10 @@ ALERT_SIG=""
 
 # Refresh dependencies before starting the monitor; a missing SDK would
 # otherwise leave the process alive with its Gateway thread disabled.
-if ! python3 -c "import yaml" 2>/dev/null; then
-  log "PyYAML missing; reinstalling"
-  python3 -m pip install ${PIP_FLAGS[@]+"${PIP_FLAGS[@]}"} -q pyyaml >>"$LOG" 2>&1 || \
-    log "PyYAML reinstall failed (monitor cannot load config without it)"
-fi
-
-if ! python3 -c "from pydantic import TypeAdapter" 2>/dev/null; then
-  log "Pydantic v2 missing; reinstalling"
-  python3 -m pip install ${PIP_FLAGS[@]+"${PIP_FLAGS[@]}"} -q 'pydantic>=2.10,<3' >>"$LOG" 2>&1 || \
-    log "Pydantic reinstall failed (monitor cannot validate config without it)"
-fi
-
-if ! python3 -c "from discord.ui import LayoutView; import discord; assert (2,7,1) <= discord.version_info[:3] < (2,8,0)" 2>/dev/null; then
-  log "discord.py missing or unsupported; reinstalling"
-  python3 -m pip install ${PIP_FLAGS[@]+"${PIP_FLAGS[@]}"} -q 'discord.py>=2.7.1,<2.8' >>"$LOG" 2>&1 || \
-    log "discord.py reinstall failed (monitor cannot connect without it)"
+if ! python3 -c 'import yaml; from pydantic import TypeAdapter; from discord.ui import LayoutView; import discord; assert (2,7,1) <= discord.version_info[:3] < (2,8,0)' 2>/dev/null; then
+  log "Python dependencies missing or unsupported; running uv sync"
+  (cd "$DIR" && uv sync --locked --no-dev --quiet) >>"$LOG" 2>&1 || \
+    log "uv sync failed (monitor cannot start reliably)"
 fi
 
 # ---------------- monitor ----------------

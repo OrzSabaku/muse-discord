@@ -1,3 +1,0 @@
-# Optional stdio MCP server (Python 3.11+). Base CLI still supports 3.10+.
--r requirements.txt
-mcp>=2.3,<3

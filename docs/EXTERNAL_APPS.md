@@ -43,14 +43,14 @@ everywhere:
 
 ## 計画と実行
 
-Python 3.11以上で、`requirements-apps.txt` をインストールします。
+Python 3.11以上で、外部アプリ用の依存を追加します。
 
 ```bash
-.venv-mcp/bin/pip install -r requirements-apps.txt
-python3 bin/external-apps.py validate
-python3 bin/external-apps.py --for ITEM_ID --nonce OWNER_DM_NONCE plan APP TOOL --arguments -
-.venv-mcp/bin/python bin/external-apps.py --for ITEM_ID --nonce OWNER_DM_NONCE execute REQUEST_ID
-.venv-mcp/bin/python bin/external-apps.py --for ITEM_ID --nonce OWNER_DM_NONCE execute REQUEST_ID --receipt -
+uv sync --group apps
+uv run --group apps python bin/external-apps.py validate
+uv run --group apps python bin/external-apps.py --for ITEM_ID --nonce OWNER_DM_NONCE plan APP TOOL --arguments -
+uv run --group apps python bin/external-apps.py --for ITEM_ID --nonce OWNER_DM_NONCE execute REQUEST_ID
+uv run --group apps python bin/external-apps.py --for ITEM_ID --nonce OWNER_DM_NONCE execute REQUEST_ID --receipt -
 ```
 
 `--arguments -` と `--receipt -` は標準入力からJSONを読みます。MCPでは `external_app_plan`・`external_app_execute` を使います。

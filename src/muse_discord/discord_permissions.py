@@ -9,7 +9,7 @@ from functools import lru_cache
 import discord
 
 if not (2, 7, 1) <= discord.version_info[:3] < (2, 8, 0):
-    raise ImportError("discord.py 2.7.x (>=2.7.1) is required; install requirements.txt")
+    raise ImportError("discord.py 2.7.x (>=2.7.1) is required; run uv sync")
 
 # A model-only state: no login, HTTP session, background task or member cache.
 _STATE = discord.Client(

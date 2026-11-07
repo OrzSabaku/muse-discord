@@ -17,7 +17,7 @@ if HAVE_MCP:
     from muse_discord.discord_tools.mcp_server import create_server
 
 
-@unittest.skipUnless(HAVE_MCP, 'Install requirements-mcp.txt to run SDK integration tests')
+@unittest.skipUnless(HAVE_MCP, 'Run uv sync --group mcp to run SDK integration tests')
 class MCP(unittest.IsolatedAsyncioTestCase):
     async def test_in_process_schema_and_cli_mapping(self):
         with patch('muse_discord.discord_tools.mcp_server.invoke', new_callable=AsyncMock) as invoke:

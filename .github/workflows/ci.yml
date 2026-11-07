@@ -45,15 +45,15 @@ jobs:
         python: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
       - name: Install dependencies
-        run: pip install -r requirements.txt ruff
+        run: uv sync --locked
       - name: Compile every script
         run: git ls-files '*.py' | xargs python -m py_compile
       - name: Lint for real bugs (syntax errors, undefined names, dead code)
-        run: ruff check --select E9,F .
+        run: uv run ruff check --select E9,F .
       - name: Parse every YAML file
         run: |
           git ls-files '*.yaml' '*.yml' | xargs python -c '
@@ -67,15 +67,15 @@ jobs:
         run: python3 -m unittest discover -s e2e/tests -t .
       - name: Install optional MCP dependencies
         if: matrix.python == '3.13'
-        run: pip install -r requirements-apps.txt
+        run: uv sync --locked --group apps
       - name: MCP stdio and image integration tests
         if: matrix.python == '3.13'
-        run: python3 tests/discordtools/test_mcp.py
+        run: uv run --group apps python tests/discordtools/test_mcp.py
       - name: External app approvals and stdio integration tests
         if: matrix.python == '3.13'
         run: |
-          python3 tests/externalapps/test_broker.py
-          python3 tests/externalapps/test_transport.py
+          uv run --group apps python tests/externalapps/test_broker.py
+          uv run --group apps python tests/externalapps/test_transport.py
       - name: Usage stats Worker tests (Node, no packages)
         if: matrix.python == '3.13'   # not Python's: once is enough
         run: cd telemetry/worker && node --test
@@ -91,11 +91,11 @@ jobs:
         python: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python }}
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: uv sync --locked --no-dev
       - name: Allow unprivileged user namespaces
         # The watchdog suites run watchdog.sh in a user+PID namespace
         # (unshare), so its pgrep/pkill only ever see their fakes. Ubuntu
@@ -115,7 +115,7 @@ jobs:
             sudo apt-get install -y -qq --no-install-recommends ffmpeg
           }
       - name: Offline suites (tests/)
-        run: bash tests/run_all.sh
+        run: uv run --no-sync bash tests/run_all.sh
 
   shell:
     name: ShellCheck
