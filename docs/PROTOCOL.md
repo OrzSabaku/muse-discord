@@ -8,6 +8,8 @@
 | 処理 | 主な実装 |
 | --- | --- |
 | 受信・キュー・返信・認可 | `src/muse_discord/monitor.py` |
+| 監視入力の型・検証 | `src/muse_discord/muse_watches.py`（Pydantic） |
+| Discordの権限計算 | `src/muse_discord/discord_permissions.py`（discord.py） |
 | 設定の型・検証 | `src/muse_discord/settings_schema.py`（Pydantic） |
 | Discord接続・UI操作受付 | `src/muse_discord/discord_connection.py`（discord.py） |
 | 設定の解決・画面 | `src/muse_discord/muse_settings.py`・`src/muse_discord/settings_ui.py` |
@@ -56,6 +58,9 @@ Gatewayの再接続はdiscord.pyに任せ、メッセージは既存の受信キ
 ## 追加機能の契約
 
 - リマインダー・監視は依頼元に通知し、専用nonce・対象・回数・期限を検証する。Web監視は所有者のDMだけ。
+- `schedule` とWeb監視の結果報告はPydanticの型で検証する。日時の許容範囲・利用権限・上限・nonceの有効性は実行時にも確認する。
+- ロール・メンバー・チャンネルの権限は、取得済み情報からSDKモデルを作り、discord.pyで計算する。取得失敗や不正な権限情報では監視通知を許可しない。非公開スレッドの除外とメンバー取得の期限付きキャッシュはモニターが管理する。
+- SDKモデルの構築を `discord_permissions.py` に限定する。対応版はdiscord.py 2.7系（2.7.1以上）。ロール・チャンネル・所有者の変更を計算へ反映し、削除されたロールをキャッシュから権限へ戻さない。
 - Webチェッカーは取得内容を実行指示にせず、`bin/watch-report.py` で結果を返す。
 - 自発メッセージは初期値が無効。対象・時間・上限・解除を確認し、スロットのnonceを一度だけ使う。
 - CLIの既読位置はモニターの配信状態から独立する。[CLI・MCP](TOOLS.md) を参照。
