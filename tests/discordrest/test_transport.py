@@ -254,6 +254,19 @@ class ProxyFor(unittest.TestCase):
             self.assertIsNone(_proxy_for("http://127.0.0.1:9"))
             self.assertIsNone(_proxy_for("http://localhost:9"))
 
+    def test_no_proxy_bypasses_the_api_host(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HTTPS_PROXY": "http://proxy.example:3128",
+                # proxy_bypass_environment prefers the lowercase name;
+                # set both so the test does not depend on the host env.
+                "no_proxy": "discord.com",
+                "NO_PROXY": "discord.com",
+            },
+        ):
+            self.assertIsNone(_proxy_for("https://discord.com/api/v10"))
+
     def test_no_environment_means_no_proxy(self):
         with patch.dict(os.environ):
             os.environ.pop("HTTPS_PROXY", None)
