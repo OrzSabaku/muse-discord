@@ -152,7 +152,7 @@ def cmd_validate(args):
             f"  {keystr}: no longer applies ({reason}); the monitor will "
             f"move it to history and tell the owners."
         )
-    if getattr(st, "overlay_error", None):
+    if st.overlay_error:
         print(st.overlay_error)
     return 0
 
@@ -400,7 +400,9 @@ def cmd_places(args):
             f"start the monitor for fresh names."
         )
     find = (args.find or "").strip().lower()
-    chans = d.get("channels") if isinstance(d.get("channels"), dict) else {}
+    chans = d.get("channels")
+    if not isinstance(chans, dict):
+        chans = {}
     lines = [] if find or args.server else ["defaults", "dms"]
     for g in d.get("guilds") or []:
         if not isinstance(g, dict) or not g.get("id"):

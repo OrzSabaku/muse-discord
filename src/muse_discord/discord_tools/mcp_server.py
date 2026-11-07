@@ -140,7 +140,9 @@ def create_server():
 
     async def media(command, for_id, nonce, *args):
         result = await invoke(command, for_id, nonce, *args)
-        content = [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+        content: list[TextContent | ImageContent] = [
+            TextContent(type="text", text=json.dumps(result, ensure_ascii=False))
+        ]
         if (
             result.get("content_type") in IMAGE_TYPES
             and result.get("bytes", INLINE_BYTES + 1) <= INLINE_BYTES
@@ -153,7 +155,7 @@ def create_server():
             content.append(
                 ImageContent(
                     type="image",
-                    mimeType=result["content_type"],
+                    mime_type=result["content_type"],
                     data=base64.b64encode(path.read_bytes()).decode("ascii"),
                 )
             )

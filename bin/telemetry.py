@@ -81,7 +81,9 @@ def cmd_show(args):
         )
         out = [T.build_payload(p, install_id) for p in pending]
     else:
-        today = d.get("today") if isinstance(d.get("today"), dict) else T.new_day(T.utc_day())
+        today = d.get("today")
+        if not isinstance(today, dict):
+            today = T.new_day(T.utc_day())
         rec = T.new_day(today.get("day") or T.utc_day())
         rec.update(today)
         gauges = dict(rec.get("gauges") or {})
@@ -121,7 +123,7 @@ def cmd_status(args):
             print(f"Failed with: {last['error']}")
     else:
         print("Last send:   never")
-    pending = [p.get("day") for p in d.get("pending") or [] if isinstance(p, dict)]
+    pending = [str(p.get("day") or "") for p in d.get("pending") or [] if isinstance(p, dict)]
     print(f"Waiting:     {len(pending)} day(s)" + (f" ({', '.join(pending)})" if pending else ""))
     after = d.get("send_after")
     if (
@@ -201,7 +203,7 @@ def main(argv=None):
         prog="bin/telemetry.py",
         description="muse-discord anonymous usage stats",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__.split("\n\n", 1)[1],
+        epilog=(__doc__ or "").partition("\n\n")[2],
     )
     ap.add_argument("--config")
     ap.add_argument("--by", default="bin/telemetry.py", help="who asked, for off/on (a name)")

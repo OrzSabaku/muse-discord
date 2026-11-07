@@ -2,10 +2,12 @@
 
 import os
 import sys
+import subprocess
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_watches as H
+from common import MUT_DIR  # noqa: E402 (local import path bootstrap)
 from muse_discord.discord_permissions import channel_permissions, guild_permissions
 
 G, R1, R2, U, OWNER = "100", "200", "201", "300", "400"
@@ -17,6 +19,22 @@ def overwrite(id_, allow=0, deny=0, type_=0):
 
 
 class PermissionRules(unittest.TestCase):
+    def test_adapter_imports_and_resolves_in_a_fresh_interpreter(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from muse_discord.discord_permissions import channel_permissions; "
+                "print(channel_permissions('100', {'100': 1024}, None, '300', [], []))",
+            ],
+            env=dict(os.environ, PYTHONPATH=os.path.join(MUT_DIR, "src")),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "1024")
+
     def test_role_allow_wins_combined_role_deny_then_member_deny_wins(self):
         roles = {G: VIEW | SEND, R1: 0, R2: 0}
         ows = [overwrite(R1, allow=VIEW), overwrite(R2, deny=VIEW), overwrite(G, deny=VIEW)]

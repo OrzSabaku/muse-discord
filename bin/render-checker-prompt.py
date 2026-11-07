@@ -74,7 +74,7 @@ def render(template, pkg, entries, python="python3", token=None):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument(
         "--due",
         default=os.path.join(PKG_DIR, "web_watches_due.json"),

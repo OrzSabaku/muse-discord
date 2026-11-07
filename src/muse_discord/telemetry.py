@@ -38,6 +38,8 @@ the running monitor to send now (the SEND_NOW_FILE flag).
 Standard library only.
 """
 
+from typing import Any
+
 import json
 import math
 import os
@@ -245,7 +247,7 @@ def installed_version(pkg_dir, timeout=5):
     tags = [t for t in out.stdout.split() if _SEMVER_RE.match(t)]
     if not tags:
         return "unreleased"
-    return max(tags, key=lambda t: tuple(int(x) for x in _SEMVER_RE.match(t).groups()))
+    return max(tags, key=lambda t: tuple(int(x) for x in t.lstrip("v").split(".")))
 
 
 def build_info(pkg_dir, version, timeout=5):
@@ -607,7 +609,7 @@ class Recorder:
         self.post = post
         self.environ = environ
         self.lock = threading.Lock()
-        self.data = None  # telemetry.json, loaded on first use
+        self.data: dict[str, Any] | None = None  # telemetry.json, loaded on first use
         self.version = None
         self.ahead, self.modified = 0, False
         self._errors = 0
@@ -616,7 +618,9 @@ class Recorder:
         self._flushed_day = None
         self._hooked = False
         self._sending = None  # the send thread
-        self._result = None  # (day attempted, [sent days], [dropped])
+        self._result: tuple[str, list[str], list[str], str | None, bool] | None = (
+            None  # (day attempted, [sent days], [dropped])
+        )
 
     # -- state -------------------------------------------------------------
     def _load(self):
@@ -651,6 +655,8 @@ class Recorder:
         """Close the stored day when it is not today: queued for sending
         unless telemetry was off at any point that day."""
         d = self.data
+        if d is None:
+            raise RuntimeError("telemetry must be loaded before rolling the day")
         rec = d["today"]
         if rec["day"] >= today:
             return

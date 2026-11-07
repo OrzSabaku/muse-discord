@@ -46,7 +46,7 @@ def describe(i, r):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     ls = sub.add_parser("list", help="every active reminder and watch")
     ls.add_argument("--json", action="store_true")

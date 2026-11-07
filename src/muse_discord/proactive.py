@@ -443,7 +443,7 @@ class Proactive:
         the monitor's outgoing secret filter."""
         try:
             s = self.data().get("slot")
-            return {s["nonce"]} if self._slot_ok(s) else set()
+            return {s["nonce"]} if s is not None and self._slot_ok(s) else set()
         except Exception:
             return set()
 

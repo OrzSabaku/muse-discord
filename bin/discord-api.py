@@ -60,6 +60,8 @@ package config.yaml (../config.yaml relative to this file, or
 MUSE_DISCORD_CONFIG), read through muse_settings.py. The token is never printed.
 """
 
+from typing import Any
+
 import hmac
 import json
 import os
@@ -80,7 +82,7 @@ from muse_discord.discord_tools.tools import MessageTools, PartialSendError  # n
 from muse_discord.discord_tools.media import MediaTools  # noqa: E402
 
 # --for / --nonce from the command line (main), for guard_channel.
-BINDING = {"for": None, "nonce": None, "entry": None, "cmd": None}
+BINDING: dict[str, Any] = {"for": None, "nonce": None, "entry": None, "cmd": None}
 API = "https://discord.com/api/v10"
 TIMEOUT = 30
 # Messages may ping users (<@id>), never roles or @everyone/@here.
@@ -323,7 +325,7 @@ def bot_id():
     return BOT_ID
 
 
-def _request(method, path, data=None, files=()):
+def _request(method: str, path: str, data: Any = None, files=()) -> Any:
     from muse_discord.discord_rest import transport, DiscordError
 
     try:
@@ -333,7 +335,7 @@ def _request(method, path, data=None, files=()):
         raise SystemExit(str(exc)) from None
 
 
-def api(method, path, data=None):
+def api(method: str, path: str, data: Any = None) -> Any:
     return _request(method, path, data)
 
 
@@ -656,7 +658,7 @@ def main(argv):
         return 2
     fn, min_args = COMMANDS[args[0]]
     if len(args) - 1 < min_args:
-        print(fn.__doc__.strip(), file=sys.stderr)
+        print((fn.__doc__ or "").strip(), file=sys.stderr)
         return 2
     BINDING["cmd"] = args[0]
     if args[0] in JSON_COMMANDS:

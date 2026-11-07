@@ -6,6 +6,9 @@ limit buckets, HTTP retries and multipart encoding without model conversions.
 Internal SDK usage is confined here and covered by local HTTP contract tests.
 """
 
+from collections.abc import Iterable
+from typing import Any
+
 import asyncio
 import atexit
 import io
@@ -20,7 +23,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 import aiohttp
 import discord
-from discord.http import HTTPClient, Route
+from discord.http import HTTPClient, Route, handle_message_parameters
 
 # SDK HTTP traces include interaction tokens in URLs and arbitrary response
 # data. Callers log the sanitized errors below instead.
@@ -39,7 +42,7 @@ def _proxy_for(base):
     host = urlsplit(base).hostname
     if host in ("127.0.0.1", "localhost", "::1"):
         return None
-    if host and urllib.request.proxy_bypass_environment(host):
+    if host and urllib.request.proxy_bypass(host):
         return None
     return os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
 
@@ -82,7 +85,7 @@ class _Session(HTTPClient):
         return await super().request(route, **kwargs)
 
 
-def route_for(method, path, base=API):
+def route_for(method: str, path: str, base: str = API) -> tuple[Route, dict[str, str]]:
     parsed = urlsplit(path)
     if (
         not path.startswith("/")
@@ -135,16 +138,24 @@ def route_for(method, path, base=API):
 
 
 class Rest:
-    def __init__(self, token, base=API):
+    def __init__(self, token: str, base: str = API) -> None:
         self.token, self.base = token, base
-        self._http = None
+        self._http: _Session | None = None
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._loop.run_forever, daemon=True, name="discord-rest"
         )
         self._thread.start()
 
-    def request(self, method, path, data=None, *, files=(), timeout=20):
+    def request(
+        self,
+        method: str,
+        path: str,
+        data: Any = None,
+        *,
+        files: Iterable[tuple[str, bytes]] = (),
+        timeout: float = 20,
+    ) -> Any:
         future = asyncio.run_coroutine_threadsafe(
             self._request(method, path, data, files, timeout), self._loop
         )
@@ -154,7 +165,9 @@ class Rest:
             future.cancel()
             raise TimeoutError("Discord request timed out") from None
 
-    async def _request(self, method, path, data, files, timeout):
+    async def _request(
+        self, method: str, path: str, data: Any, files: Iterable[tuple[str, bytes]], timeout: float
+    ) -> Any:
         route, query = route_for(method, path, self.base)
         is_message = (
             method == "POST"
@@ -182,13 +195,13 @@ class Rest:
                 )
                 await http.open(self.token)
 
-            async def send():
-                kwargs = {"params": query} if query else {}
+            async def send() -> Any:
+                kwargs: dict[str, Any] = {"params": query} if query else {}
                 kwargs["trace_request_ctx"] = {"retry_safe": retry_safe}
                 handles = [discord.File(io.BytesIO(blob), filename=name) for name, blob in files]
                 try:
                     if handles:
-                        with discord.http.handle_message_parameters(
+                        with handle_message_parameters(
                             content=discord.utils.MISSING, files=handles
                         ) as multipart:
                             # Preserve nested forum payloads, nonces, references
@@ -201,6 +214,9 @@ class Rest:
                                 "attachments",
                                 [handle.to_dict(i) for i, handle in enumerate(handles)],
                             )
+                            assert (
+                                multipart.multipart is not None
+                            )  # files always produce a multipart form
                             multipart.multipart[0]["value"] = discord.utils._to_json(payload)
                             return await http.request(
                                 route, files=handles, form=multipart.multipart, **kwargs
@@ -224,7 +240,7 @@ class Rest:
             # Cancellation during an SDK global-limit sleep can leave its gate
             # closed. Replace the session so later requests can recover.
             if self._http is http:
-                self._http = None
+                self._http: _Session | None = None
             if http:
                 await http.close()
             raise TimeoutError("Discord request timed out") from None

@@ -4,6 +4,8 @@ Discord facts for setup, a shared REST helper, and token lookup.
 Not a command.
 """
 
+from typing import Any
+
 import os
 import sys
 import urllib.parse
@@ -83,7 +85,7 @@ def api_base():
     return base.rstrip("/")
 
 
-def call(method, path, token, body=None):
+def call(method: str, path: str, token: str, body: Any = None) -> Any:
     """One REST call as the bot. Returns the parsed JSON (None for an
     empty body). Raises ApiError. Never puts the token in an error."""
     ensure_src_on_path()

@@ -38,6 +38,8 @@ from Discord), both read through muse_settings.py. See
 config.example.yaml for the schema.
 """
 
+from typing import Any
+
 import contextlib
 import fcntl
 import hashlib
@@ -114,6 +116,8 @@ def _import_local(name):
     if cached is not None and os.path.abspath(getattr(cached, "__file__", "") or "") == here:
         return cached
     spec = importlib.util.spec_from_file_location(qualified, here)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load {name}")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[qualified] = mod
     spec.loader.exec_module(mod)
@@ -158,6 +162,8 @@ def _import_telemetry():
         spec = importlib.util.spec_from_file_location(
             "muse_telemetry", os.path.join(CODE_DIR, "telemetry.py")
         )
+        if spec is None or spec.loader is None:
+            raise ImportError("Cannot load optional monitor module")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return mod.Recorder(
@@ -192,6 +198,8 @@ def _import_proactive():
         spec = importlib.util.spec_from_file_location(
             "muse_proactive", os.path.join(CODE_DIR, "proactive.py")
         )
+        if spec is None or spec.loader is None:
+            raise ImportError("Cannot load optional monitor module")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return mod.Proactive(globals())
@@ -888,7 +896,7 @@ INJECTION_PATTERNS = [
 ]
 
 
-def discord_request(method, path, data=None, *, files=(), timeout=20, anonymous=False):
+def discord_request(method, path, data=None, *, files=(), timeout: float = 20, anonymous=False):
     from muse_discord.discord_rest import transport
 
     return transport(None if anonymous else TOKEN, API).request(
@@ -1197,7 +1205,7 @@ def _keep_last(d, n):
         del d[k]
 
 
-def _read_json(path, kind=dict):
+def _read_json(path, kind: type = dict) -> Any:
     """path's JSON: an empty `kind` when the file is missing, None when it
     is unreadable or not a `kind` (dict or list)."""
     try:
@@ -1273,7 +1281,7 @@ def load_state():
     return state
 
 
-_STATE_WRITTEN = {"text": None}
+_STATE_WRITTEN: dict[str, str | None] = {"text": None}
 
 
 def save_state(state):
@@ -2505,7 +2513,8 @@ def on_update_button(ix, rest, uid, record):
         return ephemeral("That control is no longer active.")
     announced = _update_announced["version"]
     if version != announced:
-        if release_version(announced) and release_version(version) < release_version(announced):
+        version_key, announced_key = release_version(version), release_version(announced)
+        if version_key is not None and announced_key is not None and version_key < announced_key:
             return ephemeral(
                 f"This message is out of date: {announced} "
                 f"is out now. Use the newest update message."
@@ -2718,7 +2727,7 @@ _DIRECTORY_LOCK = threading.Lock()
 # The same snapshot on disk, for bin/settings.py (places, names in its
 # sentences): written atomically, only when it changed.
 DIRECTORY_FILE = os.path.join(BASE_DIR, "directory.json")
-_DIRECTORY_WRITTEN = {"body": None}
+_DIRECTORY_WRITTEN: dict[str, object] = {"body": None}
 
 
 def publish_directory():
@@ -3070,7 +3079,7 @@ def flush_admin_digests(force=False):
 # The persisted "nl_nonces" key is retained for existing queued DMs.
 # ---------------------------------------------------------------------------
 OWNER_DM_NONCES_FILE = os.path.join(BASE_DIR, "owner_dm_nonces.json")
-_OWNER_DM_NONCES_WRITTEN = {"body": None}
+_OWNER_DM_NONCES_WRITTEN: dict[str, dict[str, str] | None] = {"body": None}
 OWNER_DM_NONCE_MAX_AGE = 24 * 3600
 
 
@@ -3700,7 +3709,7 @@ def owner_items_upkeep(state, queue, now):
                 mid,
                 dm=_queued_owner_dm(state, q),
                 channel_id=q.get("channel_id"),
-                content=q.get("content"),
+                content=q.get("content") or "",
                 guild_id=q.get("guild_id"),
             )
     owner_items_write(state, check=True)
@@ -3719,8 +3728,8 @@ def owner_items_upkeep(state, queue, now):
 # ---------------------------------------------------------------------------
 REPLY_NONCE_FIELD = "reply_nonce"
 ITEM_NONCES_FILE = os.path.join(BASE_DIR, "item_nonces.json")
-_ITEM_NONCES_WRITTEN = {"body": None}
-_ITEM_NONCES_ALERT = {"day": None}
+_ITEM_NONCES_WRITTEN: dict[str, dict[str, str] | None] = {"body": None}
+_ITEM_NONCES_ALERT: dict[str, str | None] = {"day": None}
 
 
 def reply_nonce_mint(state, mid):
@@ -4492,7 +4501,8 @@ def send_fragmented(
                 got = send_reply(channel_id, part, nonce=nonce, **kw)
         except Exception as e:
             try:
-                e.failed_part, e.sent_ids = i, list(sent)
+                setattr(e, "failed_part", i)
+                setattr(e, "sent_ids", list(sent))
             except Exception:
                 pass
             raise
@@ -4990,7 +5000,7 @@ def extract_document_text(path, content_type, filename):
         or ext in DOCX_EXTS
     ):
         try:
-            import docx
+            docx = importlib.import_module("docx")
 
             doc = docx.Document(path)
             text = "\n".join(p.text for p in doc.paragraphs)
@@ -5095,7 +5105,7 @@ def _fetch_addrs(url):
     addrs = []
     for info in infos:
         try:
-            ip = ipaddress.ip_address(info[4][0].split("%")[0])
+            ip = ipaddress.ip_address(str(info[4][0]).split("%")[0])
         except ValueError:
             return None
         if not ip.is_global or ip.is_multicast:
@@ -5628,7 +5638,7 @@ def settings_card(scope, here, author_id, from_bot, channel_id, exchange=0):
     always "everything"."""
     dm = scope.is_dm
     owner = str(author_id) in OWNER_USER_IDS
-    card = {"where": "dm" if dm else "server"}
+    card: dict[str, object] = {"where": "dm" if dm else "server"}
     if not dm:
         info = CHANNELS.get(channel_id) or {}
         card["server"] = (
@@ -6171,7 +6181,7 @@ def _retry_later(item, retry, exc, **keep):
     return True
 
 
-_OUTBOX_CURRENT = {"key": None}
+_OUTBOX_CURRENT: dict[str, str | None] = {"key": None}
 _OUTBOX_POISON = {}
 
 
@@ -6663,7 +6673,7 @@ def process_outbox(state):
             if sched and sched[1]:
                 # A reminder or watch refused for a cap or a setting:
                 # ledgered like other refusals (Why no reply?).
-                _settle(state, item, "skipped", sched[1], replied=True, detail=sched[2])
+                _settle(state, item, "skipped", sched[1] or "", replied=True, detail=sched[2])
             else:
                 _settle(state, item, "replied", replied=True)
                 if not sched:
@@ -8700,7 +8710,8 @@ def main():
         try:
             if poll_turn:
                 t0 = time.time()
-                rotation.run_slice(state, t0 + REST_SLICE_SECS, dm_items)
+                if rotation is not None:
+                    rotation.run_slice(state, t0 + REST_SLICE_SECS, dm_items)
                 rest_spent = time.time() - t0
         except Exception as e:
             print(f"Poll error: {e}", flush=True)

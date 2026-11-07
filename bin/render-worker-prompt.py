@@ -116,7 +116,7 @@ def render(template, pkg, media="none", python="python3"):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     ap.add_argument(
         "--media",
         type=media_arg,

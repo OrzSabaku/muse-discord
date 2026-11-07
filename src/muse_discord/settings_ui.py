@@ -11,12 +11,32 @@ import json
 import re
 import secrets
 from dataclasses import dataclass, field
+from collections.abc import Callable
+from typing import Any, Protocol, TypedDict, NotRequired, cast
 
 import discord
 from discord import ui
 
 from muse_discord import muse_settings as ms
 from muse_discord.settings_display import clip
+
+
+def action_row(*children: ui.Item[ui.View | ui.LayoutView]) -> ui.ActionRow[ui.LayoutView]:
+    # DynamicItem is typed for either kind of view; these items belong to
+    # this module's LayoutView. Keep the SDK's type adaptation in one place.
+    items = cast(tuple[ui.Item[ui.LayoutView], ...], children)
+    return ui.ActionRow[ui.LayoutView](*items)
+
+
+class Pending(TypedDict):
+    warnings: list[str]
+    undo: NotRequired[str | None]
+
+
+class SettingsClient(Protocol):
+    settings_context: Callable[[], Any]
+    settings_log: Callable[[str], None]
+
 
 TTL = 900
 PREFIX = "mset:"
@@ -202,7 +222,7 @@ class Screen:
     key: str = "who.replies"
     draft: dict = field(default_factory=dict)
     baseline: dict = field(default_factory=dict)
-    pending: object = None
+    pending: Pending | None = None
     browse: str = ""
     page: int = 0
     undo_id: str | None = None
@@ -348,17 +368,18 @@ class Screen:
             raise ms.SettingsError("config.discord.yamlを読めないため、保存を停止しています。")
         if confirmed and not self.pending:
             raise ms.SettingsError("確認内容の有効期限が切れました。保存し直してください。")
-        if confirmed and len(self.pending.get("warnings", [])) > 5:
+        pending = self.pending or Pending(warnings=[])
+        if confirmed and len(pending.get("warnings", [])) > 5:
             raise ms.SettingsError("変更を少数ずつ保存して、すべての警告を確認してください。")
-        if confirmed and "undo" in self.pending:
-            expected = self.pending["undo"]
+        if confirmed and "undo" in pending:
+            expected = pending["undo"]
             kw = {"children": place.kind == "server", "expect": expected}
             if role == "admin":
                 kw["admin_gid"] = place.guild_id
             plan = ms.undo_plan(ctx.settings, place, kw["children"], kw.get("admin_gid"))
             assessment = ms.assess(ctx.settings, plan, ctx) if role == "owner" else None
-            if assessment and assessment.warnings != self.pending["warnings"]:
-                self.pending["warnings"] = assessment.warnings
+            if assessment and assessment.warnings != pending["warnings"]:
+                pending["warnings"] = assessment.warnings
                 return ""
             planned = ms.plan_changes(ctx.settings, plan, role)
             ctx.undo(place, self.uid, **kw)
@@ -383,7 +404,7 @@ class Screen:
         if assessment and assessment.risky:
             # 確認中に条件が変わった場合は、新しい警告をもう一度表示する。
             warnings = assessment.warnings
-            if not confirmed or self.pending.get("warnings") != warnings:
+            if not confirmed or pending.get("warnings") != warnings:
                 self.pending = {"warnings": warnings}
                 return ""
         res = ctx.apply(
@@ -432,6 +453,8 @@ class Action(ui.DynamicItem, template=r"mset:(?P<token>[A-Za-z0-9_-]{12}):(?P<ac
     def __init__(self, item):
         super().__init__(item)
         match = self.template.fullmatch(item.custom_id)
+        if match is None:
+            raise ValueError("invalid settings action id")
         self.token, self.action = match["token"], match["action"]
 
     @classmethod
@@ -440,7 +463,7 @@ class Action(ui.DynamicItem, template=r"mset:(?P<token>[A-Za-z0-9_-]{12}):(?P<ac
 
     async def callback(self, interaction):
         try:
-            ctx = await asyncio.to_thread(interaction.client.settings_context)
+            ctx = await asyncio.to_thread(cast(SettingsClient, interaction.client).settings_context)
             screen = ctx.session_peek(str(interaction.user.id), self.token)
             if not isinstance(screen, Screen):
                 raise ms.SettingsError("この画面は期限切れです。/settingsを開き直してください。")
@@ -453,20 +476,24 @@ class Action(ui.DynamicItem, template=r"mset:(?P<token>[A-Za-z0-9_-]{12}):(?P<ac
             await interaction.response.defer()
             async with screen.lock:
                 # 同じ画面で連続クリックしても、最新の設定・下書きから処理する。
-                ctx = await asyncio.to_thread(interaction.client.settings_context)
+                ctx = await asyncio.to_thread(
+                    cast(SettingsClient, interaction.client).settings_context
+                )
                 role = screen.authorize(interaction, ctx)
                 vals = (interaction.data or {}).get("values", [])
                 if self.action == "people":
                     vals = [
                         vals,
-                        (interaction.data.get("resolved") or {}).get("roles", {}),
+                        ((interaction.data or {}).get("resolved") or {}).get("roles", {}),
                     ]
                 banner = await asyncio.to_thread(screen.act, ctx, role, self.action, vals)
                 await redraw(interaction, screen, banner)
         except (ms.SettingsError, ValueError, KeyError, IndexError) as exc:
             await error(interaction, str(exc))
         except Exception as exc:
-            interaction.client.settings_log(f"settings action failed: {type(exc).__name__}: {exc}")
+            cast(SettingsClient, interaction.client).settings_log(
+                f"settings action failed: {type(exc).__name__}: {exc}"
+            )
             await error(
                 interaction,
                 "設定画面でエラーが発生しました。/settingsを開き直してください。",
@@ -474,7 +501,7 @@ class Action(ui.DynamicItem, template=r"mset:(?P<token>[A-Za-z0-9_-]{12}):(?P<ac
 
 
 class ValueModal(ui.Modal):
-    def __init__(self, screen, ctx):
+    def __init__(self, screen: Screen, ctx):
         self.screen, self.key = screen, screen.key
         spec = ctx.settings.spec(self.key)
         current = screen.draft.get(
@@ -527,7 +554,9 @@ class ValueModal(ui.Modal):
         await interaction.response.defer()
         try:
             async with self.screen.lock:
-                ctx = await asyncio.to_thread(interaction.client.settings_context)
+                ctx = await asyncio.to_thread(
+                    cast(SettingsClient, interaction.client).settings_context
+                )
                 active = ctx.session_peek(str(interaction.user.id), self.screen.token)
                 if active is not self.screen:
                     raise ms.SettingsError(
@@ -548,7 +577,9 @@ class ValueModal(ui.Modal):
             await error(interaction, str(exc))
 
     async def on_error(self, interaction, exc):
-        interaction.client.settings_log(f"settings modal failed: {type(exc).__name__}: {exc}")
+        cast(SettingsClient, interaction.client).settings_log(
+            f"settings modal failed: {type(exc).__name__}: {exc}"
+        )
         await error(interaction, "入力を保存できませんでした。設定画面を開き直してください。")
 
 
@@ -566,7 +597,7 @@ async def error(interaction, message):
 
 
 async def redraw(interaction, screen, banner=""):
-    ctx = await asyncio.to_thread(interaction.client.settings_context)
+    ctx = await asyncio.to_thread(cast(SettingsClient, interaction.client).settings_context)
     role = screen.authorize(interaction, ctx)
     view = Panel(screen, ctx, role, banner, interaction.guild_id)
     check_output(interaction, view.to_components())
@@ -623,7 +654,7 @@ class Panel(ui.LayoutView):
 
     def select(self, action, options, placeholder):
         self.body.add_item(
-            ui.ActionRow(
+            action_row(
                 Action(
                     ui.Select(
                         custom_id=f"{PREFIX}{self.screen.token}:{action}",
@@ -723,7 +754,7 @@ class Panel(ui.LayoutView):
         buttons = [self.button("上の設定を継承", "inherit")]
         if p.kind != "defaults":
             buttons.append(self.button("返信しなかった理由", "why"))
-        self.body.add_item(ui.ActionRow(*buttons))
+        self.body.add_item(action_row(*buttons))
         if s.draft:
             lines = [
                 f"• {TITLES[k]} → {'継承' if v == 'inherit' else value_text(v)}"
@@ -739,7 +770,7 @@ class Panel(ui.LayoutView):
             admin_gid=p.guild_id if self.role == "admin" else None,
         )
         self.body.add_item(
-            ui.ActionRow(
+            action_row(
                 self.button(
                     f"保存（{len(s.draft)}件）",
                     "save",
@@ -783,7 +814,7 @@ class Panel(ui.LayoutView):
                 )
         if spec.type in ("number", "text", "people") or spec.ids:
             self.body.add_item(
-                ui.ActionRow(
+                action_row(
                     self.button(
                         "値を入力…" if spec.type in ("number", "text") else "IDのリストを編集…",
                         "modal",
@@ -794,7 +825,7 @@ class Panel(ui.LayoutView):
         if (spec.type == "people" or spec.ids) and self.place.guild_id == self.interaction_gid:
             picker = ui.UserSelect if spec.ids else ui.MentionableSelect
             self.body.add_item(
-                ui.ActionRow(
+                action_row(
                     Action(
                         picker(
                             custom_id=f"{PREFIX}{self.screen.token}:people",
@@ -829,7 +860,7 @@ class Panel(ui.LayoutView):
         if len(warnings) > 5:
             self.body.add_item(ui.TextDisplay("警告が多いため、変更を少数ずつ保存してください。"))
         self.body.add_item(
-            ui.ActionRow(
+            action_row(
                 self.button(
                     "確認して適用",
                     "confirm",
@@ -863,7 +894,7 @@ class Panel(ui.LayoutView):
             self.body.add_item(ui.TextDisplay("選択できる適用先がありません。"))
         # Two navigation actions need distinct custom_ids in the same view.
         self.body.add_item(
-            ui.ActionRow(
+            action_row(
                 self.button("前へ", "previous", disabled=s.page == 0),
                 self.button("次へ", "next", disabled=s.page == pages - 1),
                 self.button("戻る", "back"),
@@ -895,7 +926,7 @@ class Panel(ui.LayoutView):
                     "最近の記録はありません。Discordの閲覧・送信権限も確認してください。"
                 )
             )
-        self.body.add_item(ui.ActionRow(self.button("設定に戻る", "back")))
+        self.body.add_item(action_row(self.button("設定に戻る", "back")))
 
 
 def outcome_text(outcome):

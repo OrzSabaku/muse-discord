@@ -5,6 +5,9 @@ forward decoded dispatch events without changing ingestion/dedup semantics.
 Legacy approval/update buttons still use the monitor's interaction worker.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 import asyncio
 import json
 import os
@@ -27,8 +30,7 @@ class Connection(discord.Client):
         # Honor NO_PROXY/no_proxy so Discord endpoints can stay direct when
         # operators intentionally bypass the proxy for them.
         if proxy and any(
-            urllib.request.proxy_bypass_environment(host)
-            for host in ("discord.com", "gateway.discord.gg")
+            urllib.request.proxy_bypass(host) for host in ("discord.com", "gateway.discord.gg")
         ):
             proxy = None
         super().__init__(
@@ -42,7 +44,8 @@ class Connection(discord.Client):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         self.inbox, self.gateway_status = inbox, status
-        self.settings_context, self.settings_guard = context_factory, guard
+        self.settings_context: Callable[[], Any] = context_factory
+        self.settings_guard: Callable[[Any, str], None] = guard
         self.settings_log = lambda message: print(message, flush=True)
         self._presence_sent = (False, "", "")
         self._presence_at = float("-inf")
