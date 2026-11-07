@@ -428,13 +428,13 @@ if (cfg.get("testing") or {}).get("crash"):
 print("Bot user id: 1", flush=True)
 print("muse-discord monitor starting. Polling 1 channels.", flush=True)
 try:
-    import websockets  # noqa: F401
-    print("Gateway READY: realtime ingest live.", flush=True)
+    import discord  # noqa: F401
+    print("Gateway READY: realtime ingest live (discord.py).", flush=True)
 except ImportError as e:
     if "e2e harness" in str(e):
         print(f"GATEWAY DISABLED (thread died: {e})", flush=True)
     else:  # not installed here: pretend the gateway came up
-        print("Gateway READY: realtime ingest live.", flush=True)
+        print("Gateway READY: realtime ingest live (discord.py).", flush=True)
 while True:
     time.sleep(0.2)
 '''
@@ -487,6 +487,15 @@ class SUTTests(unittest.TestCase):
         self.assertNotIn(FAKE_TOKEN, json.dumps(cfg))
         self.s.cleanup()
         self.assertFalse(os.path.exists(self.s.token_file))
+
+    def test_gateway_off_blocks_the_actual_discord_sdk_boundary(self):
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([
+            self.s._stub_dir, os.path.join(REPO, "src")]))
+        p = subprocess.run([sys.executable, "-c",
+                            "from muse_discord.discord_connection import Connection"],
+                           env=env, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("discord.py disabled by the e2e harness", p.stderr)
 
     def test_lifecycle_gateway_off_and_death(self):
         s = self.s

@@ -9,7 +9,7 @@
 
 SUT copies the PR checkout (minus .git and runtime files) into
 <run_dir>/pkg and runs monitor.py from there, so the PR's own code,
-bin/ tools, and plugins are what gets tested. The token goes to
+bin/ tools are what gets tested. The token goes to
 <run_dir>/sut_token (mode 600), outside pkg, and config.yaml points at
 it; monitor.py's stdout and stderr append to <pkg>/monitor.log.
 
@@ -48,12 +48,9 @@ see the SUT either: their pgrep matches only `python3 monitor.py`
 started from a package dir, and the SUT runs as `<python path>
 <pkg>/monitor.py`.)
 
-Gateway off. monitor.py imports `websockets` inside the gateway thread
-only, and when that thread dies it logs "GATEWAY DISABLED (thread
-died: ...)" and keeps REST polling. start(gateway=False) puts a
-directory holding a stub `websockets` package whose import raises
-ImportError first on PYTHONPATH, so the product runs its own degraded
-mode with no code change.
+Gateway off. The monitor imports discord.py inside its Gateway thread.
+start(gateway=False) puts an import-failing discord stub first on PYTHONPATH,
+so the product runs its own REST-only fallback without opening a connection.
 """
 import copy
 import json
@@ -92,7 +89,7 @@ COPY_IGNORE = shutil.ignore_patterns(
     "worker-prompt.md", "watchdog-hook.out.*")
 READY_IDENTITY = "Bot user id: "
 READY_DISCOVERY = "muse-discord monitor starting."
-READY_GATEWAY_ON = "Gateway READY: realtime ingest live."
+READY_GATEWAY_ON = "Gateway READY: realtime ingest live"
 READY_GATEWAY_OFF = "GATEWAY DISABLED"
 # Lines after which the monitor will not become ready.
 FATAL_MARKERS = ("TOKEN REJECTED", "Another monitor holds the pidfile",
@@ -100,9 +97,9 @@ FATAL_MARKERS = ("TOKEN REJECTED", "Another monitor holds the pidfile",
 # Secrets the monitor never needs in its environment.
 SECRET_ENV = ("E2E_SUT_TOKEN", "E2E_DRIVER_A_TOKEN", "E2E_DRIVER_B_TOKEN",
               "CLAUDE_CODE_OAUTH_TOKEN", "MUSE_DISCORD_CONFIG")
-STUB_WEBSOCKETS = (
+STUB_DISCORD = (
     '"""e2e stub: makes monitor.py run without its gateway."""\n'
-    'raise ImportError("websockets disabled by the e2e harness '
+    'raise ImportError("discord.py disabled by the e2e harness '
     '(gateway_off)")\n')
 
 
@@ -225,11 +222,11 @@ class SUT:
         os.chmod(self.token_file, 0o600)
         self.persona_file = self._persona()
         self._stub_dir = os.path.join(self.run_dir, "no-gateway")
-        os.makedirs(os.path.join(self._stub_dir, "websockets"),
+        os.makedirs(os.path.join(self._stub_dir, "discord"),
                     exist_ok=True)
-        with open(os.path.join(self._stub_dir, "websockets",
+        with open(os.path.join(self._stub_dir, "discord",
                                "__init__.py"), "w") as f:
-            f.write(STUB_WEBSOCKETS)
+            f.write(STUB_DISCORD)
         self.base_config = copy.deepcopy(base_config)
         self.config = None
         self.write_config(self.base_config)
