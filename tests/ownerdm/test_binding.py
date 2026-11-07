@@ -286,15 +286,18 @@ class StrangerWakeAttacks(Base):
         self.assert_refused("none live")
         self.assertEqual(len(self.sends(DM)), 1)
 
-    def test_settings_nonce_and_owner_dm_nonce_must_agree(self):
+    def test_removed_settings_action_cannot_change_configuration(self):
         m = self.owner_dm()
+        before = self.mod.settings().get("who.replies", self.mod.MS.Scope.server(G1))
         it = self.reply(m, "Sure.", owner_dm_nonce=self.nonce(m["id"]))
-        it["settings"] = {"v": 1, "nonce": "f" * 32, "changes": [
+        it["settings"] = {"v": 1, "nonce": self.nonce(m["id"]), "changes": [
             {"op": "set", "place": "defaults", "key": "who.replies",
              "value": "off"}]}
         self.outbox(it)
-        self.assert_refused("differ")
+        self.assert_refused("no longer supported")
         self.assert_open(m)
+        self.assertEqual(self.mod.settings().get("who.replies", self.mod.MS.Scope.server(G1)), before)
+        self.assertEqual(self.sends(DM), [])
 
     def test_rejected_file_and_log_never_hold_a_nonce(self):
         m = self.owner_dm()
@@ -470,7 +473,7 @@ class NonceLifetime(Base):
         # The main loop's upkeep mints a new one, for owner DMs only.
         self.mod._OWNER_DM_UPKEEP["next"] = 0
         with quiet():
-            self.mod.nl_upkeep(self.st)
+            self.mod.owner_dm_upkeep(self.st)
         self.assertEqual(list(self.st["nl_nonces"]), [m["id"]])
         self.assertIn(s["id"], self.queued())
         self.assertIn(u["id"], self.queued())

@@ -85,6 +85,8 @@ class ForgedAnswersDoNotHideOwnerDms(_Hook):
                   {"item": "1", "silent": True,
                    "owner_dm_nonce": N2},      # another DM's
                   {"item": "1", "settings": {"nonce": "0" * 32}},
+                  {"item": "1", "owner_dm_nonce": N1, "settings": {"nonce": N1}},
+                  {"item": "1", "owner_dm_nonce": N1, "_nl": {}},
                   {"item": "1", "owner_dm_nonce": 5}]
         for name in ("reply_outbox.json", "reply_outbox.processing.json"):
             self.write(name, forged)
@@ -94,7 +96,7 @@ class ForgedAnswersDoNotHideOwnerDms(_Hook):
         self.write("reply_queue.json", [item("1", frags=["11"]), item("2")])
         self.write("reply_outbox.json", [
             {"item": "1", "reply_to": "11", "owner_dm_nonce": N1},
-            {"item": "2", "settings": {"nonce": N2}}])
+            {"item": "2", "owner_dm_nonce": N2}])
         self.assertIsNone(self.ids())
         self.write("reply_outbox.json", [])
         self.write("reply_outbox.processing.json", [

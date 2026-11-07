@@ -137,7 +137,6 @@ except MS.SettingsError as e:
           file=sys.stderr, flush=True)
     sys.exit(1)
 _S0 = _SETTINGS.current
-NL = _import_local("settings_nl")      # settings requests in plain words
 W = _import_local("muse_watches")      # reminders and watches
 SCAN = _import_local("secret_scan")    # the outgoing secret filter
 
@@ -1012,7 +1011,7 @@ def _live_nonces():
     maps, and the "nonce" fields of owner_items and the web checks
     (never other fields, such as a check's public group tag)."""
     out = set()
-    for cache in (_NL_NONCES_WRITTEN, _ITEM_NONCES_WRITTEN):
+    for cache in (_OWNER_DM_NONCES_WRITTEN, _ITEM_NONCES_WRITTEN):
         body = cache.get("body")
         if isinstance(body, dict):
             out |= {v for v in body.values() if isinstance(v, str) and v}
@@ -1898,7 +1897,7 @@ def _join_summary(gid, ginfo, channels):
             f"{replies.get(res['who.replies'], replies['when-addressed'])}"
             f". Extras on there: {', '.join(on) or 'none'}.\n{seen}"
             f"To change what I do there, press **Configure** or use "
-            f"/settings{', or just tell me here' if dms_enabled() else ''}.")
+            f"/settings.")
 
 
 # Servers none of the owners is in. A public bot can be
@@ -2289,13 +2288,7 @@ def telemetry_notice():
 def apply_record(state, rec):
     """Main-loop side of an interaction: persist what the interaction
     thread decided (it never writes state.json itself)."""
-    if rec.get("kind") == "nl":   # plain-language settings buttons
-        NL.apply_record(state, rec)
-        if rec.get("journal"):
-            # Recorded for good: the crash journal entry can go.
-            save_state(state)
-            nl_journal(drop=rec["journal"])
-    elif rec.get("kind") == "update_choice":
+    if rec.get("kind") == "update_choice":
         upd = state.setdefault("update_notice", {})
         if rec.get("version") == upd.get("version"):
             upd["choice"] = {k: rec.get(k) for k in ("action", "by", "at")}
@@ -3062,24 +3055,12 @@ for _name in WHY_NAMES:
 
 
 # ---------------------------------------------------------------------------
-# Settings requests: an owner DMs "only answer in #general when I @ you".
-# The worker attaches a `settings` action to its outbox item for that DM;
-# settings_nl.py decides it (who may, what it means, Apply first or not)
-# and writes the reply. This side gives it a ctx, sends its outcome
-# (with the usual nonce and retries), routes its mdnl:* buttons, and
-# tells the owners about changes their Muse made with bin/settings.py.
+# Owner-DM capabilities: handed only to the worker serving that DM.
+# The persisted "nl_nonces" key is retained for existing queued DMs.
 # ---------------------------------------------------------------------------
-_nl_live = NL.Live()
-_NL_PEOPLE = {}        # user id -> name, from the conversation history
-# Capability nonces of open owner-DM items (state["nl_nonces"]), for the
-# wake hook only: mode 600, never read by a worker (like the token).
 OWNER_DM_NONCES_FILE = os.path.join(BASE_DIR, "owner_dm_nonces.json")
-_NL_NONCES_WRITTEN = {"body": None}
-# Apply clicks written down before their overlay write (interaction
-# thread), recovered at startup (settings_nl.recover).
-NL_JOURNAL_FILE = os.path.join(BASE_DIR, "nl_journal.json")
-_NL_JOURNAL_LOCK = threading.Lock()
-_NL_UPKEEP = {"settings": None}
+_OWNER_DM_NONCES_WRITTEN = {"body": None}
+OWNER_DM_NONCE_MAX_AGE = 24 * 3600
 
 
 def _write_private(path, obj):
@@ -3106,24 +3087,9 @@ def _publish(path, body, cache, check=False, create=True):
     return True
 
 
-def nl_journal(put=None, drop=None):
-    """nl_journal.json: read it, or add (put=(token, entry)) or remove
-    (drop=token) one entry. Any thread."""
-    with _NL_JOURNAL_LOCK:
-        data = _read_json(NL_JOURNAL_FILE) or {}
-        if put is not None:
-            data[put[0]] = put[1]
-        elif drop is not None and drop in data:
-            del data[drop]
-        else:
-            return data
-        _write_private(NL_JOURNAL_FILE, data)
-        return data
-
-
-def nl_mint_nonce(state, mid, channel_id=None, fragments=()):
+def owner_dm_mint_nonce(state, mid, channel_id=None, fragments=()):
     """A capability for one owner-DM queue item (see owner_dm_gate and
-    settings_nl): 128 random bits, kept in state and the hook's private
+    its wake): 128 random bits, kept in state and the hook's private
     file, never in reply_queue.json. channel_id and fragments (its burst
     fragments' ids): so the gate knows the DM's channel and fragments
     after item_meta and reply_aliases (both bounded, fed by everyone's
@@ -3135,21 +3101,21 @@ def nl_mint_nonce(state, mid, channel_id=None, fragments=()):
     if fragments:
         n[str(mid)]["fragments"] = [str(f) for f in fragments]
     _keep_last(n, 300)
-    nl_write_nonces(state)
+    owner_dm_write_nonces(state)
 
 
-def nl_write_nonces(state):
+def owner_dm_write_nonces(state):
     """owner_dm_nonces.json = the nonces of open owner-DM items (written
     only when that changed; expired ones dropped)."""
     n = state.get("nl_nonces") or {}
     now = time.time()
     for k in [k for k, v in n.items()
               if not isinstance(v, dict) or now - v.get("at", 0)
-              > NL.MAX_AGE]:
+              > OWNER_DM_NONCE_MAX_AGE]:
         del n[k]
     owner_items_write(state)   # an owner DM's command uses its nonce
     _publish(OWNER_DM_NONCES_FILE, {k: v["nonce"] for k, v in n.items()},
-             _NL_NONCES_WRITTEN)
+             _OWNER_DM_NONCES_WRITTEN)
 
 
 # ---------------------------------------------------------------------------
@@ -3160,8 +3126,7 @@ def nl_write_nonces(state):
 # was written in such a run. Every outbox item that answers an owner's
 # DM, settles it (silent, reactions, a reply under one of its
 # fragments) or posts in an owner's DM channel must carry that item's
-# nonce as owner_dm_nonce (a settings action's settings.nonce counts
-# too). Without it the item is refused before anything else looks at
+# nonce as owner_dm_nonce. Without it the item is refused before anything else looks at
 # it: set aside in reply_outbox.rejected.json, logged, and the queue
 # item stays open for the owner-DM-only wake that really holds it.
 # Other items are untouched.
@@ -3215,17 +3180,11 @@ def _owner_dm_channel_of(state, qid):
 
 
 def item_nonce(item):
-    """The owner-DM nonce an outbox item carries: owner_dm_nonce, else
-    its settings action's nonce. (value, problem)."""
-    top = item.get(OWNER_DM_NONCE_FIELD)
-    s = item.get("settings")
-    sub = s.get("nonce") if isinstance(s, dict) else None
-    if top is not None and not isinstance(top, str):
+    """The owner-DM capability explicitly attached to this outbox item."""
+    nonce = item.get(OWNER_DM_NONCE_FIELD)
+    if nonce is not None and not isinstance(nonce, str):
         return None, f"{OWNER_DM_NONCE_FIELD} is not a string"
-    if top is not None and sub is not None and top != sub:
-        return None, f"{OWNER_DM_NONCE_FIELD} and settings.nonce differ"
-    got = top if top is not None else sub
-    return (got if isinstance(got, str) else None), None
+    return nonce, None
 
 
 def queue_index(state):
@@ -3552,7 +3511,7 @@ def owner_dm_upkeep(state, force=False):
         print(f"Owner DM {mid} had no nonce; minted one for its next "
               f"wake.", flush=True)
     owner_items_upkeep(state, queue, now)
-    nl_write_nonces(state)
+    owner_dm_write_nonces(state)
 
 
 # ---------------------------------------------------------------------------
@@ -3775,211 +3734,6 @@ def is_forwarded(msg):
     forwarded content in message_snapshots)."""
     ref = msg.get("message_reference") or {}
     return ref.get("type") == 1 or bool(msg.get("message_snapshots"))
-
-
-class _NlCtx(SettingsCtx):
-    """What settings_nl gets (see its docstring); usable from the main
-    loop (with state) and the interaction thread (without)."""
-
-    def __init__(self, state=None):
-        super().__init__()
-        self.state = state
-        self.live = _nl_live
-
-    def info(self):
-        with _DIRECTORY_LOCK:
-            return {"guilds": [dict(g) for g in _DIRECTORY["guilds"]],
-                    "channels": {g: [dict(c) for c in cs] for g, cs in
-                                 _DIRECTORY["channels"].items()}}
-
-    def thread_parent(self, cid):
-        info = CHANNELS.get(str(cid)) or {}
-        return info.get("parent_id") if info.get("thread") else None
-
-    def dm_channel_user(self, cid):
-        cid = str(cid)
-        return DM_CHANNEL_USER.get(cid) if cid in DM_CHANNELS else None
-
-    def person_names(self):
-        return dict(_NL_PEOPLE)
-
-    def channel_label(self, cid):
-        """A place name the monitor knows (never an outbox field)."""
-        cid = str(cid)
-        if cid in DM_CHANNELS:
-            return "a DM with me"
-        info = CHANNELS.get(cid)
-        if info:
-            name = str(info.get("name") or cid).lstrip("#")
-            g = info.get("guild_id")
-            gname = (GUILDS.get(g) or {}).get("name") \
-                or info.get("guild_name") or g
-            return f"#{name} in {gname}" if gname else f"#{name}"
-        return f"channel {cid}"
-
-    @contextlib.contextmanager
-    def write_lock(self):
-        """The overlay write lock (this process, then the file), held
-        across a decision and its write. Re-entrant."""
-        with _OVERLAY_LOCK:
-            with MS.overlay_lock(MS.overlay_path_for(_SETTINGS.config_path)):
-                yield
-
-    def journal_all(self):
-        return nl_journal()
-
-    def journal_put(self, tok, entry):
-        nl_journal(put=(tok, entry))
-
-    def journal_drop(self, tok):
-        nl_journal(drop=tok)
-
-    def undo_changes(self, place, by, children, expect, undo_id):
-        with _OVERLAY_LOCK:
-            out = MS.undo_changes(_SETTINGS.config_path, place, by,
-                                  PLUGINS_DIR, children=children,
-                                  role="owner", expect=expect,
-                                  undo_id=undo_id)
-        settings()
-        return out
-
-    def save(self, state):
-        save_state(state)
-
-    def log(self, msg):
-        print(msg, flush=True)
-
-
-def _nl_note_people(state):
-    for hist in (state.get("history") or {}).values():
-        for h in hist or []:
-            if h.get("author_id") and h.get("author"):
-                _NL_PEOPLE[str(h["author_id"])] = str(h["author"])
-
-
-def nl_outbox_item(state, item):
-    """Decide and answer one settings request from the outbox. Returns
-    "settled", "retry" (a failed send waits for its next try) or
-    ("rejected", reason): refused without settling its queue item (a
-    forged or misdirected action), set aside for review."""
-    retry = item.get("_retry") or {}
-    if retry.get("next", 0) > time.time():
-        return "retry"
-    _nl_note_people(state)
-    try:
-        res = NL.process(_NlCtx(state), state, item)
-    except Exception as e:
-        # Never wedge the outbox on one item.
-        print(f"Settings request for item {item.get('item')} failed: "
-              f"{type(e).__name__}: {e}", flush=True)
-        return ("rejected", f"settings: internal error "
-                            f"({type(e).__name__})")
-    finally:
-        nl_write_nonces(state)
-    for line in res.logs:
-        print(line, flush=True)
-    if res.rec is None:
-        return ("rejected", res.reject)
-    if res.alert:
-        ok = notify_owners(res.alert)
-        print("Settings refusal alert: "
-              + ("owners alerted" if ok else "no owner reachable"),
-              flush=True)
-    rec = res.rec
-    if rec.get("sent"):
-        print(f"Skipping duplicate settings action for item "
-              f"{item.get('item')}", flush=True)
-        _settle(state, item, "replied", "duplicate suppressed")
-        return "settled"
-    if not rec.get("text"):
-        _settle(state, item, rec["status"], rec["reason"], replied=True)
-        rec["sent"] = True
-        return "settled"
-    cid, rt = rec["channel_id"], rec.get("reply_to")
-    try:
-        msg = send_reply(cid, rec["text"], rt,
-                         nonce=send_nonce(cid, rt, [rec["text"]], 0),
-                         components=rec.get("components"))
-    except Exception as e:
-        if isinstance(e, SecretBlocked) or getattr(e, "code", None) == 403 \
-                or not _retry_later(item, retry, e):
-            print(f"Giving up on the settings reply for item "
-                  f"{item.get('item')}: {e}", flush=True)
-            _settle(state, item, "skipped", f"send failed: {e}"[:200])
-            return "settled"
-        return "retry"
-    NL.sent(state, item["item"], (msg or {}).get("id"))
-    _settle(state, item, rec["status"], rec["reason"], replied=True)
-    return "settled"
-
-
-def on_nl_button(ix, rest, uid, record):
-    return NL.on_button(_NlCtx(), ix, rest, uid, record)
-
-
-register_interaction("mdnl", on_nl_button, owner_only=True)
-
-
-def nl_note_changes(state):
-    """Main loop: change groups made with bin/settings.py since the
-    position saved in state.json wait for the owners' notice (so ones
-    made while the monitor was down are noticed too)."""
-    cur = settings()
-    if _NL_UPKEEP["settings"] is cur and "nl_history_mark" in state:
-        return
-    _NL_UPKEEP["settings"] = cur
-    ctx = _NlCtx(state)
-    names = NL.names_for(ctx, MS._Info(ctx.info()), cur)
-    NL.queue_notices(state, NL.new_cli_groups(cur, state, names),
-                     time.time())
-
-
-def nl_recover(state):
-    """Startup: settle Apply clicks a stop interrupted (settings_nl)."""
-    n = NL.recover(_NlCtx(state), state)
-    if n:
-        print(f"Settings requests: recovered {n} interrupted Apply "
-              f"click(s).", flush=True)
-
-
-def nl_upkeep(state):
-    """Main loop, every tick: expire Apply cards (edited to say so, best
-    effort), prune, and send the batched notice of changes the owners'
-    Muse made (silent DMs, with Undo)."""
-    try:
-        # First, and alone: nothing else here may stop owner DMs from
-        # getting their nonces.
-        owner_dm_upkeep(state)
-    except Exception as e:
-        print(f"Owner DM nonce upkeep error: {type(e).__name__}: {e}",
-              flush=True)
-    ctx = _NlCtx(state)
-    nl_note_changes(state)
-    nl_write_nonces(state)
-    edits, logs = NL.expire(ctx, state)
-    for line in logs:
-        print(line, flush=True)
-    for cid, mid, text in edits:
-        try:
-            api_patch(f"/channels/{cid}/messages/{mid}",
-                      {"content": text, "components": []})
-        except Exception as e:
-            print(f"Could not edit an expired settings card: {e}",
-                  flush=True)
-    if rest_backing_off():
-        return
-    due = NL.due_notice(ctx, state)
-    if due is None:
-        return
-    text, components, groups = due
-    delivered = notify_owners(text, components, NL.SUPPRESS_NOTIFICATIONS)
-    dropped = NL.notice_done(state, delivered)
-    for g in groups:
-        print(f"Settings (CLI, by {g['by']}): applied "
-              f"{g.get('group') or 'a change'}: " + "; ".join(g["lines"])
-              + ("; owners notified" if delivered else
-                 "; no owner reachable" + ("" if dropped else
-                                           " (retrying)")), flush=True)
 
 
 # Registering the command: a global application command, checked once per
@@ -5771,11 +5525,6 @@ def settings_card(scope, here, author_id, from_bot, channel_id,
     card["replies"] = here["who.replies"]
     card["length"] = here["style.length"]
     card["notes"] = here["style.notes"]
-    if dm and owner and not from_bot:
-        # Settings requests (SETTINGS REQUESTS in the worker prompt):
-        # the places the owner can name, with their ids.
-        with _DIRECTORY_LOCK:
-            card["places"] = NL.card_places(_DIRECTORY)
     if from_bot:
         card["bot_exchange"] = {"count": exchange + 1,
                                 "limit": here["who.bot_exchange_limit"]}
@@ -6034,7 +5783,7 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
     if owner_dm:
         # The capability for this owner DM (written for the wake hook
         # before the item reaches the queue file).
-        nl_mint_nonce(state, msg["id"], msg["channel_id"],
+        owner_dm_mint_nonce(state, msg["id"], msg["channel_id"],
                       [f["id"] for f in fragments])
     if owner_command:
         # bin/discord-api.py's capability for this owner's command.
@@ -6146,10 +5895,7 @@ def _outbox_problem(item):
         if problems:
             return "schedule: " + "; ".join(problems)
     if "settings" in item or any(str(k).startswith("_nl") for k in item):
-        # A settings request (settings_nl.py): its own shape rules; the
-        # text is an optional lead-in.
-        problems = NL.shape_problems(item, PLUGINS_DIR)
-        return "settings: " + "; ".join(problems) if problems else None
+        return "settings actions are no longer supported; use /settings"
     if item.get("silent"):
         if not (item.get("reply_to") or item.get("item")):
             return "silent item names no message (reply_to or item)"
@@ -6662,19 +6408,6 @@ def process_outbox(state):
                 _refuse(rejects, item, got[1])
                 continue
             sched = got[1:] if got else None
-        if "settings" in item:
-            # A settings request: the monitor decides and answers it
-            # (settings_nl.py); the worker's text is a lead-in at most.
-            outcome = nl_outbox_item(state, item)
-            if outcome == "retry":
-                remaining.append(item)
-            elif isinstance(outcome, tuple):
-                # The item stays open.
-                rejects.append((redact_nonces(item), outcome[1]))
-            else:
-                typing_clear(typing_keys)
-                settled.append(item)
-            continue
         # Clamped to Discord's per-message limit AFTER every rewrite: the
         # @everyone neutralization and link_mentions both lengthen text
         # normalize_parts already trimmed, and a part over the limit
@@ -6831,7 +6564,7 @@ def process_outbox(state):
         for qid in done_ids & set(held):
             del held[qid]
     reply_nonces_write(state)
-    nl_write_nonces(state)
+    owner_dm_write_nonces(state)
 
     def answered(q):
         return q.get("message_id") in done_ids or any(
@@ -7313,7 +7046,7 @@ def watch_enqueue(state, q):
                    guild_id=q.get("guild_id"), author=q.get("author"))
     note_queued(state, fid)
     if owner_dm and fid not in (state.get("nl_nonces") or {}):
-        nl_mint_nonce(state, fid, q["channel_id"])
+        owner_dm_mint_nonce(state, fid, q["channel_id"])
     reply_nonce_mint(state, fid)
     queue_edit(add=[q])
     items = (q.get("reminder") or {}).get("items") or []
@@ -7716,7 +7449,7 @@ def watch_fire_upkeep(state, now=None):
         nonces = state.get("nl_nonces") or {}
         for fid in stale:
             nonces.pop(fid, None)
-        nl_write_nonces(state)
+        owner_dm_write_nonces(state)
     for q in lost:
         print(f"Reminder {q['message_id']} was not in the queue; queued "
               f"again.", flush=True)
@@ -8835,8 +8568,6 @@ def main():
     # gateway inbox ("_record", applied by drain_gateway).
     _holds_live.update({hid: h.get("at", 0) for hid, h in
                         (state.get("holds") or {}).items()})
-    nl_recover(state)
-    _nl_live.load(state)
     _update_announced["version"] = \
         (state.get("update_notice") or {}).get("version")
     threading.Thread(
@@ -8920,9 +8651,9 @@ def main():
             print(f"/settings upkeep error: {e}", flush=True)
 
         try:
-            nl_upkeep(state)  # settings requests: expiry, notices
+            owner_dm_upkeep(state)  # keep queued owner DMs answerable
         except Exception as e:
-            print(f"Settings request upkeep error: {e}", flush=True)
+            print(f"Owner DM upkeep error: {e}", flush=True)
 
         try:
             watch_tick(state)  # reminders due, watch matches, expiry

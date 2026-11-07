@@ -1,6 +1,6 @@
 """bin/outbox-append.py, offline: the worker's way to append to
 reply_outbox.json. Good items are appended exactly as given (an
-owner_dm_nonce and a settings action included); a batch with any bad
+owner_dm_nonce included); a batch with any bad
 item (a reply in the wrong field, a malformed settings action, a
 monitor-only field, a nonce that is not a copied value) appends nothing
 and exits 1. MUT_DIR = the package tree under test."""
@@ -57,10 +57,8 @@ class OutboxAppend(unittest.TestCase):
                   "text": "hi", "owner_dm_nonce": N},
                  {"item": "3", "channel_id": "2", "reply_to": "3",
                   "silent": True, "owner_dm_nonce": N},
-                 settings_item([{"op": "set", "place":
-                                 "channel:500000000000000001:"
-                                 "701000000000000001", "key": "who.replies",
-                                 "value": "when-addressed"}])]
+                 {"item": "4", "channel_id": "2", "reply_to": "4",
+                  "text": "Another reply", "owner_dm_nonce": N}]
         rc, err = self.append(items)
         self.assertEqual(rc, 0, err)
         self.assertEqual(self.outbox(), items)
@@ -85,15 +83,16 @@ class OutboxAppend(unittest.TestCase):
         self.assertEqual(code, 0, err)
         # Left to the monitor: a missing nonce (an out-of-date prompt,
         # which the monitor tells the owners about) and an owner-DM
-        # nonce carried only as settings.nonce.
+        # Settings actions must now be rejected, including legacy nonces.
         with open(os.path.join(self.pkg, "owner_dm_nonces.json"), "w") as f:
             json.dump({"7": N}, f)
         only_settings = settings_item([CHANGE], item="7", reply_to="7",
                                       reply_nonce=live)
         del only_settings["owner_dm_nonce"]
         code, err = self.append([reply, only_settings])
-        self.assertEqual(code, 0, err)
-        self.assertEqual(len(self.outbox()), 3)
+        self.assertEqual(code, 1, err)
+        self.assertIn("no longer supported", err)
+        self.assertEqual(len(self.outbox()), 1)
 
     def test_bad_items_append_nothing(self):
         good = {"item": "1", "channel_id": "2", "reply_to": "1",

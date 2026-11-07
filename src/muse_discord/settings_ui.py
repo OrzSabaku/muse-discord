@@ -16,9 +16,8 @@ What each person gets:
   can DM it, replies a person a day: whichever that place has), a
   style picker for the server (the Friends / Community / Work
   presets), Pause or Resume, "Why no reply?", Undo for the last
-  change, and a reminder that anything else is one DM away
-  (settings_nl.py: an owner can change any setting by DMing the bot in
-  plain words).
+  change. Other settings are available under Edit settings or in
+  config.yaml.
 - The owner's Edit button opens the edit pages (basic, then "More
   settings"): every Discord-editable setting that place has, detailed
   ones included (who it answers and ignores, other bots, the daily
@@ -144,12 +143,9 @@ ROLES_ELSEWHERE = ("Roles only count in their own server, so the roles "
                    "you picked were left out.")
 FIXED_NOTE = "-# Fixed. {who} must send again; refused messages stay " \
              "unanswered."
-FOOTER_SERVER = ("-# Detailed settings are under “Edit settings”. "
-                 "Anything else? DM me what you'd like changed, e.g. "
-                 "“only reply in #help” or “let Sam make images”.")
-FOOTER_DM = ("-# Detailed settings are under “Edit settings”. "
-             "Anything else? Just tell me here, e.g. “only reply in "
-             "#help” or “let @Sam DM you”.")
+FOOTER_SERVER = "-# Detailed settings are under “Edit settings” or in config.yaml."
+FOOTER_DM = FOOTER_SERVER
+
 
 
 class Ctx(Protocol):
@@ -1073,7 +1069,7 @@ def style_select(R, gid):
         # Not a style to apply: what the select shows while none
         # matches (picking it changes nothing; see v_pre).
         opts.append(opt("Customized", CUSTOMIZED, "Change the settings "
-                        "above, or DM me what you want.", default=True))
+                        "under Edit settings or in config.yaml.", default=True))
     return sel(cid("pre", f"s{gid}"), opts, "Pick a style…")
 
 
@@ -1241,7 +1237,7 @@ def ctl_media(R, place):
                         "cost real money", default=cur == "everyone"))
         if cur == "list":
             opts.append(opt("You and people you picked", "list",
-                            "DM me to change who", default=True))
+                            "Use Edit settings to change who", default=True))
     return "Images & video", sel(cid("set", ptok(place), "med"), opts,
                                  "Images & video…")
 
@@ -1260,7 +1256,7 @@ def ctl_dms(R, place):
     if access == "list":
         n = len(dm_people(R))
         opts.insert(1, opt(f"You and {n} {'person' if n == 1 else 'people'}"
-                           f" you picked", "list", "DM me to change who",
+                           f" you picked", "list", "Use Edit settings to change who",
                            default=True))
     return "Who can DM me", sel(cid("set", ptok(place), "df"), opts,
                                 "Who can DM me…")
@@ -1481,7 +1477,7 @@ def _fix_button(R, label, place, key, op):
         return None
 
 
-DM_ME = " DM me to change it."
+DM_ME = " Use Edit settings or config.yaml to change it."
 
 
 def explain_outcome(R, o):
@@ -2718,13 +2714,13 @@ def set_changes(R, place, code, v):
             return [ms.Change(place, "media.enabled", "on"),
                     ms.Change(place, "media.who", v)]
         if v == "list":
-            return "You already picked who can. DM me to change who."
+            return "You already picked who can. Use Edit settings to change who."
         return None
     if code == "df":
         if v in ("owners", "shared-servers", "anyone", "nobody"):
             return ms.dms_from_changes(R.st, v)
         if v == "list":
-            return "You already picked who can DM me. DM me to change who."
+            return "You already picked who can DM me. Use Edit settings to change who."
         return None
     if code == "pp":
         if v == "none":
@@ -2829,8 +2825,8 @@ def v_pre(R, place, args, values):
             and members > ms.BIG_FOR_MEMORY:
         gname = R.gname(place.guild_id)
         notes.append(f"-# I still keep to public facts: {gname} has more "
-                     f"than {ms.BIG_FOR_MEMORY} members. DM me if you're "
-                     f"sure.")
+                     f"than {ms.BIG_FOR_MEMORY} members. Use Edit settings "
+                     f"to change this explicitly.")
     if not changes:
         if notes:   # Friends, held back only by the big-server rule
             R.banner = [td(f"**No change:** {R.gname(place.guild_id)} has "

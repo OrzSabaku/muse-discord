@@ -597,8 +597,7 @@ def cmd_get_avatar(args):
 
 
 # Lookups (a server's channel and active-thread names and ids, never
-# message content): an owner command's nonce, or an owner DM's (a
-# settings request names places). Every other subcommand needs an owner
+# message content): an owner command's nonce, or an owner DM's. Every other subcommand needs an owner
 # command, and acts only where its owner's own words point
 # (guard_target).
 LOOKUPS = {"resolve-channel", "list-threads"}

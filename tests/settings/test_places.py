@@ -1,8 +1,8 @@
 """bin/settings.py places, offline: the place ids a worker may name in
-a settings request, listed from directory.json. (bin/outbox-append.py
+CLI operations, listed from directory.json. (bin/outbox-append.py
 is tested in tests/locking/test_outbox_append.py.)
 
-Usage: [MUT_DIR=<tree>] python3 tests/settingsnl/test_tools.py"""
+Usage: [MUT_DIR=<tree>] python3 tests/settings/test_places.py"""
 import json
 import os
 import subprocess

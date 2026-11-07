@@ -191,17 +191,12 @@ class RejectedCopies(Base):
 
 
 class UpkeepFirst(Base):
-    def test_upkeep_runs_even_when_the_rest_fails(self):
+    def test_owner_dm_upkeep_refreshes_missing_nonce(self):
         m = self.owner_dm()
         self.st["nl_nonces"].clear()
         self.mod._OWNER_DM_UPKEEP["next"] = 0
-
-        def boom(st):
-            raise RuntimeError("boom")
-        self.mod.nl_note_changes = boom
         with quiet():
-            with self.assertRaises(RuntimeError):
-                self.mod.nl_upkeep(self.st)
+            self.mod.owner_dm_upkeep(self.st)
         self.assertIn(m["id"], self.st["nl_nonces"])
 
 

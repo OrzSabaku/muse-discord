@@ -306,7 +306,7 @@ def _is_id(v):
 
 def change_source(h):
     """"settings" (/settings: an owner or server admin by user id), "dm"
-    (an owner's plain-language DM), or "cli" (bin/settings.py, the
+    (historical plain-language DM changes), or "cli" (bin/settings.py, the
     owners' Muse, bin/telemetry.py)."""
     g = str(h.get("group") or "")
     if g.startswith("nl-"):

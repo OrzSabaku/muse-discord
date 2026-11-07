@@ -8,7 +8,7 @@
 | 処理 | 主な実装 |
 | --- | --- |
 | 受信・キュー・返信・認可 | `src/muse_discord/monitor.py` |
-| 設定の解決・画面・自然言語変更 | `src/muse_discord/muse_settings.py`・`src/muse_discord/settings_ui.py`・`src/muse_discord/settings_nl.py` |
+| 設定の解決・画面 | `src/muse_discord/muse_settings.py`・`src/muse_discord/settings_ui.py` |
 | プロセス監視・プレゼンス | `bin/watchdog.sh`・`src/muse_discord/presence.py` |
 | 通知・自発メッセージ | `src/muse_discord/muse_watches.py`・`src/muse_discord/proactive.py` |
 | 単発CLI・MCP | `bin/discord-api.py`・`src/muse_discord/discord_tools/` |

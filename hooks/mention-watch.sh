@@ -164,9 +164,9 @@ fi
 answered='[]'
 for f in "$OUTBOX" "$SENDING"; do
     [ -f "$f" ] || continue
-    ids=$(jq -c '[.[]? | objects | {ids: [(.item, .reply_to) | strings],
-        nonce: ([.owner_dm_nonce, (.settings | objects | .nonce)]
-            | map(strings) | first),
+    ids=$(jq -c '[.[]? | objects | select(has("settings") | not)
+        | select(any(keys[]; startswith("_nl")) | not) | {ids: [(.item, .reply_to) | strings],
+        nonce: ((.owner_dm_nonce | strings) // null),
         reply: ((.reply_nonce | strings) // null)}]' "$f" 2>/dev/null) \
         || ids='[]'
     answered=$(jq -cn --argjson a "$answered" --argjson b "$ids" '$a + $b')
@@ -306,7 +306,7 @@ fi
 # Owner DMs wake alone: a run that handles an owner's DM (which may ask
 # to change settings) never also reads a server message or anyone
 # else's, so text written by someone else can never share a context
-# with an owner's settings request. The rest are handed out on the
+# with an owner's DM. The rest are handed out on the
 # next run, a few seconds later (they keep no lease meanwhile).
 # The owner's own messages, a heartbeat slot, and the bot's notices to
 # the owners (reminders, watches: they carry text from elsewhere, such as

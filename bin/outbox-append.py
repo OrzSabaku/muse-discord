@@ -16,10 +16,8 @@ appending through this tool cannot.
 
 Nothing is appended if any item has an obvious mistake (the monitor
 would set it aside unsent); the errors are printed so the worker can fix
-them and run it again. An item with a `settings` action (a settings
-request from an owner's DM; docs/PROTOCOL.md) gets the monitor's own shape
-checks (settings_nl.shape_problems), and so does an item with a
-`schedule` action (reminders and watches: muse_watches.shape_problems);
+them and run it again. Settings actions are rejected; use /settings or
+bin/settings.py. A `schedule` action uses muse_watches.shape_problems;
 a `proactive` opt-out / opt-in is "opt-out" or "opt-in" on an item with
 `item`. An item for an owner's DM
 carries that DM's `owner_dm_nonce` from the wake payload, passed
@@ -55,8 +53,7 @@ def _is_id(value):
 
 def module_problems(name, item, *args):
     """The monitor's own shape rules, from the package module that holds
-    them: settings_nl (a settings action, and fields starting with _nl)
-    or muse_watches (a schedule action)."""
+    them: muse_watches (a schedule action)."""
     try:
         if os.path.join(PACKAGE_DIR, "src") not in sys.path:
             sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
@@ -89,8 +86,6 @@ def nonce_problems(item):
     out = []
     mid = str(item.get("item") or item.get("reply_to") or "")
     dm = item.get("owner_dm_nonce")
-    if dm is None and isinstance(item.get("settings"), dict):
-        dm = item["settings"].get("nonce")   # counts too, as for the monitor
     for field, given, name in (
             ("reply_nonce", item.get("reply_nonce"), "item_nonces.json"),
             ("owner_dm_nonce", dm, "owner_dm_nonces.json")):
@@ -132,10 +127,6 @@ def problems(item):
         if not (isinstance(nonce, str) and NONCE_RE.fullmatch(nonce)):
             out.append('owner_dm_nonce: copy the item\'s "owner_dm_nonce" '
                        'from the wake payload exactly')
-        elif isinstance(item.get("settings"), dict) \
-                and item["settings"].get("nonce") not in (None, nonce):
-            out.append("owner_dm_nonce and settings.nonce differ; both are "
-                       "the item's owner_dm_nonce")
     out += nonce_problems(item)
     if out:
         return out
@@ -144,8 +135,7 @@ def problems(item):
         if out:
             return out
     if "settings" in item or any(str(k).startswith("_nl") for k in item):
-        return module_problems("settings_nl", item,
-                               os.path.join(PACKAGE_DIR, "plugins"))
+        return ["settings actions are no longer supported; use /settings"]
     if item.get("silent"):
         if not (item.get("reply_to") or item.get("item")):
             out.append("a silent item needs reply_to or item")
