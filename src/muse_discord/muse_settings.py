@@ -3,7 +3,7 @@
 and the mapping of the old config layout.
 
 One module, read by monitor.py, presence.py, watchdog.sh and the bin/
-tools. Standard library plus PyYAML only.
+tools. PyYAML handles input; settings_schema supplies Pydantic field validation.
 
 Layers, least specific first (the most specific value that is set wins):
 
@@ -44,15 +44,13 @@ from datetime import datetime, timezone
 
 import yaml
 
+from muse_discord.settings_schema import CORE, TOP, CORE_GROUPS
+from muse_discord.settings_schema import NOTES_MAX as NOTES_MAX, PRESENCE_KINDS as PRESENCE_KINDS
+
 OVERLAY_NAME = "config.discord.yaml"
 HISTORY_CAP = 100
-NOTES_MAX = 500
 DEFAULT_TOKEN_FILE = "~/.config/muse-discord/bot_token"
 DEFAULT_PERSONA = "persona.md"
-PRESENCE_KINDS = ("watching", "playing", "listening", "streaming",
-                  "competing", "custom")
-_LETTER = {"E": "everywhere", "D": "dms", "A": "all_servers",
-           "S": "server", "C": "channel"}
 # Short key names a channel/category entry uses.
 CHANNEL_SHORT = {"replies": "who.replies", "notes": "style.notes"}
 ENGINE_KEYS = {
@@ -79,168 +77,6 @@ class SettingsError(Exception):
     reason and the valid values; several problems are one per line)."""
 
 
-def _scopes(spec):
-    if isinstance(spec, str):
-        return tuple(_LETTER[c] for c in spec)
-    return tuple(spec)
-
-
-class Spec:
-    """One setting's type, default and the scopes that may set it."""
-
-    def __init__(self, type, default, scopes, values=(), hidden_values=(),
-                 min=None, max=None, none=False, maxlen=None, risky=False,
-                 discord_editable=True, allow_names=False, hidden=False,
-                 legacy=None, ids=False, check=None):
-        self.type = type
-        self.default = default
-        self.scopes = _scopes(scopes)
-        self.values = tuple(values)
-        self.hidden_values = tuple(hidden_values)
-        self.min, self.max, self.none = min, max, none
-        self.maxlen = maxlen
-        self.risky = risky
-        self.discord_editable = discord_editable
-        self.allow_names = allow_names
-        self.hidden = hidden
-        self.legacy = legacy
-        # A choice that also takes a list of user ids (who.dms_from:
-        # the owners plus those people).
-        self.ids = ids
-        # A text setting with a format of its own: check(text) ->
-        # (ok, normalized text or reason).
-        self.check = check
-
-    def valid_text(self):
-        t = self.type
-        if t == "choice":
-            return ", ".join(self.values) + (
-                ", or a list of user ids" if self.ids else "")
-        if t == "on-off":
-            return "on, off"
-        if t == "number":
-            rng = f"{self.min}-{self.max}" if self.max is not None \
-                else f"{self.min} or more"
-            return ("none, " if self.none else "") + rng
-        if t == "people":
-            kw = "".join(f"{v}, or " for v in self.values)
-            return kw + 'a list of "<user id>" / "role:<role id>"'
-        if t == "channel":
-            kw = ", ".join(self.values)
-            return "a channel id" + (f", {kw}" if kw else "") + (
-                ", or a channel name" if self.allow_names else "")
-        if t == "text":
-            return f"text up to {self.maxlen} characters" if self.maxlen \
-                else "text"
-        if t == "phrases":
-            return "a list of words or phrases"
-        return "any value"
-
-
-_HOURS_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)\s*-\s*([01]?\d|2[0-3])"
-                       r":([0-5]\d)$")
-
-
-def check_quiet_hours(text):
-    """(ok, "HH:MM-HH:MM" or "off", or why not): proactive.quiet_hours."""
-    t = str(text).strip().lower()
-    if t in ("off", "none", ""):
-        return True, "off"
-    m = _HOURS_RE.match(t)
-    if not m:
-        return False, (f"{_show(text)} is not a time range like "
-                       f"22:00-09:00 (or off)")
-    a, b = (int(m[1]), int(m[2])), (int(m[3]), int(m[4]))
-    if a == b:
-        return False, "quiet hours need a start and an end that differ"
-    return True, "%02d:%02d-%02d:%02d" % (a + b)
-
-
-def check_timezone(text):
-    """(ok, an IANA time zone name, or why not): proactive.timezone."""
-    t = str(text).strip()
-    if t.upper() in ("UTC", "Z", "GMT", ""):
-        return True, "UTC"
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+\-]*(/[A-Za-z0-9_+\-]+){0,2}",
-                        t) or ".." in t:
-        return False, f"{_show(text)} is not a time zone like Europe/Paris"
-    try:
-        from zoneinfo import ZoneInfo
-        ZoneInfo(t)
-    except Exception:
-        return False, (f"{_show(text)} is not a time zone I know (a name "
-                       f"like Europe/Paris or America/New_York)")
-    return True, t
-
-
-CORE = {
-    "who.replies": Spec("choice", "conversational", "DASC",
-                        values=("off", "when-addressed", "conversational", "freely")),
-    # A list of user ids = the owners plus those people.
-    "who.dms_from": Spec("choice", "owners", "D",
-                         values=("owners", "shared-servers", "anyone"),
-                         risky=True, ids=True),
-    "who.allow": Spec("people", "everyone", "EDS", values=("everyone",)),
-    "who.ignore": Spec("people", [], "EDS"),
-    "who.bots": Spec("choice", "when-addressed", "EDS",
-                     values=("ignore", "when-addressed")),
-    "who.bot_exchange_limit": Spec("number", None, "ES", min=1, max=50,
-                                   none=True),
-    "style.length": Spec("choice", "normal", "EDS",
-                         values=("brief", "normal", "detailed")),
-    "style.notes": Spec("text", "", "EDSC", maxlen=NOTES_MAX),
-    "abilities.owner_commands": Spec("on-off", True, "ES"),
-    # External app access is owner-managed; app-specific policy remains file-only.
-    "abilities.external_apps": Spec("choice", "off", "E",
-                                values=("off", "read-only", "confirm", "write", "unconditional"),
-                                risky=True),
-    # Who can set reminders and watches (muse_watches.py): owners always
-    # can; a list names the others who may.
-    "abilities.reminders": Spec("people", "everyone", "EDS",
-                                values=("owners", "everyone")),
-    # (Web watches are the owners' only: no setting. An old
-    # abilities.web_watches is ignored, see RETIRED_KEYS.)
-    "privacy.memory": Spec("choice", "public-only", "EDS",
-                           values=("everything", "public-only", "nothing"),
-                           risky=True),
-    "privacy.never_share": Spec("phrases", [], "E", discord_editable=False),
-    # "answer" (no check at all) exists only so a migrated
-    # injection_quarantine: false keeps behaving as it did.
-    "privacy.suspicious": Spec("choice", "hold-for-review", "EDS",
-                               values=("hold-for-review", "ignore"),
-                               hidden_values=("answer",)),
-    "limits.per_day": Spec("number", None, "EDS", min=0, max=100000,
-                           none=True),
-    "limits.per_person_per_day": Spec("number", None, "EDS", min=0,
-                                      max=10000, none=True),
-    # Image and video generation (the worker generates, the monitor
-    # attaches; see monitor.py). On by default, for the owners only.
-    # who: a list replaces the owners (add them to keep them). per_day counts replies with
-    # generated files actually sent, in the scope where it is set.
-    # legacy: the old plugin's param names (see moved_key).
-    "media.enabled": Spec("on-off", True, "EDASC"),
-    "media.who": Spec("people", "owners", "ES", values=("owners",
-                                                         "everyone"),
-                      risky=True, legacy="allowed_user_ids"),
-    "media.per_day": Spec("number", None, "ES", min=0, max=1000,
-                          none=True, legacy="daily_cap"),
-    # Independent server/DM heartbeat clocks; the explicit daily ceiling
-    # is bot-wide and file-only. Channel rules live in the server block.
-    "proactive.per_day": Spec("number", 30, "E", min=0, max=100000,
-                              discord_editable=False),
-    "proactive.enabled": Spec("on-off", False, "EDASC"),
-    "proactive.frequency": Spec("choice", "rarely", "EDS",
-                                values=("rarely", "sometimes", "often")),
-    "proactive.per_person_per_day": Spec("number", 1, "ED", min=0, max=50),
-    "proactive.per_person_per_week": Spec("number", 3, "ED", min=0, max=100),
-    "proactive.per_channel_per_day": Spec("number", 1, "ES", min=0, max=50),
-    "proactive.quiet_hours": Spec("text", "22:00-09:00", "E", maxlen=20,
-                                  check=check_quiet_hours),
-    "proactive.timezone": Spec("text", "UTC", "E", maxlen=64,
-                               check=check_timezone),
-}
-CORE_GROUPS = ("who", "style", "abilities", "privacy", "limits", "media",
-               "proactive")
 # Settings that moved: the media_generation plugin (settings id media) is
 # core since 2026-10. Its keys, plugins.media.* and plugins.media_
 # generation.* (old param names too), still load from config.yaml and
@@ -279,19 +115,6 @@ def _retired_key(key):
         and parts[1] in RETIRED_PLUGINS
 
 
-TOP = {
-    "presence.status": Spec("text", "", "E", maxlen=128),
-    "presence.kind": Spec("choice", "watching", "E", values=PRESENCE_KINDS),
-    # Hidden: the old presence.enabled: false (no presence client).
-    "presence.enabled": Spec("on-off", True, "E", hidden=True,
-                             discord_editable=False),
-    "updates.notify": Spec("on-off", True, "E"),
-    # Anonymous daily usage counts to the maintainer (telemetry.py).
-    "telemetry.usage_stats": Spec("on-off", True, "E"),
-    # What an owner tells the bot in their DM, added to the Muse's own
-    # memory file (monitor.py, remember_facts).
-    "memory.save_dms": Spec("on-off", True, "E"),
-}
 TOP_DISCORD_EDITABLE = ("presence.status", "presence.kind",
                         "updates.notify", "telemetry.usage_stats",
                         "memory.save_dms")
@@ -338,120 +161,8 @@ def _id_str(v):
 
 
 def normalize(spec, value):
-    """(ok, normalized value or reason). Accepts YAML 1.1 booleans for
-    on/off (and False for an "off" choice)."""
-    t = spec.type
-    if t == "any":
-        return True, value
-    if t == "on-off":
-        v = _norm_onoff(value)
-        return (True, v) if v is not None else (False, "expected on or off")
-    if t == "choice":
-        if value is False and "off" in spec.values:
-            return True, "off"
-        if value is True and "on" in spec.values:
-            return True, "on"
-        if isinstance(value, str):
-            v = value.strip().lower()
-            if v in spec.values or v in spec.hidden_values:
-                return True, v
-        if spec.ids:
-            return _norm_ids(value)
-        return False, f"{_show(value)} is not a valid value"
-    if t == "number":
-        if value is None or (isinstance(value, str)
-                             and value.strip().lower() == "none"):
-            if spec.none:
-                return True, None
-            return False, "a number is required here"
-        if isinstance(value, bool):
-            return False, f"{_show(value)} is not a number"
-        if isinstance(value, float) and value.is_integer():
-            value = int(value)
-        if isinstance(value, str) and re.fullmatch(r"-?\d+", value.strip()):
-            value = int(value.strip())
-        if not isinstance(value, int):
-            return False, f"{_show(value)} is not a whole number"
-        if spec.min is not None and value < spec.min:
-            return False, f"{value} is below the minimum {spec.min}"
-        if spec.max is not None and value > spec.max:
-            return False, f"{value} is above the maximum {spec.max}"
-        return True, value
-    if t == "text":
-        if value is None:
-            return True, ""
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            value = str(value)
-        if not isinstance(value, str):
-            return False, "expected text"
-        if spec.maxlen and len(value) > spec.maxlen:
-            return False, (f"too long ({len(value)} characters; the limit "
-                           f"is {spec.maxlen})")
-        if spec.check is not None:
-            return spec.check(value)
-        return True, value
-    if t == "phrases":
-        if value is None:
-            return True, []
-        if not isinstance(value, list):
-            return False, "expected a list of phrases"
-        out = []
-        for p in value:
-            if not isinstance(p, (str, int, float)) or isinstance(p, bool) \
-                    or not str(p).strip():
-                return False, f"{_show(p)} is not a phrase"
-            out.append(str(p).strip())
-        return True, out
-    if t == "people":
-        if isinstance(value, str) and value.strip().lower() in spec.values:
-            return True, value.strip().lower()
-        if value is None:
-            value = []
-        if isinstance(value, (str, int)) and not isinstance(value, bool):
-            value = [value]
-        if not isinstance(value, list):
-            return False, f"{_show(value)} is not a valid value"
-        out = []
-        for p in value:
-            pid = _id_str(p)
-            if pid is None and isinstance(p, str) \
-                    and p.strip().lower().startswith("role:"):
-                rid = _id_str(p.strip()[5:].strip())
-                if rid:
-                    out.append("role:" + rid)
-                    continue
-            if pid is None:
-                return False, (f"{_show(p)} is not a user id or "
-                               f"\"role:<id>\" (expected a Discord id)")
-            out.append(pid)
-        return True, out
-    if t == "channel":
-        if isinstance(value, str) and value.strip().lower() in spec.values:
-            return True, value.strip().lower()
-        if value is False and "off" in spec.values:
-            return True, "off"
-        cid = _id_str(value)
-        if cid:
-            return True, cid
-        if spec.allow_names and isinstance(value, str) and value.strip():
-            return True, value.strip()
-        return False, f"{_show(value)}: expected a Discord channel id"
-    return False, f"unknown type {t}"
-
-
-def _norm_ids(value):
-    """A list of user ids (a single id is a list of one; no roles). An
-    empty list means nobody besides the owners: "owners"."""
-    items = value if isinstance(value, list) else [value]
-    out = []
-    for p in items:
-        pid = _id_str(p)
-        if pid is None:
-            return False, (f"{_show(p)} is not a valid value (expected "
-                           f"a keyword or Discord user ids)")
-        if pid not in out:
-            out.append(pid)
-    return True, (out or "owners")
+    """Validate one explicitly supplied override using its Pydantic field."""
+    return spec.normalize(value)
 
 
 def _show(v):
@@ -860,7 +571,7 @@ CHANNEL_ONLY = ("a channel or category may set only replies, notes, "
 
 
 def spec_of(key):
-    """The Spec of a core or bot-wide settings key, else None."""
+    """The Pydantic field view of a core or bot-wide settings key, else None."""
     return CORE.get(key) or TOP.get(key)
 
 

@@ -146,7 +146,7 @@ class Invalid(unittest.TestCase):
                                 "scope": "channel"}}),
              "cannot be set at channel scope"),
             (step({"settings": {"set": "who.replies", "value": "sometimes",
-                                "scope": "channel"}}), "not a valid value"),
+                                "scope": "channel"}}), "valid:"),
             (check({"bogus": 1}), "unknown check 'bogus'"),
             (check({"no_sut_reply_to": "q2"}), "unknown label 'q2'"),
             (check({"content_matches": {"label": "q1", "pattern": "("}}),
