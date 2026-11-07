@@ -57,8 +57,8 @@ git stash pop
 
 ```bash
 bash bin/install.sh
-python3 bin/settings.py validate
-python3 bin/render-worker-prompt.py --media none
+uv run python bin/settings.py validate
+uv run python bin/render-worker-prompt.py --media none
 ```
 
 生成メディアを使っている場合は、`--media` を従来の値に合わせます。個別に変更したseamも反映します。
@@ -73,7 +73,7 @@ python3 bin/render-worker-prompt.py --media none
 ```bash
 kill "$(cat monitor.pid)"
 bash bin/watchdog.sh
-python3 bin/doctor.py --no-dm
+uv run python bin/doctor.py --no-dm
 ```
 
 旧版から初めて更新する場合は、残っている旧 `presence.py` プロセスも停止します（`pkill -f "^python3 (bin/)?presence.py"`）。現在はモニターがオンライン表示とステータスを担当します。
@@ -91,7 +91,7 @@ Muse側の受信・監視フックを先に解除し、その後 `monitor.pid` �
 
 | 症状 | 確認・対応 |
 | --- | --- |
-| 設定エラー | `python3 bin/settings.py validate` の指摘を直す |
+| 設定エラー | `uv run python bin/settings.py validate` の指摘を直す |
 | トークン拒否・Message Content不足 | トークンをログへ出さず、`bin/connect-discord.py --saved` の案内に従う |
 | キューが増えるが返答しない | 受信フックの登録先、専用ワーカー、`worker-prompt.md` のパスを確認 |
 | フック未実行・古い指示 | [導入手順](SETUP.md) の登録を確認し、プロンプトを再生成 |

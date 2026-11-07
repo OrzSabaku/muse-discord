@@ -9,14 +9,14 @@
 本人DMでは `owner_dm_nonce` とも照合します。依頼元か、所有者が依頼文で指定したチャンネルだけを操作できます。
 
 ```bash
-python3 bin/discord-api.py --for ITEM_ID --nonce NONCE list-unread CHANNEL_ID 20
-python3 bin/discord-api.py --for ITEM_ID --nonce NONCE mark-read CHANNEL_ID MESSAGE_ID
-python3 bin/discord-api.py --for ITEM_ID --nonce NONCE get-messages CHANNEL_ID 50
-python3 bin/discord-api.py --for ITEM_ID --nonce NONCE reply-message CHANNEL_ID MESSAGE_ID "返信"
-python3 bin/discord-api.py --for ITEM_ID --nonce NONCE send-message CHANNEL_ID "送信"
-python3 bin/discord-api.py --for ITEM_ID --nonce NONCE fetch-attachment CHANNEL_ID MESSAGE_ID ATTACHMENT_ID
-python3 bin/discord-api.py --for ITEM_ID --nonce NONCE get-emoji CHANNEL_ID '😀'
-python3 bin/discord-api.py --for ITEM_ID --nonce NONCE get-avatar CHANNEL_ID USER_ID
+uv run python bin/discord-api.py --for ITEM_ID --nonce NONCE list-unread CHANNEL_ID 20
+uv run python bin/discord-api.py --for ITEM_ID --nonce NONCE mark-read CHANNEL_ID MESSAGE_ID
+uv run python bin/discord-api.py --for ITEM_ID --nonce NONCE get-messages CHANNEL_ID 50
+uv run python bin/discord-api.py --for ITEM_ID --nonce NONCE reply-message CHANNEL_ID MESSAGE_ID "返信"
+uv run python bin/discord-api.py --for ITEM_ID --nonce NONCE send-message CHANNEL_ID "送信"
+uv run python bin/discord-api.py --for ITEM_ID --nonce NONCE fetch-attachment CHANNEL_ID MESSAGE_ID ATTACHMENT_ID
+uv run python bin/discord-api.py --for ITEM_ID --nonce NONCE get-emoji CHANNEL_ID '😀'
+uv run python bin/discord-api.py --for ITEM_ID --nonce NONCE get-avatar CHANNEL_ID USER_ID
 ```
 
 - 未読取得の初回は最新位置を記録し、過去の履歴を返さない。以後、取得だけでは既読位置を進めない。
@@ -30,7 +30,7 @@ python3 bin/discord-api.py --for ITEM_ID --nonce NONCE get-avatar CHANNEL_ID USE
 
 ## MCP
 
-Python 3.11以上で、MCP用の依存を追加します。
+MCP用の依存を追加します。
 
 ```bash
 uv sync --group mcp

@@ -13,7 +13,7 @@ cd ~/muse-discord
 bash bin/install.sh
 ```
 
-Python 3.10以上、uv、jqが必要です。`bin/install.sh` はuvで`.venv`を作成します。以後の `python3` は`.venv/bin/python3`に置き換えるか、`uv run`経由で実行します。
+uvとjqが必要です。`bin/install.sh` がuv管理のPython 3.15系と依存関係を `.venv` に用意します。コマンドはプロジェクトのルートで `uv run python bin/…` の形で実行します。
 既に `config.yaml` がある場合は再導入せず、[更新・復旧](UPDATING.md) を参照してください。
 
 ## 2. Botの接続
@@ -23,8 +23,8 @@ Python 3.10以上、uv、jqが必要です。`bin/install.sh` はuvで`.venv`を
 3. 次のコマンドを実行し、表示された所有者が本人か確認する。招待・Intent設定は出力の案内に従う。
 
 ```bash
-python3 bin/connect-discord.py --name "Muse" --token-file TOKEN_FILE_PATH
-python3 bin/connect-discord.py --wait 900
+uv run python bin/connect-discord.py --name "Muse" --token-file TOKEN_FILE_PATH
+uv run python bin/connect-discord.py --wait 900
 ```
 
 トークン入力ファイルは読み取り後に削除されます。Portal側の追加操作を案内されたら、対応後に `--saved` で再確認します。
@@ -35,9 +35,9 @@ python3 bin/connect-discord.py --wait 900
 **起動前に実行します。** 既存設定はバックアップされます。
 
 ```bash
-python3 bin/personal-profile.py
-python3 bin/settings.py validate
-python3 bin/render-worker-prompt.py --media none
+uv run python bin/personal-profile.py
+uv run python bin/settings.py validate
+uv run python bin/render-worker-prompt.py --media none
 ```
 
 - 所有者を1人に固定し、その人のDMだけを許可する。複数所有者の場合は `--owner USER_ID` を指定する。
@@ -66,7 +66,7 @@ python3 bin/render-worker-prompt.py --media none
 
 ```bash
 bash bin/watchdog.sh
-python3 bin/doctor.py --no-dm
+uv run python bin/doctor.py --no-dm
 ```
 
 本人のDMへの応答、別アカウントとサーバーへの無応答、再起動後の応答を確認します。
@@ -81,10 +81,10 @@ Discordの `/settings` や設定CLIによる変更は `config.discord.yaml` に�
 DMの会話による設定変更はできません。Discordの `/settings`、設定CLI、YAMLファイルのいずれかを使います。
 
 ```bash
-python3 bin/settings.py show --dms --explain
-python3 bin/settings.py places
-python3 bin/settings.py set style.length brief --place dms --by muse.ai
-python3 bin/settings.py undo --place dms --by muse.ai
+uv run python bin/settings.py show --dms --explain
+uv run python bin/settings.py places
+uv run python bin/settings.py set style.length brief --place dms --by muse.ai
+uv run python bin/settings.py undo --place dms --by muse.ai
 ```
 
 変更先は `defaults`・`dms`・`server:ID`・`channel:SERVER_ID:CHANNEL_ID` です。
@@ -113,4 +113,4 @@ Discordでは `/settings` を開き、「適用先」→「分類」→「設定
 | `channels.<チャンネルID>.proactive.enabled: on` | サーバー別ファイル。自発発言を許可する。`freely` と併用すると、会話への参加と自発発言の両方を許可できる |
 | `replies: when-addressed` / `replies: off` | 各チャンネルで、呼びかけへの返信だけを許可する／返信を停止する。自発発言も止める場合は `proactive.enabled: off` を併記する |
 
-ファイル編集後は `python3 bin/settings.py validate` で確認します。モニターはファイルの追加・変更・削除を自動で読み直し、不正な編集の場合は直前の有効な設定を使い続けます。全体の日次上限はファイル編集専用です。所有者の在籍確認、ユーザーの拒否設定、静穏時間、未応答時の再送防止は引き続き適用されます。
+ファイル編集後は `uv run python bin/settings.py validate` で確認します。モニターはファイルの追加・変更・削除を自動で読み直し、不正な編集の場合は直前の有効な設定を使い続けます。全体の日次上限はファイル編集専用です。所有者の在籍確認、ユーザーの拒否設定、静穏時間、未応答時の再送防止は引き続き適用されます。
