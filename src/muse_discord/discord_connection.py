@@ -11,6 +11,7 @@ import os
 import time
 
 import discord
+from discord.ext import tasks
 
 from muse_discord import muse_settings as ms
 from muse_discord import settings_ui
@@ -26,6 +27,7 @@ class Connection(discord.Client):
         super().__init__(
             proxy=proxy,
             intents=discord.Intents(intents),
+            status=discord.Status.invisible,
             enable_debug_events=True,
             max_messages=None,
             member_cache_flags=discord.MemberCacheFlags.none(),
@@ -35,9 +37,68 @@ class Connection(discord.Client):
         self.inbox, self.gateway_status = inbox, status
         self.settings_context, self.settings_guard = context_factory, guard
         self.settings_log = lambda message: print(message, flush=True)
+        self._presence_sent = (False, "", "")
+        self._presence_at = float("-inf")
+        self._presence_error = None
 
     async def setup_hook(self):
         self.add_dynamic_items(settings_ui.Action)
+        self.presence_watch.start()
+
+    async def close(self):
+        self.presence_watch.cancel()
+        await super().close()
+
+    @tasks.loop(seconds=2)
+    async def presence_watch(self):
+        try:
+            await self.sync_presence()
+            self._presence_error = None
+        except Exception as exc:
+            message = f"Presence update failed: {type(exc).__name__}: {exc}"
+            if message != self._presence_error:
+                self.settings_log(message)
+                self._presence_error = message
+
+    @presence_watch.before_loop
+    async def before_presence_watch(self):
+        await self.wait_until_ready()
+
+    async def sync_presence(self):
+        # SettingsCtx uses the monitor's watcher: invalid edits retain the last
+        # valid settings. Disk work must not block Gateway heartbeats/callbacks.
+        if not self.is_ready():
+            return
+        st = await asyncio.to_thread(lambda: self.settings_context().settings)
+        enabled = st.presence_enabled
+        name = str(st.presence_status or "").strip() if enabled else ""
+        kind = st.presence_kind if name else ""
+        want = (enabled, name, kind)
+        now = time.monotonic()
+        if want == self._presence_sent or now - self._presence_at < 5:
+            return
+        activity = None
+        if name:
+            activity = (
+                discord.CustomActivity(name=name)
+                if kind == "custom"
+                else discord.Activity(type=discord.ActivityType[kind], name=name)
+            )
+        await asyncio.to_thread(
+            self.settings_guard, activity.to_dict() if activity else {}, "presence"
+        )
+        status = discord.Status.online if enabled else discord.Status.invisible
+        await self.change_presence(status=status, activity=activity)
+        # The public setters also prepare the next IDENTIFY after a reconnect.
+        self.status, self.activity = status, activity
+        self._presence_sent, self._presence_at = want, time.monotonic()
+        self.settings_log("Status updated on the monitor connection.")
+
+    async def on_ready(self):
+        self._presence_sent = None
+
+    async def on_resumed(self):
+        self._presence_sent = None
 
     async def on_connect(self):
         self.gateway_status["connected"] = True

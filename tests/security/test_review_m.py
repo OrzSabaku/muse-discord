@@ -63,7 +63,7 @@ class Upload(ts.tb.Base):
         def urlopen(*a, **k):
             opened.append(a)
             raise OSError("sent")
-        with mock.patch.object(m.urllib.request, "urlopen", urlopen), \
+        with mock.patch.object(m, "discord_request", urlopen), \
                 quiet():
             try:
                 m.send_reply_with_files(CH, "see " + TOKEN[:30],

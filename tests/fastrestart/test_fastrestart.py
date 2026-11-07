@@ -17,7 +17,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
-from common import (FAKEWS, HOOK_RUNTIME as RUNTIME, MUT_DIR,  # noqa: E402
+from common import (HOOK_RUNTIME as RUNTIME, MUT_DIR,  # noqa: E402
                     copy_watchdog)
 
 if os.environ.get("FR_IN_NS") != "1":
@@ -31,7 +31,7 @@ if os.environ.get("FR_IN_NS") != "1":
     sys.exit(r.returncode)
 
 
-PATS = ("monitor.py", "presence.py", "watchdog.sh")
+PATS = ("monitor.py", "watchdog.sh")
 
 
 def killall():
@@ -67,9 +67,8 @@ class Base(unittest.TestCase):
         else:
             shutil.copy(os.path.join(HERE, "fake_watchdog.sh"),
                         os.path.join(self.d, "bin", "watchdog.sh"))
-        for n in ("monitor.py", "presence.py"):
-            shutil.copy(os.path.join(HERE, "fake_proc.py"),
-                        os.path.join(self.d, "bin", n))
+        shutil.copy(os.path.join(HERE, "fake_proc.py"),
+                    os.path.join(self.d, "bin", "monitor.py"))
         tok = os.path.join(self.d, "bot_token")
         with open(tok, "w") as f:
             f.write("dummy\n")
@@ -84,7 +83,7 @@ updates:
         self.env = dict(os.environ,
                         HATCH_HOOK_RUNTIME=RUNTIME, HOOK_STATE=self.state,
                         MUSE_DISCORD_DIR=self.d,
-                        PYTHONPATH=FAKEWS, FAKE_WD_SECS="1.2")
+                        FAKE_WD_SECS="1.2")
         self.env.pop("MUSE_DISCORD_CONFIG", None)
 
     def tearDown(self):
@@ -376,7 +375,7 @@ class RealWatchdog(Base):
         oa, _ = a.communicate(timeout=400)
         ob, _ = b.communicate(timeout=400)
         self.assertEqual(len(self.starts("monitor.py")), 1, oa + ob)
-        self.assertEqual(len(self.starts("presence.py")), 1, oa + ob)
+        self.assertEqual(self.starts("presence.py"), [], oa + ob)
         self.assertNotIn("ALERT", oa + ob)
 
     def test_hook_run_and_scheduled_run_together_start_one_monitor(self):

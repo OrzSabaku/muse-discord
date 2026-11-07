@@ -208,6 +208,16 @@ class ConnectDiscord(unittest.TestCase):
         self.assertFalse(os.path.exists(self.cfg))
         self.assertNotIn(bad, r.stdout + r.stderr)
 
+    def test_stdin_token_works_without_existing_config(self):
+        self.assertFalse(os.path.exists(self.cfg))
+        r = run(self.pkg, self.home, "connect-discord.py",
+                ["--json", "--name", "Pip"], TOKEN + "\n", self.fake.base)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = json.loads(r.stdout)
+        self.assertEqual(out["owner_id"], OWNER_ID)
+        self.assertTrue(os.path.exists(self.cfg))
+        self.assertTrue(os.path.exists(self.token_file))
+
     def test_connects_and_the_token_stays_in_its_file(self):
         r, out = self.connect(f"  `{TOKEN}`  ")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

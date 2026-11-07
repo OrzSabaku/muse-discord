@@ -18,7 +18,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 import monitor_harness as H  # noqa: E402
-from common import (FAKE_PROC, FAKEWS, HOOK_RUNTIME as RUNTIME,  # noqa: E402
+from common import (FAKE_PROC, HOOK_RUNTIME as RUNTIME,  # noqa: E402
                     MUT_DIR, copy_watchdog, scratch)
 
 V0 = "v1.0.0"
@@ -299,32 +299,18 @@ class Interactions(unittest.TestCase):
         mod = self.mod
         seen = {}
 
-        class Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-            def read(self):
-                return b""
-
-        def fake_urlopen(req, timeout=None):
-            seen.update(url=req.full_url, data=req.data, timeout=timeout,
-                        headers={k.lower(): v for k, v in req.header_items()},
-                        method=req.get_method())
-            return Resp()
-        orig = mod.urllib.request.urlopen
-        mod.urllib.request.urlopen = fake_urlopen
+        def request(method, path, data=None, **kwargs):
+            seen.update(method=method, path=path, data=data, **kwargs)
+        orig = mod.discord_request
+        mod.discord_request = request
         try:
             mod.interaction_callback(ix("x"), {"type": 7, "data": {}})
         finally:
-            mod.urllib.request.urlopen = orig
-        self.assertEqual(seen["url"], "https://discord.com/api/v10/"
-                         "interactions/9001/tok-en_1/callback")
+            mod.discord_request = orig
+        self.assertEqual(seen["path"], "/interactions/9001/tok-en_1/callback")
         self.assertEqual(seen["method"], "POST")
-        self.assertEqual(json.loads(seen["data"]), {"type": 7, "data": {}})
-        self.assertNotIn("authorization", seen["headers"])
+        self.assertEqual(seen["data"], {"type": 7, "data": {}})
+        self.assertTrue(seen["anonymous"])
         self.assertLess(seen["timeout"], 3)
 
 
@@ -380,9 +366,7 @@ class Watchdog(unittest.TestCase):
                        check=True, capture_output=True)
         git(self.seed, "checkout", "-q", "-b", "main")
         copy_watchdog(self.seed)
-        for n in ("monitor.py", "presence.py"):
-            shutil.copy(FAKE_PROC,
-                        os.path.join(self.seed, "bin", n))
+        shutil.copy(FAKE_PROC, os.path.join(self.seed, "bin", "monitor.py"))
         with open(os.path.join(self.seed, ".gitignore"), "w") as f:
             f.write("config.yaml\nbot_token\n*.log\n*.log.1\n*.json\n"
                     "monitor.heartbeat\n.*.tmp\n")
@@ -426,7 +410,6 @@ updates:
 
     def run_wd(self):
         e = os.environ.copy()
-        e["PYTHONPATH"] = FAKEWS
         p = subprocess.run(
             ["unshare", "--user", "--map-root-user", "--pid", "--fork",
              "--mount-proc", "bash", "-c",

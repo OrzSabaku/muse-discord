@@ -2,7 +2,7 @@
 """muse-discord settings: schema, validation, scopes, the Discord overlay,
 and configuration persistence.
 
-One module, read by monitor.py, presence.py, watchdog.sh and the bin/
+One module, read by monitor.py, watchdog.sh and the bin/
 tools. PyYAML handles input; settings_schema supplies Pydantic field validation.
 
 Layers, least specific first (the most specific value that is set wins):

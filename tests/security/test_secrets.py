@@ -89,7 +89,7 @@ class Outbox(tb.Base):
                 {"id": "1", "token": "t"},
                 {"type": 4, "data": {"content": TOKEN}}),
         ]
-        with mock.patch.object(m.urllib.request, "urlopen",
+        with mock.patch.object(m, "discord_request",
                                lambda *a, **k: opened.append(a)), quiet():
             for call in calls:
                 with self.assertRaises(m.SecretBlocked):
@@ -102,7 +102,7 @@ class Outbox(tb.Base):
         with open(leak, "w") as f:
             f.write("x " + TOKEN)
         opened = []
-        with mock.patch.object(m.urllib.request, "urlopen",
+        with mock.patch.object(m, "discord_request",
                                lambda *a, **k: opened.append(a)), quiet():
             with self.assertRaises(m.SecretBlocked):
                 m.send_reply_with_files(CH, "ok", [(leak, "cat.png")])

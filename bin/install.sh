@@ -6,7 +6,7 @@
 #   bash bin/install.sh
 #
 # 1. Python 3.10 or newer, and jq (the hooks use it).
-# 2. The Python packages in requirements.txt (websockets, PyYAML, Pydantic v2, discord.py), tried
+# 2. The Python packages in requirements.txt (PyYAML, Pydantic v2, discord.py), tried
 #    in this order until they import: already there; pip install --user;
 #    a virtual environment in the package dir (.venv). When .venv is
 #    used, watchdog.sh, the hooks and the rendered worker prompt all run
@@ -45,7 +45,7 @@ else
 fi
 
 # ---- Python packages ----
-have_pkgs() { "$1" -c 'import websockets, yaml; from pydantic import TypeAdapter; from discord.ui import LayoutView' >/dev/null 2>&1; }
+have_pkgs() { "$1" -c 'import yaml; from pydantic import TypeAdapter; from discord.ui import LayoutView; import discord; assert (2,7,1) <= discord.version_info[:3] < (2,8,0)' >/dev/null 2>&1; }
 if have_pkgs "$PY"; then
   echo "OK Python packages ($PY)"
 elif python3 -m pip install --user -q -r "$REQ" >/dev/null 2>&1 \

@@ -29,6 +29,9 @@ class Connection(unittest.IsolatedAsyncioTestCase):
             self.inbox, self.status, lambda: self.ctx, lambda *a: None, 33281
         )
 
+    async def asyncSetUp(self):
+        await self.client._async_setup_hook()
+
     async def asyncTearDown(self):
         await self.client.close()
 

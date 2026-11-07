@@ -564,23 +564,15 @@ def f4_monitor_outbox_rejects_malformed_ids():
 def f4_monitor_reaction_slash_encoded():
     reset()
     seen = []
-    orig = urllib.request.urlopen
-
-    class R:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    def cap(req, timeout=None):
-        seen.append(req.full_url)
-        return R()
-    urllib.request.urlopen = cap
+    orig = M.discord_request
+    def cap(method, path, data=None, **kwargs):
+        seen.append(path)
+        return {}
+    M.discord_request = cap
     try:
         M.add_reaction(GEN_CH, "123456789012345678", "../../x")
     finally:
-        urllib.request.urlopen = orig
+        M.discord_request = orig
     assert seen and "%2F" in seen[0] and "/../" not in seen[0], seen
 
 
@@ -740,36 +732,18 @@ def f7_role_mention_not_allowed():
 def f7_files_send_allowed_mentions():
     reset()
     seen = []
-    orig = urllib.request.urlopen
-
-    class R:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def read(self):
-            return b"{}"
-
-    def cap(req, timeout=None):
-        seen.append(req.data)
-        return R()
+    orig = M.discord_request
+    def cap(method, path, data=None, **kwargs):
+        seen.append(data)
+        return {}
     f = make_file(os.path.join(M.GENERATED_DIR, "1", "a.png"))
-    urllib.request.urlopen = cap
-    orig_load = M.json.load
+    M.discord_request = cap
     try:
-        M.json.load = lambda r: {}
-        ORIG_SEND_FILES(GEN_CH, "hi <@&1>", [(f, "a.png")],
-                        "123456789012345670", "abc")
+        ORIG_SEND_FILES(GEN_CH, "hi <@&1>", [(f, "a.png")], "123456789012345670", "abc")
     finally:
-        urllib.request.urlopen = orig
-        M.json.load = orig_load
-    body = seen[0]
-    start = body.index(b"\r\n\r\n") + 4
-    payload = json.loads(body[start:body.index(b"\r\n", start)])
-    assert payload.get("allowed_mentions") == \
-        {"parse": ["users"], "replied_user": True}, payload
+        M.discord_request = orig
+    payload = seen[0]
+    assert payload.get("allowed_mentions") == {"parse": ["users"], "replied_user": True}, payload
     assert payload.get("nonce") == "abc" and payload.get("enforce_nonce")
 
 

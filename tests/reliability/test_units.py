@@ -1,8 +1,6 @@
 """Reliability, in-process: token rejection, the burst ledger, gateway gap
-repair, channel discovery, outbox sends and nonces, the presence gateway
-loop (against the scripted fake websockets). MUT_DIR = the package tree
+repair, channel discovery, outbox sends and nonces. MUT_DIR = the package tree
 under test (default: this checkout)."""
-import asyncio
 import contextlib
 import io
 import json
@@ -19,7 +17,6 @@ import monitor_harness as H  # noqa: E402
 from monitor_harness import (BOT, OWNER, G1, msg, chan, sf,  # noqa: E402
                              HTTPErr)
 
-import websockets as fakews  # noqa: E402  (the offline stand-in, _lib/fakews)
 
 
 def ledger(mod):
@@ -223,33 +220,6 @@ class F7Discovery(unittest.TestCase):
         self.assertIs(found["T1"]["can_send"], True)
 
 
-HELLO = {"op": 10, "d": {"heartbeat_interval": 1_000_000_000}}
-
-
-class F10Presence(unittest.TestCase):
-    def run_p(self, scripts):
-        p = H.load_presence()
-        fakews.reset(scripts)
-        out = io.StringIO()
-        code = None
-        with contextlib.redirect_stdout(out):
-            try:
-                asyncio.run(p.run())
-            except fakews.Exhausted:
-                code = "exhausted"
-            except SystemExit as e:
-                code = e.code
-        return code, out.getvalue()
-
-    def test_4004_exits_with_marker(self):
-        code, out = self.run_p([[HELLO, ("close", 4004)]])
-        self.assertEqual(code, 3)
-        self.assertIn("TOKEN REJECTED", out)
-        # A bad HELLO backs off instead of spinning.
-        code, out = self.run_p([[{"op": 0}], [HELLO, "end"]])
-        self.assertEqual(out.count("Reconnecting in"), 2)
-
-
 def _isolate_outbox(mod):
     """Point the outbox side files and the lock at the scratch dir too
     (load_monitor leaves them under MUT_DIR)."""
@@ -284,15 +254,13 @@ class SendDeletedReplyTarget(unittest.TestCase):
             f.write(b"\x89PNG")
         seen = []
 
-        def fake_urlopen(req, timeout=None):
-            seen.append(req.data)
-            return _FakeResp()
-        with mock.patch.object(mod.urllib.request, "urlopen", fake_urlopen):
+        def send(method, path, data=None, **kwargs):
+            seen.append(data)
+            return {"id": "1"}
+        with mock.patch.object(mod, "discord_request", send):
             mod.send_reply_with_files("123456789012345678", "hi",
                                       [(path, "a.png")], reply_to, "n2")
-        body = seen[-1]
-        start = body.index(b"\r\n\r\n") + 4
-        return json.loads(body[start:body.index(b"\r\n", start)])
+        return seen[-1]
 
     def test_reply_reference_tolerates_missing_target(self):
         mod = H.load_monitor()
@@ -335,11 +303,11 @@ class SendDeletedReplyTarget(unittest.TestCase):
                 "author": "u", "channel_name": "general"})], f)
         reacts = []
 
-        def gone(req, timeout=None):
-            reacts.append(req.full_url)
+        def gone(method, path, data=None, **kwargs):
+            reacts.append(path)
             raise HTTPErr(404)
         out = io.StringIO()
-        with mock.patch.object(mod.urllib.request, "urlopen", gone), \
+        with mock.patch.object(mod, "discord_request", gone), \
                 contextlib.redirect_stdout(out):
             for _ in range(3):
                 mod.process_outbox(st)

@@ -1,11 +1,10 @@
 #!/bin/bash
-# muse-discord watchdog: keeps the monitor and presence processes alive.
+# muse-discord watchdog: keeps the monitor process alive.
 #
 # Who runs it:
 #   - A scheduler (cron, a scheduled agent job) every ~10 minutes: the
 #     full run, and the only one whose output anyone reads. It is the
-#     backstop for everything: presence restarts, stuck-heartbeat
-#     restarts, alerts, update checks.
+#     backstop for stuck-heartbeat restarts, alerts, and update checks.
 #   - The wake hook (hooks/mention-watch.sh), as `watchdog.sh
 #     --from-hook`, within seconds of seeing the monitor process gone
 #     (say, after the VM was replaced). Same checks and restarts, but
@@ -14,14 +13,13 @@
 #     announced by the next scheduled run, and a recovery it makes is
 #     reported there as "recovered".
 #   - Runs never overlap: each holds an flock on watchdog.lock, so two
-#     runs can never start two monitors (or two presence clients). A
-#     scheduled run waits up to LOCK_WAIT_SECS for a running one to
+#     runs can never start two monitors. A scheduled run waits up to LOCK_WAIT_SECS for a running one to
 #     finish; a hook run just leaves the work to the run in progress.
 #
-# Fully automatic: both processes read the bot token themselves from
+# Fully automatic: the monitor reads the bot token from
 # where token_from in config.yaml points: a token file (mode 600), or an environment variable,
-# which must then be set in this script's own environment (the processes
-# inherit it). This script never uses the token value; it only checks
+# which must then be set in this script's own environment (the monitor
+# inherits it). This script never uses the token value; it only checks
 # that one of the two is present. Settings are read through
 # muse_settings.py.
 #
@@ -36,13 +34,13 @@
 #   - State lives in watchdog_state.json and update_check.json; log in
 #     watchdog.log.
 #
-# Health contract with the processes (do not change casually):
+# Health contract with the monitor (do not change casually):
 #   - monitor.py prints "Bot user id: <id>" once its identity is
 #     confirmed, or "Bot identity pending" when /users/@me failed for a
 #     reason that can heal (a 429 storm, the network) and it keeps
 #     retrying in-loop. Either counts as a healthy start; both print
 #     BEFORE its (slow) channel discovery.
-#   - Either process prints "TOKEN REJECTED" and exits when Discord
+#   - The monitor prints "TOKEN REJECTED" and exits when Discord
 #     refuses the token (REST 401 or gateway close 4004): the token alert.
 #   - monitor.py prints "GATEWAY DISABLED" when realtime ingest stops for
 #     good (e.g. the Message Content intent is off) while REST polling
@@ -50,17 +48,16 @@
 #   - monitor.py touches monitor.heartbeat from its main loop; a live
 #     monitor whose heartbeat is older than HEARTBEAT_STALE_SECS is stuck
 #     and gets restarted.
-#   - presence.py prints a line containing "READY" once connected.
-#   - Both are started fully detached (double-fork) so a scheduler
-#     timeout killing this script's process tree cannot take them down.
+#   - It is started fully detached (double-fork) so a scheduler
+#     timeout killing this script's process tree cannot take it down.
 #     The previous run's log is kept as <name>.log.1 on each restart.
 
 set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # The package's own Python: bin/install.sh makes .venv when pip cannot
 # install into the system Python, and marks it .muse-ok once the
-# packages import there. Every python3 below (and the monitor and
-# presence it starts) then has the packages.
+# packages import there. Every python3 below (and the monitor it starts)
+# then has the packages.
 PIP_FLAGS=(--break-system-packages)
 if [ -x "$DIR/.venv/bin/python3" ] && [ -e "$DIR/.venv/.muse-ok" ]; then
   PATH="$DIR/.venv/bin:$PATH"
@@ -129,12 +126,11 @@ PYEOF
 TOKEN_FILE="$(setting token_file "$HOME/.config/muse-discord/bot_token")"
 TOKEN_FILE="${TOKEN_FILE/#\~/$HOME}"
 TOKEN_ENV="$(setting token_env "")"
-PRESENCE_ENABLED="$(setting presence_enabled true)"
 HEARTBEAT="$DIR/monitor.heartbeat"
 HEARTBEAT_STALE_SECS=600
 
-# True when the processes will find a token: the token_from variable set
-# in this environment (they inherit it), or a non-empty token file.
+# True when the monitor will find a token: the token_from variable set
+# in this environment (it inherits it), or a non-empty token file.
 token_available() {
   if [[ "$TOKEN_ENV" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
       && [ -n "${!TOKEN_ENV:-}" ]; then
@@ -176,7 +172,7 @@ stop_proc() {
 # process tree. (Plain `setsid ... &` leaves the child under this shell;
 # when a scheduler's exec session times out, the runtime may kill the
 # whole tree and the bot dies with it.)
-# $1 = script (monitor.py/presence.py), $2 = log file. The previous log
+# $1 = script (monitor.py), $2 = log file. The previous log
 # moves to $2.1 rather than being truncated: it holds the crash or token
 # error that made this restart necessary.
 daemonize() {
@@ -221,21 +217,9 @@ wait_healthy() {
 }
 
 ALERT_SIG=""
-TOKEN_BAD=0
 
-# Environment refreshes can wipe pip packages; reinstall BEFORE any
-# restart so monitor's gateway thread (which imports websockets at
-# thread start and never retries) comes up healthy too. If this check
-# lived after the monitor restart, every refresh would leave the monitor
-# running with a permanently dead gateway thread.
-WEBSOCKETS_OK=1
-if ! python3 -c "import websockets" 2>/dev/null; then
-  log "websockets missing; reinstalling"
-  if ! python3 -m pip install ${PIP_FLAGS[@]+"${PIP_FLAGS[@]}"} -q websockets >>"$LOG" 2>&1; then
-    log "websockets reinstall failed"
-    WEBSOCKETS_OK=0
-  fi
-fi
+# Refresh dependencies before starting the monitor; a missing SDK would
+# otherwise leave the process alive with its Gateway thread disabled.
 if ! python3 -c "import yaml" 2>/dev/null; then
   log "PyYAML missing; reinstalling"
   python3 -m pip install ${PIP_FLAGS[@]+"${PIP_FLAGS[@]}"} -q pyyaml >>"$LOG" 2>&1 || \
@@ -248,9 +232,9 @@ if ! python3 -c "from pydantic import TypeAdapter" 2>/dev/null; then
     log "Pydantic reinstall failed (monitor cannot validate config without it)"
 fi
 
-if ! python3 -c "from discord.ui import LayoutView" 2>/dev/null; then
-  log "discord.py missing; reinstalling"
-  python3 -m pip install ${PIP_FLAGS[@]+"${PIP_FLAGS[@]}"} -q 'discord.py>=2.6,<3' >>"$LOG" 2>&1 || \
+if ! python3 -c "from discord.ui import LayoutView; import discord; assert (2,7,1) <= discord.version_info[:3] < (2,8,0)" 2>/dev/null; then
+  log "discord.py missing or unsupported; reinstalling"
+  python3 -m pip install ${PIP_FLAGS[@]+"${PIP_FLAGS[@]}"} -q 'discord.py>=2.7.1,<2.8' >>"$LOG" 2>&1 || \
     log "discord.py reinstall failed (monitor cannot connect without it)"
 fi
 
@@ -296,51 +280,11 @@ if ! alive "[m]onitor.py"; then
     else
       stop_proc "[m]onitor.py"
       if grep -q "TOKEN REJECTED" "$DIR/monitor.log" 2>/dev/null; then
-        TOKEN_BAD=1
         ALERT_SIG="monitor DOWN: Discord rejected the token; it was probably reset. Reset it again on the bot's Developer Portal page and give the new one to your Muse to connect; the watchdog recovers on its next run."
       else
         ALERT_SIG="monitor DOWN: restart attempted but the process is not healthy; check $DIR/monitor.log"
       fi
       log "ALERT: $ALERT_SIG"
-    fi
-  fi
-fi
-
-# ---------------- presence ----------------
-if [ "$PRESENCE_ENABLED" != "true" ]; then
-  echo "OK presence disabled in config"
-elif alive "[p]resence.py"; then
-  echo "OK presence alive"
-else
-  if [ "$TOKEN_BAD" = "1" ]; then
-    log "skipping presence restart (token already known bad)"
-  else
-    log "presence not running; attempting restart"
-    # websockets already reinstalled above (before the monitor section);
-    # fail here only if that reinstall failed.
-    if [ "$WEBSOCKETS_OK" != "1" ]; then
-      ALERT_SIG="presence DOWN: could not reinstall the websockets package"
-      log "ALERT: $ALERT_SIG"
-    fi
-    if [ -z "$ALERT_SIG" ]; then
-      if ! token_available; then
-        ALERT_SIG="presence DOWN and $TOKEN_WHERE; cannot restart"
-        log "ALERT: $ALERT_SIG"
-      else
-        daemonize presence.py "$DIR/presence.log"
-        if wait_healthy "[p]resence.py" "READY" "$DIR/presence.log" 60; then
-          log "presence restarted OK"
-          echo "OK presence restarted"
-        else
-          stop_proc "[p]resence.py"
-          if grep -q "TOKEN REJECTED" "$DIR/presence.log" 2>/dev/null; then
-            ALERT_SIG="presence DOWN: Discord rejected the token; it was probably reset. Reset it again on the bot's Developer Portal page and give the new one to your Muse to connect; the watchdog recovers on its next run."
-          else
-            ALERT_SIG="presence DOWN: restart attempted but no READY in presence.log; check $DIR/presence.log"
-          fi
-          log "ALERT: $ALERT_SIG"
-        fi
-      fi
     fi
   fi
 fi

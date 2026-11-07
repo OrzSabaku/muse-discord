@@ -72,10 +72,11 @@ python3 bin/render-worker-prompt.py --media none
 
 ```bash
 kill "$(cat monitor.pid)"
-pkill -f "^python3 (bin/)?presence.py"
 bash bin/watchdog.sh
 python3 bin/doctor.py --no-dm
 ```
+
+旧版から初めて更新する場合は、残っている旧 `presence.py` プロセスも停止します（`pkill -f "^python3 (bin/)?presence.py"`）。現在はモニターがオンライン表示とステータスを担当します。
 
 本人DMへの返答を確認し、稼働版と未対応事項を記録します。更新要求がある場合は、完了・中断時に `update_request.json` を削除します。
 戻す場合は、所有者と確認したうえで `git reset --keep "$OLD"` を実行し、再起動します。
@@ -83,7 +84,7 @@ merge中は先に `git merge --abort`、stashを使った場合は復元漏れ�
 
 ## 停止
 
-Muse側の受信・監視フックを先に解除し、その後 `monitor.pid` と `presence.pid` のプロセスを停止します。
+Muse側の受信・監視フックを先に解除し、その後 `monitor.pid` のプロセスを停止します。
 フックが残ると再起動される場合があります。Botのアクセスを失効させる場合はPortalでトークンを再発行します。
 
 ## 困ったとき
