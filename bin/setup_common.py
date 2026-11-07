@@ -7,6 +7,7 @@ import sys
 import urllib.parse
 
 PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC_DIR = os.path.join(PKG_DIR, "src")
 
 # The package's .venv counts only once bin/install.sh has checked the
 # packages import in it (it then writes this marker).
@@ -91,6 +92,7 @@ def api_base():
 def call(method, path, token, body=None):
     """One REST call as the bot. Returns the parsed JSON (None for an
     empty body). Raises ApiError. Never puts the token in an error."""
+    ensure_src_on_path()
     from muse_discord.discord_rest import transport, DiscordError
     try:
         value = transport(token, api_base()).request(method, path, body, timeout=TIMEOUT)
@@ -112,9 +114,13 @@ def invite_url(app_id):
 
 
 
+def ensure_src_on_path():
+    if SRC_DIR not in sys.path:
+        sys.path.insert(0, SRC_DIR)
+
+
 def settings_module():
-    if os.path.join(PKG_DIR, "src") not in sys.path:
-        sys.path.insert(0, os.path.join(PKG_DIR, "src"))
+    ensure_src_on_path()
     from muse_discord import muse_settings
     return muse_settings
 
