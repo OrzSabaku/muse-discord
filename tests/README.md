@@ -2,6 +2,7 @@
 
 Discordや外部サービスを使わず、API・Gatewayを偽物へ置き換えて検証します。書き込み先は一時ディレクトリです。
 設定画面は実際のdiscord.py部品と設定エンジンを使い、Discordとの送受信だけを模擬します。
+監視入力と権限は `watches/test_schema.py`・`watches/test_permissions.py` で境界値、偽装入力、権限変更、情報不足時の拒否を確認します。
 Discord HTTP通信はローカルサーバーと実際のdiscord.pyで検証します（`discordrest/`）。レート制限・時間切れ・添付・再試行時の重複防止を対象にします。
 実Discordの試験は [e2e/README.md](../e2e/README.md) を参照してください。
 

@@ -135,6 +135,7 @@ class Connection(discord.Client):
             "GUILD_ROLE_CREATE",
             "GUILD_ROLE_UPDATE",
             "GUILD_ROLE_DELETE",
+            "GUILD_UPDATE",
         ):
             self.inbox.put({"_perm_event": {"t": event, "d": data}})
         elif event == "TYPING_START":
