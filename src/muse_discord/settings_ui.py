@@ -16,6 +16,7 @@ import discord
 from discord import ui
 
 from muse_discord import muse_settings as ms
+from muse_discord.settings_display import clip
 
 TTL = 900
 PREFIX = "mset:"
@@ -140,7 +141,7 @@ REASONS = {
 def text(value, limit=500):
     """Names and values are untrusted Discord text; never allow mentions."""
     value = re.sub(r"[\u202a-\u202e\u2066-\u2069]", "", str(value))
-    return ms.clip(
+    return clip(
         discord.utils.escape_markdown(discord.utils.escape_mentions(value)), limit
     )
 
@@ -680,7 +681,7 @@ class Panel(ui.LayoutView):
     def options(self, values, current=None):
         return [
             discord.SelectOption(
-                label=ms.clip(label, 100), value=val, default=val == current
+                label=clip(label, 100), value=val, default=val == current
             )
             for label, val in values
         ]
@@ -788,7 +789,7 @@ class Panel(ui.LayoutView):
             self.body.add_item(
                 ui.TextDisplay(
                     f"**未保存の変更：{len(lines)}件**\n"
-                    + ms.clip("\n".join(lines), 700)
+                    + clip("\n".join(lines), 700)
                 )
             )
         _, s.undo_id = ms.undo_preview(
@@ -834,7 +835,7 @@ class Panel(ui.LayoutView):
                     "set",
                     [
                         discord.SelectOption(
-                            label=ms.clip(value_text(v), 100),
+                            label=clip(value_text(v), 100),
                             value=json.dumps(v),
                             default=v == val,
                         )
@@ -888,7 +889,7 @@ class Panel(ui.LayoutView):
                 for k, v in s.draft.items()
             ]
         self.body.add_item(
-            ui.TextDisplay(ms.clip("\n".join(f"• {line}" for line in lines), 1200))
+            ui.TextDisplay(clip("\n".join(f"• {line}" for line in lines), 1200))
         )
         warnings = s.pending.get("warnings", [])
         for warning in warnings[:5]:

@@ -2,8 +2,9 @@
 """muse-discord settings: schema, validation, scopes, the Discord overlay,
 and configuration persistence.
 
-One module, read by monitor.py, watchdog.sh and the bin/
-tools. PyYAML handles input; settings_schema supplies Pydantic field validation.
+The engine is shared by monitor.py, watchdog.sh and the bin/ tools.
+PyYAML handles input; settings_schema supplies Pydantic field validation.
+Display labels and server-name lookup live in settings_display.
 
 Layers, least specific first (the most specific value that is set wins):
 
@@ -41,6 +42,11 @@ from datetime import datetime, timezone
 import yaml
 
 from muse_discord.settings_schema import CORE, TOP, CORE_GROUPS
+from muse_discord.settings_display import (
+    LABELS, VALUE_LABELS, CATEGORY_TYPE, ServerInfo, chain_names, name_lookup,
+    people_text, person_name, change_location, describe_change,
+    label, names_from, place_name, value_label,
+)
 from muse_discord.settings_schema import NOTES_MAX as NOTES_MAX, PRESENCE_KINDS as PRESENCE_KINDS
 
 OVERLAY_NAME = "config.discord.yaml"
@@ -76,11 +82,6 @@ class SettingsError(Exception):
 TOP_DISCORD_EDITABLE = ("presence.status", "presence.kind",
                         "updates.notify", "telemetry.usage_stats",
                         "memory.save_dms")
-
-
-# ---------------------------------------------------------------------------
-# Legacy media configuration
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -1771,7 +1772,7 @@ def parse_place(text, info=None):
         return Place.server(m[1])
     m = re.fullmatch(r"channel:(\d{1,25}):(\d{1,25})", t)
     if m:
-        inf = _Info(info)
+        inf = ServerInfo(info)
         ch = inf.channel(m[1], m[2])
         if ch is not None and ch.get("type") == CATEGORY_TYPE:
             raise SettingsError(f"{t}: that is a category; categories "
@@ -1920,200 +1921,6 @@ def _valid_layer(st, place, key):
                                          or _is_enabled_key(key))
 
 
-# -- words --------------------------------------------------------------------
-LABELS = {
-    "who.replies": "When it answers",
-    "who.dms_from": "Who can DM it",
-    "who.allow": "Only answer these people",
-    "who.ignore": "Never answer",
-    "who.bots": "Other bots",
-    "who.bot_exchange_limit": "Replies in a row to other bots",
-    "style.notes": "Instructions for the Muse",
-    "style.length": "Reply length",
-    "privacy.memory": "What it may say about you",
-    "privacy.suspicious": "Possible prompt injection",
-    "privacy.never_share": "Never share these phrases",
-    "limits.per_day": "Replies per day (total)",
-    "limits.per_person_per_day": "Replies per person per day",
-    "abilities.owner_commands": "Owner requests (pin, post, react, threads)",
-    "abilities.reminders": "Who can set reminders and watches",
-    "media.enabled": "Image and video generation",
-    "media.who": "Who can ask for images and video",
-    "media.per_day": "Generations per day",
-    "proactive.enabled": "Reaching out on its own",
-    "proactive.per_day": "Unprompted messages per day (all places)",
-    "proactive.frequency": "How often it thinks of reaching out",
-    "proactive.per_person_per_day": "Unprompted messages a person a day",
-    "proactive.per_person_per_week": "Unprompted messages a person a week",
-    "proactive.per_channel_per_day": "Unprompted messages a channel a day",
-    "proactive.quiet_hours": "Quiet hours (no unprompted messages)",
-    "proactive.timezone": "Time zone",
-    "presence.status": "Status line",
-    "presence.kind": "Status kind",
-    "updates.notify": "Update notices",
-    "telemetry.usage_stats": "Anonymous usage stats",
-    "memory.save_dms": "Save what you tell it in DMs to your Muse's memory",
-}
-VALUE_LABELS = {
-    ("who.replies", "freely"): "Freely (join conversations without a mention)",
-    ("who.replies", "conversational"): "Chatty",
-    ("who.replies", "when-addressed"): "Only when @mentioned",
-    ("who.replies", "off"): "Off",
-    ("who.dms_from", "owners"): "Only you",
-    ("who.dms_from", "list"): "You and people you pick",
-    ("who.dms_from", "shared-servers"): "Anyone in your servers",
-    ("who.dms_from", "anyone"): "Anyone",
-    ("who.dms_from", "nobody"): "Nobody",
-    ("who.allow", "everyone"): "Everyone",
-    ("who.bots", "when-addressed"): "Answer when they address it",
-    ("who.bots", "ignore"): "Ignore other bots",
-    ("style.length", "brief"): "Brief",
-    ("style.length", "normal"): "Normal",
-    ("style.length", "detailed"): "Detailed",
-    ("privacy.memory", "everything"): "Anything it remembers",
-    ("privacy.memory", "public-only"): "Public facts only",
-    ("privacy.memory", "nothing"): "Nothing personal",
-    ("privacy.suspicious", "hold-for-review"): "Hold for my review",
-    ("privacy.suspicious", "ignore"): "Drop it",
-    ("privacy.suspicious", "answer"): "Answer it (no check)",
-    ("media.who", "owners"): "Only you",
-    ("media.who", "everyone"): "Everyone",
-    ("abilities.reminders", "owners"): "Only you",
-    ("abilities.reminders", "everyone"): "Everyone",
-    ("proactive.frequency", "rarely"): "Rarely (once or twice a day)",
-    ("proactive.frequency", "sometimes"): "Sometimes (4-6 times a day)",
-    ("proactive.frequency", "often"): "Often (about hourly)",
-}
-CATEGORY_TYPE = 4
-
-
-def label(key):
-    """A setting's name in plain words (raw key only for unknown ones)."""
-    if key in LABELS:
-        return LABELS[key]
-    return key
-
-
-def _type_of(key):
-    spec = CORE.get(key) or TOP.get(key)
-    if spec is not None:
-        return spec.type
-    if _is_enabled_key(key):
-        return "on-off"
-    if key.endswith("per_day") or key.endswith("_cap"):
-        return "number"
-    return None
-
-
-def _namer(names):
-    if names is None:
-        return lambda _i: None
-    if callable(names):
-        def look(i):
-            try:
-                return names(str(i))
-            except Exception:
-                return None
-        return look
-    return lambda i: names.get(str(i))
-
-
-def _person(pid, look):
-    pid = str(pid)
-    if pid.startswith("role:"):
-        n = look(pid[5:])
-        return (n if str(n).startswith("@") else f"@{n}") if n \
-            else f"role {pid[5:]}"
-    n = look(pid)
-    return (n if str(n).startswith("@") else f"@{n}") if n else f"user {pid}"
-
-
-def _people_text(ids, look):
-    shown = [_person(p, look) for p in ids]
-    if len(shown) > 10:
-        shown = shown[:10] + [f"{len(ids) - 10} more"]
-    if len(shown) <= 2:
-        return " and ".join(shown)
-    return ", ".join(shown[:-1]) + " and " + shown[-1]
-
-
-def clip(text, n):
-    text = str(text)
-    return text if len(text) <= n else text[:n - 1] + "…"
-
-
-def value_label(key, value, names=None):
-    """A value in plain words ("Chatty", "No limit", "@Sam and @Ann").
-    names: {id: name} or a callable id -> name, for people and
-    channels; a raw id is shown only when no name is known."""
-    look = _namer(names)
-    t = _type_of(key)
-    if key == "who.dms_from" and isinstance(value, list):
-        return "You and " + _people_text(value, look)
-    if isinstance(value, str) and (key, value) in VALUE_LABELS:
-        return VALUE_LABELS[(key, value)]
-    if isinstance(value, bool):
-        return "On" if value else "Off"
-    if value is None:
-        return "No limit" if t in ("number", None) else "Not set"
-    if isinstance(value, list):
-        if t == "phrases":
-            return f"{len(value)} phrase{'s' if len(value) != 1 else ''}"
-        return _people_text(value, look) if value else "Nobody"
-    if isinstance(value, int):
-        return f"{value:,}"
-    if t == "channel" and _id_str(value):
-        n = look(value)
-        return (n if str(n).startswith("#") else f"#{n}") if n \
-            else f"channel {value}"
-    if t == "text":
-        return f'"{clip(value, 60)}"' if value else "(empty)"
-    return str(value)
-
-
-def place_name(place, names=None):
-    """"Defaults", "DMs", the server's name, "#channel"."""
-    look = _namer(names)
-    if place.kind == "defaults":
-        return "Defaults"
-    if place.kind == "dms":
-        return "DMs"
-    gname = look(place.guild_id)
-    if place.kind == "server":
-        return gname or f"server {place.guild_id}"
-    n = look(place.channel_id)
-    if n:
-        return n if str(n).startswith("#") else f"#{n}"
-    return f"channel {place.channel_id}" + (f" in {gname}" if gname else "")
-
-
-def _where(place, key, names=None, path=None):
-    """"In #general", "In DMs", "By default", "By default in servers",
-    "Bot-wide": how a sentence about key at place starts."""
-    if place.kind == "defaults":
-        if key in TOP or path == ("top",):
-            return "Bot-wide"
-        if path == ("dms",) or (path is None and key == "who.dms_from"):
-            return "In DMs"
-        if path == ("all_servers",) or (path is None and (
-                key == "who.replies" or _is_enabled_key(key))):
-            return "By default in servers"
-        return "By default"
-    return "In " + place_name(place, names)
-
-
-def describe_change(place, key, old, new, names=None, path=None):
-    """One plain sentence: "In #general, When it answers: Chatty → Only
-    when @mentioned". old / new are the values in force before and
-    after. names: {id: name} or a callable (raw ids only as a
-    fallback)."""
-    head = f"{_where(place, key, names, path)}, {label(key)}"
-    if old == new:
-        return f"{head} is already {value_label(key, new, names)}"
-    return (f"{head}: {value_label(key, old, names)} → "
-            f"{value_label(key, new, names)}")
-
-
 def _date(at):
     try:
         d = datetime.strptime(str(at), "%Y-%m-%dT%H:%M:%SZ")
@@ -2125,8 +1932,8 @@ def _date(at):
 def source_tag(st, place, key, names=None):
     """"● changed here by @Sam on Oct 19, 2026", "● set here in
     config.yaml", "Same as <place>", or "Built-in default"."""
-    names = _chain_names(names, names_from(None, st))
-    look = _namer(names)
+    names = chain_names(names, names_from(None, st))
+    look = name_lookup(names)
     try:
         path = _layer_path(st, place, key)
     except SettingsError:
@@ -2144,7 +1951,7 @@ def source_tag(st, place, key, names=None):
             if src[0] == "file":
                 return "● set here in config.yaml"
             by = src[1] if len(src) > 1 else None
-            who = _person(by, look) if _id_str(by) else (by or "someone")
+            who = person_name(by, look) if _id_str(by) else (by or "someone")
             return f"● changed here by {who} on {_date(src[2])}"
         if p[0] in ("builtin", "builtin_all_servers"):
             return "Built-in default" if place.kind == "defaults" \
@@ -2165,7 +1972,7 @@ def explain_lines(st, place, keys=None, names=None):
     if keys is None:
         keys = place_keys(st, place, "basics") + place_keys(st, place,
                                                             "more")
-    names = _chain_names(names, names_from(None, st))
+    names = chain_names(names, names_from(None, st))
     out = []
     for key in keys:
         v = place_value(st, place, key)
@@ -2214,104 +2021,6 @@ def parse_value(st, key, text):
         except ValueError:
             pass
     return t
-
-
-# -- info about servers (member counts, channel lists, names) ----------------
-class _Info:
-    """What the caller knows about servers: None; a dict {"guilds":
-    [{"id", "name", "member_count"}] or {id: {...}}, "channels": {gid:
-    [{"id", "name", "type", "parent_id"}]}}; or an object with guilds()
-    and channels(gid) (settings_ui's / the monitor's Ctx)."""
-
-    def __init__(self, src):
-        if isinstance(src, _Info):
-            src = src.src
-        self.src = src
-        self._guilds = None
-        self._chans = {}
-
-    def guilds(self):
-        if self._guilds is None:
-            raw = []
-            src = self.src
-            try:
-                if isinstance(src, dict):
-                    raw = src.get("guilds") or []
-                elif src is not None and callable(getattr(src, "guilds",
-                                                          None)):
-                    raw = src.guilds() or []
-            except Exception:
-                raw = []
-            if isinstance(raw, dict):
-                raw = [dict(v or {}, id=k) for k, v in raw.items()]
-            out = {}
-            for g in raw:
-                if isinstance(g, dict) and g.get("id"):
-                    out[str(g["id"])] = g
-            self._guilds = out
-        return self._guilds
-
-    def members(self, gid):
-        n = (self.guilds().get(str(gid)) or {}).get("member_count")
-        return n if isinstance(n, int) and not isinstance(n, bool) else None
-
-    def channels(self, gid):
-        """[channel dicts] or None when unknown."""
-        gid = str(gid)
-        if gid not in self._chans:
-            src, raw = self.src, None
-            try:
-                if isinstance(src, dict):
-                    raw = (src.get("channels") or {}).get(gid)
-                elif src is not None and callable(getattr(src, "channels",
-                                                          None)):
-                    raw = src.channels(gid)
-            except Exception:
-                raw = None
-            self._chans[gid] = None if raw is None else [
-                c for c in raw if isinstance(c, dict) and c.get("id")]
-        return self._chans[gid]
-
-    def channel(self, gid, cid):
-        for c in self.channels(gid) or []:
-            if str(c["id"]) == str(cid):
-                return c
-        return None
-
-    def category_of(self, gid, cid):
-        ch = self.channel(gid, cid)
-        parent = str((ch or {}).get("parent_id") or "") or None
-        if parent and (self.channel(gid, parent) or {}).get(
-                "type") == CATEGORY_TYPE:
-            return parent
-        return None
-
-    def names(self):
-        out = {}
-        for gid, g in self.guilds().items():
-            if g.get("name"):
-                out[gid] = str(g["name"])
-            for c in self.channels(gid) or []:
-                if c.get("name"):
-                    out[str(c["id"])] = str(c["name"])
-        return out
-
-
-def _chain_names(first, then):
-    """A names callable: first (dict or callable), then then."""
-    a, b = _namer(first), _namer(then)
-    return lambda i: a(i) or b(i)
-
-
-def names_from(info=None, st=None, extra=None):
-    """{id: name} from info (server and channel names), the `name:`
-    labels in config.yaml, and extra (e.g. people's names)."""
-    out = {}
-    if st is not None:
-        out.update({str(k): str(v) for k, v in (st.labels or {}).items()})
-    out.update(_Info(info).names())
-    out.update({str(k): str(v) for k, v in (extra or {}).items()})
-    return out
 
 
 # -- changes ------------------------------------------------------------------
@@ -2712,7 +2421,7 @@ def undo_results(st, plan):
 
 def undo_lines(st, plan, names=None):
     """["In #general, When it answers → back to Chatty", ...]."""
-    return [f"{_where(ch.place, ch.key, names, ch.path)}, {label(ch.key)} "
+    return [f"{change_location(ch.place, ch.key, names, ch.path)}, {label(ch.key)} "
             f"→ back to {value_label(ch.key, new, names)}"
             for ch, new in undo_results(st, plan)]
 
@@ -2730,7 +2439,7 @@ def undo_preview(st, prefix, include_children=False, names=None,
     picks = _undo_group(doc, _undo_match(prefix, include_children), accept)
     if not picks:
         return None, None
-    names = _chain_names(names, names_from(None, st))
+    names = chain_names(names, names_from(None, st))
     plan = [Change(place_of_path(p), k, t, path=p)
             for _i, _ks, p, k, t in picks]
     text = "Undo: " + "; ".join(undo_lines(st, plan, names))
@@ -2853,7 +2562,7 @@ def admin_changes(st, guild_id, changes, info=None):
     and the owners' value. Anything else, any other server, and a
     channel that info does not list in this server are refused."""
     gid = str(guild_id)
-    inf = _Info(info)
+    inf = ServerInfo(info)
     out = []
     for ch in changes:
         path = _admin_scope_check(st, gid, ch, inf)
@@ -2883,7 +2592,7 @@ def admin_check(st, guild_id, changes, info=None, revert=False):
     value (owners_view: the layers below the admins' entries). revert:
     skip the explicit-value limits (an undo restores earlier values)."""
     gid = str(guild_id)
-    inf = _Info(info)
+    inf = ServerInfo(info)
     for ch in changes:
         _admin_scope_check(st, gid, ch, inf)
         if not revert and not ch.revert and ch.value != "inherit":
@@ -3050,7 +2759,7 @@ def preset_changes(st, name, place, info=None, big="refuse"):
     title, values = _preset(name)
     if place.kind != "server":
         raise SettingsError("Presets apply to a whole server.")
-    members = _Info(info).members(place.guild_id)
+    members = ServerInfo(info).members(place.guild_id)
     skip = set()
     if title == "Friends" and members is not None \
             and members > BIG_FOR_MEMORY:
@@ -3193,13 +2902,13 @@ def assess(st, changes, info=None, names=None, named=()):
     replies in a row to other bots unlimited or above 10; a plugin
     setting its manifest marks risky, loosened. Notes (not risky): Only
     answer these people in DMs while only owners can DM. info: member
-    counts and channel lists (see _Info); names: {id: name}. named:
+    counts and channel lists (see ServerInfo); names: {id: name}. named:
     user ids the owner picked by name for this very change (a "who can
     DM it" list): that those people can now DM the bot is what was
     asked, so it is no warning."""
-    inf = _Info(info)
-    look_names = _chain_names(names, names_from(inf, st))
-    look = _namer(look_names)
+    inf = ServerInfo(info)
+    look_names = chain_names(names, names_from(inf, st))
+    look = name_lookup(look_names)
     after = simulate(st, changes)
     out = Assessment()
     levels = ("off", "read-only", "confirm", "write", "unconditional")
@@ -3258,7 +2967,7 @@ def assess(st, changes, info=None, names=None, named=()):
         out.warnings.append("Anyone who shares a server with the bot can "
                             "DM it and get answers, not only you.")
     elif grew:
-        out.warnings.append(f"{_people_text(sorted(grew), look)} can DM the "
+        out.warnings.append(f"{people_text(sorted(grew), look)} can DM the "
                             f"bot and get answers.")
 
     # Other bots in DMs.
@@ -3350,7 +3059,7 @@ def assess(st, changes, info=None, names=None, named=()):
     if silenced:
         n = len(silenced)
         out.warnings.append(
-            f"Only {_people_text(who, look) if who else 'nobody'} and you "
+            f"Only {people_text(who, look) if who else 'nobody'} and you "
             f"will get answers in {n} place{'s' if n != 1 else ''} "
             f"({_join(silenced)}); everyone else there is ignored.")
 

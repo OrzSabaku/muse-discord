@@ -13,7 +13,10 @@
 | 設定の型・検証 | `src/muse_discord/settings_schema.py`（Pydantic） |
 | Discord HTTP通信 | `src/muse_discord/discord_rest.py`（discord.py） |
 | Discord接続・UI操作受付 | `src/muse_discord/discord_connection.py`（discord.py） |
-| 設定の解決・画面 | `src/muse_discord/muse_settings.py`・`src/muse_discord/settings_ui.py` |
+| 設定の継承・変更・保存 | `src/muse_discord/muse_settings.py` |
+| 設定の表示文言・名前解決 | `src/muse_discord/settings_display.py` |
+| Discordの設定画面 | `src/muse_discord/settings_ui.py` |
+| 返信データの共通検証 | `src/muse_discord/reply_protocol.py` |
 | プロセス監視 | `bin/watchdog.sh` |
 | 通知・自発メッセージ | `src/muse_discord/muse_watches.py`・`src/muse_discord/proactive.py` |
 | 単発CLI・MCP | `bin/discord-api.py`・`src/muse_discord/discord_tools/` |
@@ -23,6 +26,7 @@
 
 - モニターが `reply_queue.json` を書く。ワーカーはwakeで渡された `items` と `persona` だけを処理し、キュー全体を読まない。
 - キュー項目には `message_id`・`channel_id`・`kind`・発言者・本文・履歴・設定を含む。権限はモニターが付与する。
+- CLIとモニターは `reply_protocol.py` で返信データの型と送信内容を検証する。nonce・依頼との対応・権限は各呼び出し元でも確認する。
 - 1項目につき1返信を、`bin/outbox-append.py` で速やかに追記する。キュー・outboxを直接編集しない。
 - 無応答も `silent: true` で確定する。全項目の追記後は実行を終了する。
 

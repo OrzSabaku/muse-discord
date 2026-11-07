@@ -28,7 +28,6 @@ item on its side. Never needs the bot token and never touches the
 network.
 """
 import fcntl
-import importlib
 import json
 import os
 import re
@@ -36,33 +35,13 @@ import sys
 import tempfile
 
 PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
+from muse_discord import muse_watches, reply_protocol
 OUTBOX = os.path.join(PACKAGE_DIR, "reply_outbox.json")
 LOCK = os.path.join(PACKAGE_DIR, "reply.lock")
 
 
 NONCE_RE = re.compile(r"[0-9a-f]{32,64}")
-ID_RE = re.compile(r"[1-9][0-9]{0,19}")
-
-
-def _is_id(value):
-    """A Discord id in its one form the monitor takes: ASCII digits, no
-    leading zero (the monitor compares ids as strings)."""
-    return isinstance(value, (str, int)) and not isinstance(value, bool) \
-        and ID_RE.fullmatch(str(value)) is not None
-
-
-def module_problems(name, item, *args):
-    """The monitor's own shape rules, from the package module that holds
-    them: muse_watches (a schedule action)."""
-    try:
-        if os.path.join(PACKAGE_DIR, "src") not in sys.path:
-            sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
-        mod = importlib.import_module("muse_discord." + name)
-    except Exception as e:  # the monitor checks it anyway
-        print(f"note: could not load {name}.py to check the item ({e}); "
-              f"the monitor will check it", file=sys.stderr)
-        return []
-    return mod.shape_problems(item, *args)
 
 
 def _live(name):
@@ -100,23 +79,9 @@ def nonce_problems(item):
 def problems(item):
     """Mistakes the monitor would reject the item for (a subset of its
     checks, so nothing valid is ever refused here)."""
-    if not isinstance(item, dict):
-        return ["not a JSON object"]
-    out = []
-    if not _is_id(item.get("channel_id")):
-        out.append("channel_id is missing or not a Discord id")
-    for field in ("reply_to", "item"):
-        if item.get(field) not in (None, "") \
-                and not _is_id(item.get(field)):
-            out.append(f"{field} is not a Discord id")
-    if item.get("text") is not None and not isinstance(item["text"], str):
-        out.append("text is not a string")
-    for field in ("parts", "reactions", "attachments"):
-        value = item.get(field)
-        if value is not None and not (
-                isinstance(value, list)
-                and all(isinstance(v, str) for v in value)):
-            out.append(f"{field} is not a list of strings")
+    out = reply_protocol.shape_problems(item)
+    if out:
+        return out
     if "proactive" in item and (item["proactive"] not in ("opt-out",
                                                           "opt-in")
                                 or not item.get("item")):
@@ -131,28 +96,11 @@ def problems(item):
     if out:
         return out
     if "schedule" in item:
-        out = module_problems("muse_watches", item)
+        out = muse_watches.shape_problems(item)
         if out:
             return out
-    if "settings" in item or any(str(k).startswith("_nl") for k in item):
-        return ["settings actions are no longer supported; use /settings"]
-    if item.get("silent"):
-        if not (item.get("reply_to") or item.get("item")):
-            out.append("a silent item needs reply_to or item")
-        return out
-    has_text = (item.get("text") or "").strip() \
-        or any(p.strip() for p in item.get("parts") or [])
-    has_reactions = any(e.strip() for e in item.get("reactions") or [])
-    if not has_text and not has_reactions:
-        hint = ""
-        for wrong in ("content", "message", "reply", "body"):
-            if wrong in item:
-                hint = f' (the reply goes in "text", not "{wrong}")'
-        out.append("nothing to send: no text, parts, or reactions, and "
-                   "not silent: true" + hint)
-    elif has_reactions and not has_text and not item.get("reply_to"):
-        out.append("a reactions-only item needs reply_to")
-    return out
+    problem = reply_protocol.content_problem(item)
+    return [problem] if problem else []
 
 
 def main():
