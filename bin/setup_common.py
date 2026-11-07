@@ -22,21 +22,11 @@ def venv_python():
     return None
 
 
-# Run under that venv when this Python lacks the packages, so
-# `python3 bin/<script>` always works.
-try:
-    import yaml  # noqa: F401
-    import discord
-    if not (2, 7, 1) <= discord.version_info[:3] < (2, 8, 0):
-        raise ImportError("unsupported discord.py version")
-    from pydantic import TypeAdapter  # noqa: F401 (Pydantic v2 required)
-except ImportError:
-    _venv = venv_python()
-    # Not running in .venv yet (its python3 may be a symlink to this
-    # very binary, so compare prefixes): once there, never again.
-    if _venv and os.path.realpath(sys.prefix) \
-            != os.path.realpath(os.path.join(PKG_DIR, ".venv")):
-        os.execv(_venv, [_venv] + sys.argv)
+# Always use the installed project's interpreter, even when the calling
+# Python happens to have compatible packages. A matching prefix prevents loops.
+_venv = venv_python()
+if _venv and os.path.realpath(sys.prefix) != os.path.realpath(os.path.join(PKG_DIR, ".venv")):
+    os.execv(_venv, [_venv] + sys.argv)
 
 API = "https://discord.com/api/v10"
 # Tests point the scripts at a local fake with this variable. Only a

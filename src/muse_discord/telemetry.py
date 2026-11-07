@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """telemetry.py: anonymous, opt-out daily usage counts.
 
 The monitor counts a few things in memory (messages seen, replies sent,
