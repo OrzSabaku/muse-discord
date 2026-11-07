@@ -4,6 +4,7 @@ owner_dm_nonce included); a batch with any bad
 item (a reply in the wrong field, a malformed settings action, a
 monitor-only field, a nonce that is not a copied value) appends nothing
 and exits 1. MUT_DIR = the package tree under test."""
+
 import json
 import os
 import shutil
@@ -11,19 +12,24 @@ import subprocess
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "_lib"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 from common import MUT_DIR, scratch  # noqa: E402
 
 N = "ab" * 16
-CHANGE = {"op": "set", "place": "defaults", "key": "who.replies",
-          "value": "off"}
+CHANGE = {"op": "set", "place": "defaults", "key": "who.replies", "value": "off"}
 
 
 def settings_item(changes, nonce=N, **kw):
-    it = {"item": "123", "channel_id": "456", "reply_to": "123",
-          "text": "Sure.", "owner_dm_nonce": nonce,
-          "settings": {"v": 1, "nonce": nonce, "changes": changes}}
+    it = {
+        "item": "123",
+        "channel_id": "456",
+        "reply_to": "123",
+        "text": "Sure.",
+        "owner_dm_nonce": nonce,
+        "settings": {"v": 1, "nonce": nonce, "changes": changes},
+    }
     it.update(kw)
     return it
 
@@ -32,15 +38,17 @@ class OutboxAppend(unittest.TestCase):
     def setUp(self):
         self.pkg = scratch("muse-append-")
         os.makedirs(os.path.join(self.pkg, "bin"))
-        shutil.copy(os.path.join(MUT_DIR, "bin", "outbox-append.py"),
-                    os.path.join(self.pkg, "bin"))
-        shutil.copytree(os.path.join(MUT_DIR, "src"),
-                        os.path.join(self.pkg, "src"))
+        shutil.copy(os.path.join(MUT_DIR, "bin", "outbox-append.py"), os.path.join(self.pkg, "bin"))
+        shutil.copytree(os.path.join(MUT_DIR, "src"), os.path.join(self.pkg, "src"))
 
     def append(self, items):
-        r = subprocess.run([sys.executable, os.path.join(
-            self.pkg, "bin", "outbox-append.py")], input=json.dumps(items),
-            capture_output=True, text=True, timeout=30)
+        r = subprocess.run(
+            [sys.executable, os.path.join(self.pkg, "bin", "outbox-append.py")],
+            input=json.dumps(items),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         return r.returncode, r.stderr
 
     def outbox(self):
@@ -51,18 +59,22 @@ class OutboxAppend(unittest.TestCase):
             return []
 
     def test_good_items_appended_as_is(self):
-        items = [{"item": "1", "channel_id": "2", "reply_to": "1",
-                  "text": "hi", "owner_dm_nonce": N},
-                 {"item": "3", "channel_id": "2", "reply_to": "3",
-                  "silent": True, "owner_dm_nonce": N},
-                 {"item": "4", "channel_id": "2", "reply_to": "4",
-                  "text": "Another reply", "owner_dm_nonce": N}]
+        items = [
+            {"item": "1", "channel_id": "2", "reply_to": "1", "text": "hi", "owner_dm_nonce": N},
+            {"item": "3", "channel_id": "2", "reply_to": "3", "silent": True, "owner_dm_nonce": N},
+            {
+                "item": "4",
+                "channel_id": "2",
+                "reply_to": "4",
+                "text": "Another reply",
+                "owner_dm_nonce": N,
+            },
+        ]
         rc, err = self.append(items)
         self.assertEqual(rc, 0, err)
         self.assertEqual(self.outbox(), items)
         # A single object (not a list) is one item.
-        rc, err = self.append({"item": "5", "channel_id": "2",
-                               "reply_to": "5", "silent": True})
+        rc, err = self.append({"item": "5", "channel_id": "2", "reply_to": "5", "silent": True})
         self.assertEqual(rc, 0, err)
         self.assertEqual(len(self.outbox()), 4)
 
@@ -72,8 +84,7 @@ class OutboxAppend(unittest.TestCase):
         live = "5b5d" + "c" * 28
         with open(os.path.join(self.pkg, "item_nonces.json"), "w") as f:
             json.dump({"7": live}, f)
-        reply = {"item": "7", "channel_id": "2", "reply_to": "7",
-                 "text": "hi"}
+        reply = {"item": "7", "channel_id": "2", "reply_to": "7", "text": "hi"}
         code, err = self.append([dict(reply, reply_nonce=live[:23])])
         self.assertEqual((code, self.outbox()), (1, []), err)
         self.assertIn("reply_nonce", err)
@@ -84,8 +95,7 @@ class OutboxAppend(unittest.TestCase):
         # Settings actions must now be rejected, including legacy nonces.
         with open(os.path.join(self.pkg, "owner_dm_nonces.json"), "w") as f:
             json.dump({"7": N}, f)
-        only_settings = settings_item([CHANGE], item="7", reply_to="7",
-                                      reply_nonce=live)
+        only_settings = settings_item([CHANGE], item="7", reply_to="7", reply_nonce=live)
         del only_settings["owner_dm_nonce"]
         code, err = self.append([reply, only_settings])
         self.assertEqual(code, 1, err)
@@ -93,19 +103,19 @@ class OutboxAppend(unittest.TestCase):
         self.assertEqual(len(self.outbox()), 1)
 
     def test_bad_items_append_nothing(self):
-        good = {"item": "1", "channel_id": "2", "reply_to": "1",
-                "text": "fine"}
+        good = {"item": "1", "channel_id": "2", "reply_to": "1", "text": "fine"}
         bad = [
-            {"item": "2", "channel_id": "5", "reply_to": "2",
-             "content": "the reply in the wrong field"},
+            {
+                "item": "2",
+                "channel_id": "5",
+                "reply_to": "2",
+                "content": "the reply in the wrong field",
+            },
             {"item": "1", "channel_id": "2", "text": "hi", "_nl": {}},
-            settings_item([{"op": "set", "place": "here",
-                            "key": "who.replies", "value": "off"}]),
-            settings_item([{"op": "set", "place": "dms",
-                            "key": "who.replies", "value": "quiet"}]),
-            settings_item([{"op": "undo"}, {"op": "pause",
-                                            "place": "dms"}]),
-            settings_item([CHANGE], reactions=["\U0001F44D"]),
+            settings_item([{"op": "set", "place": "here", "key": "who.replies", "value": "off"}]),
+            settings_item([{"op": "set", "place": "dms", "key": "who.replies", "value": "quiet"}]),
+            settings_item([{"op": "undo"}, {"op": "pause", "place": "dms"}]),
+            settings_item([CHANGE], reactions=["\U0001f44d"]),
             settings_item([CHANGE], nonce=None),
             settings_item([CHANGE], nonce=12345),
             settings_item([CHANGE], nonce=N.upper()),
@@ -118,8 +128,12 @@ class OutboxAppend(unittest.TestCase):
 
     def test_monitor_only_field_types_are_rejected_before_appending(self):
         good = {"item": "1", "channel_id": "2", "text": "fine"}
-        for field, value in (("remember", "not a list"),
-                             ("remember", [True]), ("_retry", []), ("_hold", {})):
+        for field, value in (
+            ("remember", "not a list"),
+            ("remember", [True]),
+            ("_retry", []),
+            ("_hold", {}),
+        ):
             with self.subTest(field=field, value=value):
                 code, error = self.append([good, dict(good, **{field: value})])
                 self.assertEqual(code, 1, error)
@@ -127,8 +141,12 @@ class OutboxAppend(unittest.TestCase):
                 self.assertEqual(self.outbox(), [])
 
     def test_schedule_is_validated_by_the_shared_watch_schema(self):
-        good = {"item": "1", "channel_id": "2", "text": "OK", "schedule": {
-            "v": 1, "changes": [{"op": "add", "kind": "remind", "after": 60}]}}
+        good = {
+            "item": "1",
+            "channel_id": "2",
+            "text": "OK",
+            "schedule": {"v": 1, "changes": [{"op": "add", "kind": "remind", "after": 60}]},
+        }
         bad = dict(good, schedule={"v": 1, "changes": [{"op": "unknown"}]})
         code, error = self.append([good, bad])
         self.assertEqual(code, 1, error)

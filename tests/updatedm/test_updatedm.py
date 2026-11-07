@@ -4,6 +4,7 @@ DM with buttons, the button clicks, hooks/update-watch.sh, and the
 docs/UPDATING.md commands.
 
 Usage: [MUT_DIR=<tree>] python3 tests/updatedm/test_updatedm.py"""
+
 import contextlib
 import io
 import json
@@ -18,8 +19,13 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 import monitor_harness as H  # noqa: E402
-from common import (FAKE_PROC, HOOK_RUNTIME as RUNTIME,  # noqa: E402
-                    MUT_DIR, copy_watchdog, scratch)
+from common import (  # noqa: E402 (local import path bootstrap)
+    FAKE_PROC,
+    HOOK_RUNTIME as RUNTIME,  # noqa: E402
+    MUT_DIR,
+    copy_watchdog,
+    scratch,
+)
 
 V0 = "v1.0.0"
 V1 = "v1.1.0"
@@ -39,16 +45,23 @@ def load(cfg_extra=""):
     mod.UPDATE_REQUEST_FILE = os.path.join(tmp, "update_request.json")
     mod.real_version_installed = mod._version_installed
     mod.installed_versions = set()
-    mod._version_installed = \
-        lambda v, timeout=5: v in mod.installed_versions
+    mod._version_installed = lambda v, timeout=5: v in mod.installed_versions
     return mod
 
 
 def write_check(mod, latest, entries=(), action=False, installed=V0):
     with open(mod.UPDATE_CHECK_FILE, "w") as f:
-        json.dump({"checked": 1, "announced": latest, "latest": latest,
-                   "installed": installed, "entries": list(entries),
-                   "action_needed": action}, f)
+        json.dump(
+            {
+                "checked": 1,
+                "announced": latest,
+                "latest": latest,
+                "installed": installed,
+                "entries": list(entries),
+                "action_needed": action,
+            },
+            f,
+        )
 
 
 def dm_posts(mod):
@@ -56,9 +69,13 @@ def dm_posts(mod):
 
 
 def ix(custom_id, user=H.OWNER, guild=False, content="notice text"):
-    d = {"id": "9001", "token": "tok-en_1", "type": 3,
-         "data": {"custom_id": custom_id, "component_type": 2},
-         "message": {"id": "77", "content": content}}
+    d = {
+        "id": "9001",
+        "token": "tok-en_1",
+        "type": 3,
+        "data": {"custom_id": custom_id, "component_type": 2},
+        "message": {"id": "77", "content": content},
+    }
     if guild:
         d["member"] = {"user": {"id": user}}
     else:
@@ -70,15 +87,13 @@ class Announce(unittest.TestCase):
     def test_dm_each_owner_once_with_buttons(self):
         mod = load()
         mod.OWNER_USER_IDS = {H.OWNER, OTHER}
-        ents = [f"v1.{i}.0 (2026-11-0{i}): Entry {i}"
-                for i in range(7, 0, -1)]
+        ents = [f"v1.{i}.0 (2026-11-0{i}): Entry {i}" for i in range(7, 0, -1)]
         write_check(mod, "v1.7.0", ents, action=True, installed=V0)
         state = {}
         mod.announce_update(state)
         posts = dm_posts(mod)
         self.assertEqual(len(posts), 2)
-        opened = [d["recipient_id"] for p, d in mod.api.posts
-                  if p == "/users/@me/channels"]
+        opened = [d["recipient_id"] for p, d in mod.api.posts if p == "/users/@me/channels"]
         self.assertEqual(sorted(opened), sorted([H.OWNER, OTHER]))
         body = posts[0][1]
         self.assertIn("v1.7.0", body["content"])
@@ -89,8 +104,7 @@ class Announce(unittest.TestCase):
         self.assertEqual(row[0]["type"], 1)
         btns = row[0]["components"]
         self.assertEqual([b["type"] for b in btns], [2, 2])
-        self.assertEqual([b["custom_id"] for b in btns],
-                         ["mdupd:now:v1.7.0", "mdupd:later:v1.7.0"])
+        self.assertEqual([b["custom_id"] for b in btns], ["mdupd:now:v1.7.0", "mdupd:later:v1.7.0"])
         self.assertEqual(state["update_notice"]["version"], "v1.7.0")
         self.assertEqual(mod._update_announced["version"], "v1.7.0")
         # Same version again (and after a state round trip): no new DM.
@@ -103,8 +117,7 @@ class Announce(unittest.TestCase):
         mod.announce_update(state)
         self.assertEqual(len(mod.api.posts), n)
         # A newer version asks again; semver order, not string order.
-        write_check(mod, "v1.10.0", ["v1.10.0 (2026-12-01): Newer"],
-                    installed="v1.7.0")
+        write_check(mod, "v1.10.0", ["v1.10.0 (2026-12-01): Newer"], installed="v1.7.0")
         mod.announce_update(state)
         self.assertEqual(len(dm_posts(mod)), 4)
         last = dm_posts(mod)[-1][1]
@@ -124,7 +137,7 @@ class Announce(unittest.TestCase):
             write_check(mod, bad, ["x"])
             mod.announce_update(state)
         self.assertEqual(mod.api.posts, [])
-        write_check(mod, V1, [])                 # a release, no entries
+        write_check(mod, V1, [])  # a release, no entries
         mod.announce_update(state)
         self.assertEqual(len(dm_posts(mod)), 1)
 
@@ -241,17 +254,23 @@ class Interactions(unittest.TestCase):
         self.assertEqual(r["type"], 4)
 
     def test_stale_and_unknown(self):
-        for cid in (f"mdupd:now:{V1}", "mdupd:now:", "mdupd:bogus:" + V2,
-                    "other:thing", "", f"mdupd:later:{V1}",
-                    "mdupd:now:v1.3.0", "mdupd:now:v1.2.0-rc.1",
-                    "mdupd:now:" + "a" * 40):
+        for cid in (
+            f"mdupd:now:{V1}",
+            "mdupd:now:",
+            "mdupd:bogus:" + V2,
+            "other:thing",
+            "",
+            f"mdupd:later:{V1}",
+            "mdupd:now:v1.3.0",
+            "mdupd:now:v1.2.0-rc.1",
+            "mdupd:now:" + "a" * 40,
+        ):
             r = self.dispatch(ix(cid))
             self.assertEqual(r["type"], 4, cid)
             self.assertEqual(r["data"]["flags"], 64, cid)
         self.assertFalse(os.path.exists(self.mod.UPDATE_REQUEST_FILE))
         self.assertEqual(self.recs, [])
-        self.assertIsNone(self.dispatch({"id": "1", "token": "t",
-                                         "type": 4}))
+        self.assertIsNone(self.dispatch({"id": "1", "token": "t", "type": 4}))
         # Already installed: nothing to do.
         self.mod.installed_versions = {V2}
         for action in ("now", "later"):
@@ -273,6 +292,7 @@ class Interactions(unittest.TestCase):
         self.assertFalse(os.path.exists(mod.UPDATE_REQUEST_FILE))
         # The record reaches state through the gateway inbox.
         import queue
+
         q = queue.Queue()
         for rec in self.recs:
             q.put({"_record": rec})
@@ -301,6 +321,7 @@ class Interactions(unittest.TestCase):
 
         def request(method, path, data=None, **kwargs):
             seen.update(method=method, path=path, data=data, **kwargs)
+
         orig = mod.discord_request
         mod.discord_request = request
         try:
@@ -317,8 +338,11 @@ class Interactions(unittest.TestCase):
 # ---------------------------------------------------------------- watchdog
 def git(cwd, *args):
     return subprocess.run(
-        ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t",
-         *args], check=True, capture_output=True, text=True).stdout
+        ["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
 
 
 def commit_file(repo, name, text, msg):
@@ -329,8 +353,10 @@ def commit_file(repo, name, text, msg):
 
 
 CL_HEAD = "# Changelog\n\nNewest first.\n\n"
-OLD = ("## 2026-10-18: Pre-release history\n\nFixed:\n\n- old\n\n"
-       "**Action needed:**\n\n- Something old.\n\n")
+OLD = (
+    "## 2026-10-18: Pre-release history\n\nFixed:\n\n- old\n\n"
+    "**Action needed:**\n\n- Something old.\n\n"
+)
 
 
 def entry(tag, date, title, action=None):
@@ -341,10 +367,8 @@ def entry(tag, date, title, action=None):
 
 
 E100 = entry(V0, "2026-10-20", "First release", "None.")
-E110 = entry(V1, "2026-10-25", "Second",
-             "Reinstall the worker prompt (it\n  changed).")
-E120 = entry(V2, "2026-11-01", "Third",
-             "None; the monitor restarts with the update.")
+E110 = entry(V1, "2026-10-25", "Second", "Reinstall the worker prompt (it\n  changed).")
+E120 = entry(V2, "2026-11-01", "Third", "None; the monitor restarts with the update.")
 E130 = entry("v1.3.0", "2026-11-05", "Fourth")
 
 
@@ -360,21 +384,21 @@ class Watchdog(unittest.TestCase):
         self.origin = os.path.join(self.d, "origin.git")
         self.seed = os.path.join(self.d, "seed")
         self.inst = os.path.join(self.d, "install")
-        subprocess.run(["git", "init", "-q", "--bare", "-b", "main",
-                        self.origin], check=True)
-        subprocess.run(["git", "clone", "-q", self.origin, self.seed],
-                       check=True, capture_output=True)
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", self.origin], check=True)
+        subprocess.run(
+            ["git", "clone", "-q", self.origin, self.seed], check=True, capture_output=True
+        )
         git(self.seed, "checkout", "-q", "-b", "main")
         copy_watchdog(self.seed)
         shutil.copy(FAKE_PROC, os.path.join(self.seed, "bin", "monitor.py"))
         with open(os.path.join(self.seed, ".gitignore"), "w") as f:
-            f.write("config.yaml\nbot_token\n*.log\n*.log.1\n*.json\n"
-                    "monitor.heartbeat\n.*.tmp\n")
+            f.write("config.yaml\nbot_token\n*.log\n*.log.1\n*.json\nmonitor.heartbeat\n.*.tmp\n")
         git(self.seed, "add", ".")
         commit_file(self.seed, "CHANGELOG.md", CL_HEAD + OLD, "first")
         git(self.seed, "push", "-q", "origin", "main")
-        subprocess.run(["git", "clone", "-q", self.origin, self.inst],
-                       check=True, capture_output=True)
+        subprocess.run(
+            ["git", "clone", "-q", self.origin, self.inst], check=True, capture_output=True
+        )
         self.cfg(True)
         self.entries = []
 
@@ -394,8 +418,9 @@ updates:
         """Commit a CHANGELOG with TEXT as the newest entry, tag it, push."""
         if text:
             self.entries.insert(0, text)
-        commit_file(self.seed, "CHANGELOG.md",
-                    CL_HEAD + "".join(self.entries) + OLD, f"release {tag}")
+        commit_file(
+            self.seed, "CHANGELOG.md", CL_HEAD + "".join(self.entries) + OLD, f"release {tag}"
+        )
         if annotated:
             git(self.seed, "tag", "-a", "-m", f"Release {tag}", tag)
         else:
@@ -411,10 +436,22 @@ updates:
     def run_wd(self):
         e = os.environ.copy()
         p = subprocess.run(
-            ["unshare", "--user", "--map-root-user", "--pid", "--fork",
-             "--mount-proc", "bash", "-c",
-             f"cd '{self.inst}' && bash bin/watchdog.sh"],
-            capture_output=True, text=True, timeout=200, env=e)
+            [
+                "unshare",
+                "--user",
+                "--map-root-user",
+                "--pid",
+                "--fork",
+                "--mount-proc",
+                "bash",
+                "-c",
+                f"cd '{self.inst}' && bash bin/watchdog.sh",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=200,
+            env=e,
+        )
         return p.stdout + p.stderr
 
     def check(self):
@@ -428,9 +465,13 @@ updates:
             json.dump(c, f)
 
     def has_tag(self, tag):
-        return subprocess.run(
-            ["git", "-C", self.inst, "rev-parse", "-q", "--verify",
-             f"refs/tags/{tag}"], capture_output=True).returncode == 0
+        return (
+            subprocess.run(
+                ["git", "-C", self.inst, "rev-parse", "-q", "--verify", f"refs/tags/{tag}"],
+                capture_output=True,
+            ).returncode
+            == 0
+        )
 
     def update_lines(self, out):
         return [ln for ln in out.splitlines() if ln.startswith("UPDATE:")]
@@ -439,14 +480,21 @@ updates:
         """The newest release (semver order, a lightweight tag) and its
         entry only; tags that are not releases ignored; an action
         starting "None" is no action."""
-        e110 = entry("v1.10.0", "2026-10-21", "Ten",
-                     "None; the monitor restarts with the update.")
+        e110 = entry("v1.10.0", "2026-10-21", "Ten", "None; the monitor restarts with the update.")
         self.release(V0, E100)
-        self.release("v1.9.0", entry("v1.9.0", "2026-10-20", "Nine",
-                                     "Do a thing."))
+        self.release("v1.9.0", entry("v1.9.0", "2026-10-20", "Nine", "Do a thing."))
         self.release("v1.10.0", e110, annotated=False)
-        self.tag_only("v1.11.0-rc.1", "v2", "v1.12", "v01.13.0", "1.14.0",
-                      "release-15", "v2.0.0-beta", "v3.0.0.1", "nightly")
+        self.tag_only(
+            "v1.11.0-rc.1",
+            "v2",
+            "v1.12",
+            "v01.13.0",
+            "1.14.0",
+            "release-15",
+            "v2.0.0-beta",
+            "v3.0.0.1",
+            "nightly",
+        )
         out = self.run_wd()
         self.assertEqual(len(self.update_lines(out)), 1, out)
         c = self.check()
@@ -486,8 +534,7 @@ updates:
         out = self.run_wd()
         self.assertEqual(len(self.update_lines(out)), 1, out)
         c = self.check()
-        self.assertEqual(c["entries"], [head_of(E130), head_of(E120),
-                                        head_of(E110)])
+        self.assertEqual(c["entries"], [head_of(E130), head_of(E120), head_of(E110)])
         self.assertTrue(c["action_needed"])
 
     def test_head_already_contains_latest(self):
@@ -523,14 +570,12 @@ updates:
         self.release(V0, E100)
         out = self.run_wd()
         self.assertEqual(self.update_lines(out), [])
-        self.assertFalse(os.path.exists(
-            os.path.join(self.inst, "update_check.json")))
+        self.assertFalse(os.path.exists(os.path.join(self.inst, "update_check.json")))
         self.cfg(True)
         git(self.inst, "remote", "remove", "origin")
         out = self.run_wd()
         self.assertEqual(self.update_lines(out), [])
-        self.assertFalse(os.path.exists(
-            os.path.join(self.inst, "update_check.json")))
+        self.assertFalse(os.path.exists(os.path.join(self.inst, "update_check.json")))
 
     def test_updating_md_commands(self):
         """The docs/UPDATING.md commands: find the newest release by hand,
@@ -541,34 +586,40 @@ updates:
         blocks = re.findall(r"```bash\n(.*?)```", doc, re.S)
         find = [b for b in blocks if "ls-remote" in b]
         self.assertEqual(len(find), 1)
-        step1 = [b for b in blocks if 'fetch --no-tags origin tag' in b]
+        step1 = [b for b in blocks if "fetch --no-tags origin tag" in b]
         self.assertEqual(len(step1), 1)
         self.release("v1.9.0", entry("v1.9.0", "2026-10-20", "Nine"))
         self.release("v1.10.0", entry("v1.10.0", "2026-10-21", "Ten"))
         self.tag_only("v1.11.0-rc.1", "v2", "v01.13.0")
-        latest = subprocess.run(["bash", "-c", find[0]], cwd=self.inst,
-                                capture_output=True, text=True).stdout
+        latest = subprocess.run(
+            ["bash", "-c", find[0]], cwd=self.inst, capture_output=True, text=True
+        ).stdout
         self.assertEqual(latest.strip(), "v1.10.0")
         script = step1[0].replace("TAG=vX.Y.Z", "TAG=v1.9.0")
-        p = subprocess.run(["bash", "-c", "set -e\n" + script], cwd=self.inst,
-                           capture_output=True, text=True)
+        p = subprocess.run(
+            ["bash", "-c", "set -e\n" + script], cwd=self.inst, capture_output=True, text=True
+        )
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("unreleased", p.stdout)
         self.assertTrue(self.has_tag("v1.9.0"))
         self.assertFalse(self.has_tag("v1.10.0"))
         git(self.inst, "merge", "-q", "--ff-only", "v1.9.0")
-        self.assertEqual(git(self.inst, "describe", "--tags", "--match",
-                             "v[0-9]*", "--abbrev=0").strip(), "v1.9.0")
+        self.assertEqual(
+            git(self.inst, "describe", "--tags", "--match", "v[0-9]*", "--abbrev=0").strip(),
+            "v1.9.0",
+        )
         # Local commit, then the next release: a merge commit.
         commit_file(self.inst, "mine.txt", "x", "local tweak")
-        git(self.inst, "fetch", "-q", "--no-tags", "origin", "tag",
-            "v1.10.0")
+        git(self.inst, "fetch", "-q", "--no-tags", "origin", "tag", "v1.10.0")
         with self.assertRaises(subprocess.CalledProcessError):
             git(self.inst, "merge", "-q", "--ff-only", "v1.10.0")
         git(self.inst, "merge", "-q", "--no-edit", "v1.10.0")
-        self.assertEqual(subprocess.run(
-            ["git", "-C", self.inst, "merge-base", "--is-ancestor",
-             "v1.10.0", "HEAD"]).returncode, 0)
+        self.assertEqual(
+            subprocess.run(
+                ["git", "-C", self.inst, "merge-base", "--is-ancestor", "v1.10.0", "HEAD"]
+            ).returncode,
+            0,
+        )
         self.assertTrue(os.path.exists(os.path.join(self.inst, "mine.txt")))
         self.run_wd()
         c = self.check()
@@ -589,22 +640,28 @@ class Hook(unittest.TestCase):
         with open(os.path.join(bindir, "git"), "w") as f:
             f.write(f"#!/bin/sh\ntouch '{self.git_marker}'\nexit 1\n")
         os.chmod(os.path.join(bindir, "git"), 0o755)
-        self.env = dict(os.environ, HATCH_HOOK_RUNTIME=RUNTIME,
-                        HOOK_STATE=self.state, MUSE_DISCORD_DIR=self.pkg,
-                        PATH=bindir + os.pathsep + os.environ["PATH"])
+        self.env = dict(
+            os.environ,
+            HATCH_HOOK_RUNTIME=RUNTIME,
+            HOOK_STATE=self.state,
+            MUSE_DISCORD_DIR=self.pkg,
+            PATH=bindir + os.pathsep + os.environ["PATH"],
+        )
 
     def run_hook(self):
-        p = subprocess.run(["bash", os.path.join(MUT_DIR, "hooks",
-                                                 "update-watch.sh")],
-                           capture_output=True, text=True, env=self.env,
-                           timeout=30)
+        p = subprocess.run(
+            ["bash", os.path.join(MUT_DIR, "hooks", "update-watch.sh")],
+            capture_output=True,
+            text=True,
+            env=self.env,
+            timeout=30,
+        )
         self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout, p.stderr
 
     def request(self, version=V1, at=1000):
         with open(os.path.join(self.pkg, "update_request.json"), "w") as f:
-            json.dump({"version": version, "requested_at": at,
-                       "by": H.OWNER}, f)
+            json.dump({"version": version, "requested_at": at, "by": H.OWNER}, f)
 
     def test_wakes_once_per_request(self):
         out, _ = self.run_hook()
@@ -613,9 +670,7 @@ class Hook(unittest.TestCase):
         out, _ = self.run_hook()
         self.assertTrue(out.startswith("WAKE:"), out)
         payload = json.loads(out.splitlines()[1])
-        self.assertEqual(payload["request"], {"version": V1,
-                                              "requested_at": 1000,
-                                              "by": H.OWNER})
+        self.assertEqual(payload["request"], {"version": V1, "requested_at": 1000, "by": H.OWNER})
         self.assertEqual(payload["package_dir"], self.pkg)
         self.assertTrue(payload["guide"].endswith("/docs/UPDATING.md"))
         with open(self.state) as f:
@@ -627,8 +682,7 @@ class Hook(unittest.TestCase):
         self.request(V2, 2000)
         out, _ = self.run_hook()
         self.assertTrue(out.startswith("WAKE:"), out)
-        self.assertEqual(json.loads(out.splitlines()[1])["request"]
-                         ["version"], V2)
+        self.assertEqual(json.loads(out.splitlines()[1])["request"]["version"], V2)
         out, _ = self.run_hook()
         self.assertTrue(out.startswith("SILENT:"), out)
         # The same version requested again later (a fresh click after
@@ -657,16 +711,18 @@ class Hook(unittest.TestCase):
         self.assertTrue(out.startswith("SILENT:"), out)
 
     def test_garbage_request_silent(self):
-        for text in ("garbage{", "[]", '{"by": "1"}', "",
-                     json.dumps({"commit": "a" * 40, "requested_at": 1}),
-                     json.dumps({"version": "v1.2", "requested_at": 1}),
-                     json.dumps({"version": "v1.2.0-rc.1",
-                                 "requested_at": 1}),
-                     json.dumps({"version": "v1.2.0; rm -rf ~",
-                                 "requested_at": 1}),
-                     json.dumps({"version": 120, "requested_at": 1})):
-            with open(os.path.join(self.pkg, "update_request.json"),
-                      "w") as f:
+        for text in (
+            "garbage{",
+            "[]",
+            '{"by": "1"}',
+            "",
+            json.dumps({"commit": "a" * 40, "requested_at": 1}),
+            json.dumps({"version": "v1.2", "requested_at": 1}),
+            json.dumps({"version": "v1.2.0-rc.1", "requested_at": 1}),
+            json.dumps({"version": "v1.2.0; rm -rf ~", "requested_at": 1}),
+            json.dumps({"version": 120, "requested_at": 1}),
+        ):
+            with open(os.path.join(self.pkg, "update_request.json"), "w") as f:
                 f.write(text)
             out, _ = self.run_hook()
             self.assertTrue(out.startswith("SILENT:"), (text, out))

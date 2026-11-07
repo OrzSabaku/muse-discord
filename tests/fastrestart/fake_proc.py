@@ -1,6 +1,7 @@
 """Stand-in for monitor.py. Records every start in
 starts.log, writes monitor.pid and the heartbeat like the real monitor.
 $FAKE_MODE: ok (default) or token (prints TOKEN REJECTED, exits 3)."""
+
 import os
 import sys
 import time
@@ -11,8 +12,11 @@ with open(os.path.join(here, "starts.log"), "a") as f:
     f.write(f"{name} {os.getpid()}\n")
 mode = os.environ.get("FAKE_MODE", "ok")
 if mode == "token":
-    print("TOKEN REJECTED: Discord refused the bot token (401 from "
-          "/users/@me); it was probably reset. Exiting.", flush=True)
+    print(
+        "TOKEN REJECTED: Discord refused the bot token (401 from "
+        "/users/@me); it was probably reset. Exiting.",
+        flush=True,
+    )
     sys.exit(3)
 with open(os.path.join(here, "monitor.pid"), "w") as f:
     f.write(str(os.getpid()))

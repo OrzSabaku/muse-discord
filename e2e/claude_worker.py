@@ -48,6 +48,7 @@ The CLI binary is $CLAUDE_BIN (default `claude`), so tests can swap in
 a fake script; $E2E_CLAUDE_MODEL picks a model (default: the CLI's).
 Auth comes from the environment (CLAUDE_CODE_OAUTH_TOKEN in CI).
 """
+
 import argparse
 import importlib.util
 import json
@@ -73,11 +74,32 @@ WAKE_TIMEOUT = 240
 # Queue item fields the wake payload carries (mention-watch.sh's jq
 # projection, in its order; a missing field is null there too).
 PAYLOAD_FIELDS = (
-    "message_id", "channel_id", "channel_name", "kind", "author",
-    "author_id", "content", "media", "documents", "unviewable", "history",
-    "may_generate", "owner_command", "reply_to", "burst",
-    "burst_fragments", "from_bot", "bot_turns", "participants",
-    "follow_up", "settings", "watches", "reminder", "proactive", "external_apps")
+    "message_id",
+    "channel_id",
+    "channel_name",
+    "kind",
+    "author",
+    "author_id",
+    "content",
+    "media",
+    "documents",
+    "unviewable",
+    "history",
+    "may_generate",
+    "owner_command",
+    "reply_to",
+    "burst",
+    "burst_fragments",
+    "from_bot",
+    "bot_turns",
+    "participants",
+    "follow_up",
+    "settings",
+    "watches",
+    "reminder",
+    "proactive",
+    "external_apps",
+)
 
 # Env vars the worker run has no business seeing. The SUT token stays:
 # bin/discord-api.py may resolve it through token_from (env:NAME).
@@ -96,8 +118,7 @@ def renderer(pkg):
     if not os.path.exists(path):
         path = os.path.join(os.path.dirname(HERE), "bin", RENDERER)
     if path not in _RENDERERS:
-        spec = importlib.util.spec_from_file_location(
-            "render_worker_prompt", path)
+        spec = importlib.util.spec_from_file_location("render_worker_prompt", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         _RENDERERS[path] = mod
@@ -120,7 +141,7 @@ def read_json(path, default):
     try:
         with open(path) as f:
             return json.load(f)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return default
 
 
@@ -143,11 +164,10 @@ def is_owner_dm(item):
     heartbeat slot (all handed out alone, with their nonce: the hook's
     rule)."""
     card = item.get("settings") or {}
-    notice = item.get("kind") in ("reminder", "watch-met") \
-        and card.get("where") == "dm"
+    notice = item.get("kind") in ("reminder", "watch-met") and card.get("where") == "dm"
     return item.get("kind") == "proactive" or (
-        (item.get("kind") == "dm" or notice)
-        and card.get("speaker") == "owner")
+        (item.get("kind") == "dm" or notice) and card.get("speaker") == "owner"
+    )
 
 
 def is_owner_command(item):
@@ -165,15 +185,18 @@ def outbox_answers(pkg):
         for e in data if isinstance(data, list) else []:
             if not isinstance(e, dict):
                 continue
-            s = e.get("settings") if isinstance(e.get("settings"),
-                                                dict) else {}
-            nonce = next((n for n in (e.get("owner_dm_nonce"),
-                                      s.get("nonce"))
-                          if isinstance(n, str)), None)
+            s = e.get("settings") if isinstance(e.get("settings"), dict) else {}
+            nonce = next(
+                (n for n in (e.get("owner_dm_nonce"), s.get("nonce")) if isinstance(n, str)), None
+            )
             reply = e.get("reply_nonce")
-            out.append(({e[k] for k in ("item", "reply_to")
-                         if isinstance(e.get(k), str)}, nonce,
-                        reply if isinstance(reply, str) else None))
+            out.append(
+                (
+                    {e[k] for k in ("item", "reply_to") if isinstance(e.get(k), str)},
+                    nonce,
+                    reply if isinstance(reply, str) else None,
+                )
+            )
     return out
 
 
@@ -202,7 +225,7 @@ def open_items(pkg, answered=None):
     nonces = read_json(os.path.join(pkg, OWNER_DM_NONCES), {})
     nonces = nonces if isinstance(nonces, dict) else {}
     pro = read_json(os.path.join(pkg, "proactive_nonce.json"), {})
-    nonces.update(pro if isinstance(pro, dict) else {})   # a live slot's
+    nonces.update(pro if isinstance(pro, dict) else {})  # a live slot's
     replies = read_json(os.path.join(pkg, ITEM_NONCES), {})
     replies = replies if isinstance(replies, dict) else {}
     out = []
@@ -213,11 +236,14 @@ def open_items(pkg, answered=None):
         if answered is not None and any(i in answered for i in ids):
             continue
         n = nonces.get(str(item["message_id"]))
-        r = None if item.get("kind") == "proactive" \
-            else replies.get(str(item["message_id"]))   # (a slot: its nonce)
-        hits = [nonce for named, nonce, reply in entries
-                if any(i in named for i in ids)
-                and (r is None or reply == r)]
+        r = (
+            None if item.get("kind") == "proactive" else replies.get(str(item["message_id"]))
+        )  # (a slot: its nonce)
+        hits = [
+            nonce
+            for named, nonce, reply in entries
+            if any(i in named for i in ids) and (r is None or reply == r)
+        ]
         if n is not None:
             hits = [x for x in hits if x == n]
         elif is_owner_dm(item):
@@ -240,6 +266,7 @@ def persona_file(pkg, override=None):
     name = None
     try:
         import yaml
+
         with open(os.path.join(pkg, "config.yaml")) as f:
             name = (yaml.safe_load(f) or {}).get("persona")
         if not isinstance(name, str):
@@ -274,6 +301,7 @@ def build_payload(items, persona, caps=None):
 # The prompt (prompts/worker-prompt.template.md, rendered as docs/SETUP.md does)
 # ---------------------------------------------------------------------------
 
+
 def render_prompt(template, pkg):
     """The installed worker prompt for package dir `pkg` (no media
     tools), plus warnings for seams the template no longer has (the PR
@@ -297,10 +325,11 @@ def run_ending(result):
 
 
 def wake_prompt(rendered, payload):
-    return (rendered.rstrip() + "\n\n---\n\n"
-            "Wake: muse-discord mentions pending. Payload:\n\n"
-            "```json\n" + json.dumps(payload, indent=1, ensure_ascii=False)
-            + "\n```\n")
+    return (
+        rendered.rstrip() + "\n\n---\n\n"
+        "Wake: muse-discord mentions pending. Payload:\n\n"
+        "```json\n" + json.dumps(payload, indent=1, ensure_ascii=False) + "\n```\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -341,8 +370,7 @@ def simple_command(cmd):
 
 
 def _tool_prefixes(pkg, name):
-    return ["python3 %s/bin/%s" % (pkg, name), "python3 bin/%s" % name,
-            "python3 ./bin/%s" % name]
+    return ["python3 %s/bin/%s" % (pkg, name), "python3 bin/%s" % name, "python3 ./bin/%s" % name]
 
 
 def bash_allowed(pkg, cmd):
@@ -356,8 +384,7 @@ def bash_allowed(pkg, cmd):
             return True, "outbox append"
         # Items in a quoted heredoc (no expansion inside), and nothing
         # after the terminator.
-        m = re.fullmatch(re.escape(prefix)
-                         + r"\s*<<(-?)\s*(['\"])(\w+)\2", first)
+        m = re.fullmatch(re.escape(prefix) + r"\s*<<(-?)\s*(['\"])(\w+)\2", first)
         if m and rest:
             lines = rest.split("\n")
             strip = (lambda s: s.lstrip("\t")) if m.group(1) else str
@@ -373,7 +400,8 @@ def bash_allowed(pkg, cmd):
         "`python3 %s/bin/outbox-append.py <<'EOF'` (a quoted heredoc "
         "holding the JSON array) and `python3 %s/bin/discord-api.py "
         "<subcommand> <args>` (no pipes, redirections, `cd`, `&&`, or "
-        "$-expansions)." % (pkg, pkg))
+        "$-expansions)." % (pkg, pkg)
+    )
 
 
 def wake_reads(items):
@@ -398,8 +426,7 @@ def read_allowed(pkg, path, persona=None, reads=None):
     rp = os.path.realpath(os.path.join(pkg, os.path.expanduser(path or "")))
     root = os.path.realpath(pkg)
     reads = reads or {}
-    media = {os.path.realpath(os.path.join(pkg, m))
-             for m in reads.get("media") or []}
+    media = {os.path.realpath(os.path.join(pkg, m)) for m in reads.get("media") or []}
     if rp in media:
         return True, "this wake's media"
     for mid in reads.get("items") or []:
@@ -408,9 +435,11 @@ def read_allowed(pkg, path, persona=None, reads=None):
             return True, "this wake's generated files"
     if rp == os.path.realpath(persona_file(pkg, persona)):
         return True, "persona"
-    return False, ("Read is limited to the media files listed in this "
-                   "wake's items (and the persona file when the payload "
-                   "lacks it).")
+    return False, (
+        "Read is limited to the media files listed in this "
+        "wake's items (and the persona file when the payload "
+        "lacks it)."
+    )
 
 
 def check_tool(pkg, tool, tool_input, persona=None, reads=None):
@@ -419,8 +448,7 @@ def check_tool(pkg, tool, tool_input, persona=None, reads=None):
     if tool == "Bash":
         return bash_allowed(pkg, str(tool_input.get("command") or ""))
     if tool == "Read":
-        return read_allowed(pkg, str(tool_input.get("file_path") or ""),
-                            persona, reads)
+        return read_allowed(pkg, str(tool_input.get("file_path") or ""), persona, reads)
     return False, "%s is not available to the reply worker." % tool
 
 
@@ -428,38 +456,70 @@ def hook_main(pkg, persona=None, reads=None):
     """PreToolUse hook: read the call from stdin, print the decision."""
     try:
         call = json.load(sys.stdin)
-        ok, reason = check_tool(pkg, call.get("tool_name"),
-                                call.get("tool_input"), persona,
-                                json.loads(reads) if reads else None)
+        ok, reason = check_tool(
+            pkg,
+            call.get("tool_name"),
+            call.get("tool_input"),
+            persona,
+            json.loads(reads) if reads else None,
+        )
     except Exception as e:
         ok, reason = False, "hook error: %s" % e
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "allow" if ok else "deny",
-        "permissionDecisionReason": reason}}))
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow" if ok else "deny",
+                    "permissionDecisionReason": reason,
+                }
+            }
+        )
+    )
     return 0
 
 
 def worker_args(pkg, persona=None, items=None):
     """The CLI flags for one wake of `items` (the prompt goes on stdin):
     its Read allowlist is those items' own files (wake_reads)."""
-    hook = " ".join(shlex.quote(a) for a in
-                    [sys.executable, os.path.abspath(__file__), "--hook",
-                     "--pkg", pkg, "--reads",
-                     json.dumps(wake_reads(items))]
-                    + (["--persona", persona] if persona else []))
-    settings = {"hooks": {"PreToolUse": [
-        {"matcher": "*", "hooks": [{"type": "command", "command": hook}]}]}}
-    return [claude_bin(), "-p", "--output-format", "json",
-            "--no-session-persistence", "--setting-sources", "",
-            "--strict-mcp-config", "--tools", "Bash,Read",
-            "--permission-mode", "dontAsk",
-            "--settings", json.dumps(settings)] + model_args()
+    hook = " ".join(
+        shlex.quote(a)
+        for a in [
+            sys.executable,
+            os.path.abspath(__file__),
+            "--hook",
+            "--pkg",
+            pkg,
+            "--reads",
+            json.dumps(wake_reads(items)),
+        ]
+        + (["--persona", persona] if persona else [])
+    )
+    settings = {
+        "hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": hook}]}]}
+    }
+    return [
+        claude_bin(),
+        "-p",
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "--setting-sources",
+        "",
+        "--strict-mcp-config",
+        "--tools",
+        "Bash,Read",
+        "--permission-mode",
+        "dontAsk",
+        "--settings",
+        json.dumps(settings),
+    ] + model_args()
 
 
 # ---------------------------------------------------------------------------
 # Running wakes
 # ---------------------------------------------------------------------------
+
 
 def kill_group(proc):
     """Stop a CLI run and everything it started (its own session)."""
@@ -480,19 +540,23 @@ class Worker:
     (each wake runs in its own thread, so a slow wake never delays the
     next message, as with the real hook)."""
 
-    def __init__(self, pkg, log_path=None, timeout=WAKE_TIMEOUT,
-                 lease=LEASE_SECS, persona=DEFAULT_PERSONA, echo=False):
+    def __init__(
+        self,
+        pkg,
+        log_path=None,
+        timeout=WAKE_TIMEOUT,
+        lease=LEASE_SECS,
+        persona=DEFAULT_PERSONA,
+        echo=False,
+    ):
         self.pkg = os.path.abspath(pkg)
         self.echo = echo  # also print log lines to stdout
-        self.log_path = log_path or os.path.join(self.pkg,
-                                                 "claude_worker.log")
-        self.wake_dir = os.path.join(os.path.dirname(self.log_path),
-                                     "claude_wakes")
+        self.log_path = log_path or os.path.join(self.pkg, "claude_worker.log")
+        self.wake_dir = os.path.join(os.path.dirname(self.log_path), "claude_wakes")
         self.timeout = timeout
         self.lease = lease
-        self.persona = persona if persona and os.path.exists(persona) \
-            else None
-        self.leases = {}       # message_id -> when a wake took it
+        self.persona = persona if persona and os.path.exists(persona) else None
+        self.leases = {}  # message_id -> when a wake took it
         self.answered = set()  # every id ever seen answered: never re-hand
         self.lock = threading.Lock()
         self.threads = []
@@ -525,35 +589,35 @@ class Worker:
 
         def load(name):
             data = read_json(os.path.join(self.pkg, name), {})
-            return os.path.exists(os.path.join(self.pkg, name)), \
-                data if isinstance(data, dict) else {}
+            return os.path.exists(os.path.join(self.pkg, name)), data if isinstance(
+                data, dict
+            ) else {}
+
         cmd_file, cmds = load(OWNER_ITEMS)
-        cmds = {k: (v.get("nonce") if isinstance(v, dict) else v)
-                for k, v in cmds.items()}
+        cmds = {k: (v.get("nonce") if isinstance(v, dict) else v) for k, v in cmds.items()}
         reply_file, replies = load(ITEM_NONCES)
         queued = set()
-        for item in read_json(os.path.join(self.pkg, "reply_queue.json"),
-                              []) or []:
-            if isinstance(item, dict) and isinstance(item.get("message_id"),
-                                                     str):
+        for item in read_json(os.path.join(self.pkg, "reply_queue.json"), []) or []:
+            if isinstance(item, dict) and isinstance(item.get("message_id"), str):
                 queued.add(item["message_id"])
 
         def waits(i):
             mid = str(i["message_id"])
             if is_owner_dm(i) and mid not in nonces:
                 return True
-            age = now - (i.get("queued_at") if isinstance(
-                i.get("queued_at"), (int, float)) else 0)
+            age = now - (i.get("queued_at") if isinstance(i.get("queued_at"), (int, float)) else 0)
             return age < NONCE_WAIT_SECS and (
-                (reply_file and i.get("kind") != "proactive"
-                 and mid not in replies)
-                or (is_owner_command(i) and cmd_file and not cmds.get(mid)))
+                (reply_file and i.get("kind") != "proactive" and mid not in replies)
+                or (is_owner_command(i) and cmd_file and not cmds.get(mid))
+            )
+
         with self.lock:
-            self.leases = {k: v for k, v in self.leases.items()
-                           if k in queued}
-            due = [i for i in items
-                   if self.leases.get(i["message_id"], 0) + self.lease <= now
-                   and not waits(i)]
+            self.leases = {k: v for k, v in self.leases.items() if k in queued}
+            due = [
+                i
+                for i in items
+                if self.leases.get(i["message_id"], 0) + self.lease <= now and not waits(i)
+            ]
             owner = [i for i in due if is_owner_dm(i)]
             caps = {"reply": replies}
             if owner:
@@ -567,8 +631,11 @@ class Worker:
             else:
                 # An owner's server item (owner powers) wakes alone (the
                 # hook's rule).
-                held = [i for i in due if is_owner_command(i) or (
-                    i.get("settings") or {}).get("speaker") == "owner"]
+                held = [
+                    i
+                    for i in due
+                    if is_owner_command(i) or (i.get("settings") or {}).get("speaker") == "owner"
+                ]
                 if held:
                     due = held[:1]
                     caps.update(cmd=cmds)
@@ -576,8 +643,7 @@ class Worker:
             for i in due:
                 self.leases[i["message_id"]] = now
         if expired:
-            self.log("re-waking: item lease expired for %s"
-                     % [i["message_id"] for i in expired])
+            self.log("re-waking: item lease expired for %s" % [i["message_id"] for i in expired])
         return due, caps
 
     def poll(self):
@@ -590,8 +656,7 @@ class Worker:
         with self.lock:
             self.wakes += 1
             n = self.wakes
-        t = threading.Thread(target=self.run_wake,
-                             args=(n, items, caps), daemon=True)
+        t = threading.Thread(target=self.run_wake, args=(n, items, caps), daemon=True)
         self.threads.append(t)
         t.start()
         return t
@@ -599,8 +664,7 @@ class Worker:
     def run_wake(self, n, items, caps=None):
         ids = [i["message_id"] for i in items]
         try:
-            with open(os.path.join(self.pkg,
-                                   "prompts/worker-prompt.template.md")) as f:
+            with open(os.path.join(self.pkg, "prompts/worker-prompt.template.md")) as f:
                 template = f.read()
         except OSError as e:
             self.log("wake %d: cannot read the worker template: %s" % (n, e))
@@ -620,12 +684,20 @@ class Worker:
         env = {k: v for k, v in os.environ.items() if k not in SCRUB_ENV}
         try:
             proc = subprocess.Popen(
-                args, cwd=self.pkg, env=env, stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                start_new_session=True)
+                args,
+                cwd=self.pkg,
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
         except OSError as e:
-            self.log("wake %d: done exit=error duration=0.0s items=%s "
-                     "(cannot start %s: %s)" % (n, ids, args[0], e))
+            self.log(
+                "wake %d: done exit=error duration=0.0s items=%s "
+                "(cannot start %s: %s)" % (n, ids, args[0], e)
+            )
             return
         with self.lock:
             self.procs.add(proc)
@@ -645,23 +717,33 @@ class Worker:
         try:
             res = json.loads(out)
             summary = " turns=%s is_error=%s ending=%s result=%r" % (
-                res.get("num_turns"), res.get("is_error"),
+                res.get("num_turns"),
+                res.get("is_error"),
                 run_ending(res.get("result")),
-                str(res.get("result") or "")[:200])
-        except (ValueError, AttributeError):
+                str(res.get("result") or "")[:200],
+            )
+        except ValueError, AttributeError:
             if out.strip():
                 summary = " stdout=%r" % out.strip()[:200]
         if status not in (0, "timeout") and err.strip():
             summary += " stderr=%r" % err.strip()[-300:]
-        self.log("wake %d: done exit=%s duration=%.1fs items=%s%s"
-                 % (n, status, duration, ids, summary))
+        self.log(
+            "wake %d: done exit=%s duration=%.1fs items=%s%s" % (n, status, duration, ids, summary)
+        )
         try:
             os.makedirs(self.wake_dir, exist_ok=True)
-            with open(os.path.join(self.wake_dir, "wake-%03d.json" % n),
-                      "w") as f:
-                json.dump({"items": ids, "exit": status,
-                           "duration": round(duration, 1), "stdout": out,
-                           "stderr": err[-4000:]}, f, indent=1)
+            with open(os.path.join(self.wake_dir, "wake-%03d.json" % n), "w") as f:
+                json.dump(
+                    {
+                        "items": ids,
+                        "exit": status,
+                        "duration": round(duration, 1),
+                        "stdout": out,
+                        "stderr": err[-4000:],
+                    },
+                    f,
+                    indent=1,
+                )
         except OSError:
             pass
 
@@ -682,31 +764,35 @@ class Worker:
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--pkg", required=True, help="the SUT package dir")
-    ap.add_argument("--log", help="worker log (default "
-                    "<pkg>/claude_worker.log)")
-    ap.add_argument("--timeout", type=float, default=WAKE_TIMEOUT,
-                    help="seconds per wake before the CLI is killed")
+    ap.add_argument("--log", help="worker log (default <pkg>/claude_worker.log)")
+    ap.add_argument(
+        "--timeout",
+        type=float,
+        default=WAKE_TIMEOUT,
+        help="seconds per wake before the CLI is killed",
+    )
     ap.add_argument("--lease", type=float, default=LEASE_SECS)
     ap.add_argument("--poll", type=float, default=POLL_SECS)
-    ap.add_argument("--persona", default=DEFAULT_PERSONA,
-                    help="persona file (default: the e2e test persona; "
-                    "'' = config.yaml persona)")
-    ap.add_argument("--hook", action="store_true",
-                    help=argparse.SUPPRESS)
+    ap.add_argument(
+        "--persona",
+        default=DEFAULT_PERSONA,
+        help="persona file (default: the e2e test persona; '' = config.yaml persona)",
+    )
+    ap.add_argument("--hook", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--reads", default=None, help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     pkg = os.path.abspath(args.pkg)
     if args.hook:
         return hook_main(pkg, args.persona or None, args.reads)
 
-    worker = Worker(pkg, args.log, args.timeout, args.lease, args.persona,
-                    echo=True)
+    worker = Worker(pkg, args.log, args.timeout, args.lease, args.persona, echo=True)
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
-    worker.log("claude worker up: pkg=%s claude=%s timeout=%ss persona=%s"
-               % (pkg, claude_bin(), args.timeout, worker.persona or
-                  "config.yaml persona"))
+    worker.log(
+        "claude worker up: pkg=%s claude=%s timeout=%ss persona=%s"
+        % (pkg, claude_bin(), args.timeout, worker.persona or "config.yaml persona")
+    )
     while not stop.is_set():
         try:
             worker.poll()

@@ -65,9 +65,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
         return [
             dict(
                 status=c.kwargs["status"],
-                activity=c.kwargs["activity"].to_dict()
-                if c.kwargs["activity"]
-                else None,
+                activity=c.kwargs["activity"].to_dict() if c.kwargs["activity"] else None,
             )
             for c in self.client.ws.change_presence.call_args_list
         ]

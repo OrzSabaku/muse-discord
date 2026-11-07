@@ -119,9 +119,7 @@ class Connection(discord.Client):
             return
         event, data = packet.get("t"), packet.get("d") or {}
         if event == "READY":
-            self.gateway_status.update(
-                user=data.get("user"), application=data.get("application")
-            )
+            self.gateway_status.update(user=data.get("user"), application=data.get("application"))
             print("Gateway READY: realtime ingest live (discord.py).", flush=True)
         elif event == "RESUMED":
             print("Gateway session resumed.", flush=True)
@@ -187,24 +185,16 @@ class Connection(discord.Client):
                 ctx = await asyncio.to_thread(self.settings_context)
                 if name in ("Why no reply?", "Why no reply"):
                     await settings_ui.why_message(interaction, ctx)
-                elif custom.startswith("mdset:") and not custom.startswith(
-                    "mdset:open:server:"
-                ):
+                elif custom.startswith("mdset:") and not custom.startswith("mdset:open:server:"):
                     await interaction.edit_original_response(
                         content="この設定画面は古い形式です。/settingsを開き直してください。"
                     )
                 else:
                     place = None
                     if custom.startswith("mdset:open:server:"):
-                        if str(interaction.user.id) not in set(
-                            map(str, ctx.settings.owners)
-                        ):
-                            raise ms.SettingsError(
-                                "この操作はBotの所有者のみ利用できます。"
-                            )
-                        place = ms.parse_place(
-                            "server:" + custom.rsplit(":", 1)[1], ctx
-                        )
+                        if str(interaction.user.id) not in set(map(str, ctx.settings.owners)):
+                            raise ms.SettingsError("この操作はBotの所有者のみ利用できます。")
+                        place = ms.parse_place("server:" + custom.rsplit(":", 1)[1], ctx)
                     await settings_ui.open_settings(interaction, ctx, place)
             elif (
                 custom.startswith(settings_ui.PREFIX)

@@ -2,13 +2,15 @@
 large guild/channel directories, users/roles, and recorded refusal reasons.
 Only Discord interactions are faked; writes use the real settings engine.
 """
+
 import json
 import os
 import sys
 from datetime import datetime, timezone
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "_lib"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 from common import MUT_DIR as MUT, scratch  # noqa: E402
 
 sys.path.insert(0, os.path.join(MUT, "src"))
@@ -21,7 +23,7 @@ P = UI.PREFIX
 # 20-digit snowflakes (the longest real ids).
 OWNER = "11100000000000000001"
 OWNER2 = "11100000000000000002"
-ADMIN = "22200000000000000001"      # Riley: Manage Server in Muse Lounge
+ADMIN = "22200000000000000001"  # Riley: Manage Server in Muse Lounge
 MEMBER = "33300000000000000001"
 SAM = "44400000000000000001"
 KAI = "44400000000000000002"
@@ -31,52 +33,72 @@ BOB = "44400000000000000005"
 OTHERBOT = "44400000000000000009"
 BOT = "99900000000000000001"
 ROLE = "55500000000000000001"
-G1 = "60000000000000000001"     # Muse Lounge
-G2 = "60000000000000000002"     # Study Group
-G3 = "60000000000000000003"     # Pixel Plaza
-CAT = "70000000000000000001"    # Staff (category) in Muse Lounge
-GENERAL = "70000000000000000002"    # in Staff
+G1 = "60000000000000000001"  # Muse Lounge
+G2 = "60000000000000000002"  # Study Group
+G3 = "60000000000000000003"  # Pixel Plaza
+CAT = "70000000000000000001"  # Staff (category) in Muse Lounge
+GENERAL = "70000000000000000002"  # in Staff
 MUSECHAT = "70000000000000000003"
-WELCOME = "70000000000000000004"    # Muse Lounge's system channel
-LOBBY = "70000000000000000005"      # the bot can't post there
-HIDDEN = "70000000000000000006"     # the bot can't read it
-THREAD = "70000000000000000007"     # a thread in #muse-chat
-HOMEWORK = "70000000000000000101"   # Study Group
-ART = "70000000000000000201"        # Pixel Plaza
+WELCOME = "70000000000000000004"  # Muse Lounge's system channel
+LOBBY = "70000000000000000005"  # the bot can't post there
+HIDDEN = "70000000000000000006"  # the bot can't read it
+THREAD = "70000000000000000007"  # a thread in #muse-chat
+HOMEWORK = "70000000000000000101"  # Study Group
+ART = "70000000000000000201"  # Pixel Plaza
 MANAGE = str(1 << 5)
 FIXED_AT = "2026-10-19T10:00:00Z"
 NOW = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc).timestamp()
 
-NAMES = {OWNER: "Zach", OWNER2: "Mia", ADMIN: "Riley", MEMBER: "Lee",
-         SAM: "Sam", KAI: "Kai", ANA: "Ana", SPAM: "spam1", BOB: "Bob",
-         OTHERBOT: "OtherBot", ROLE: "@Mods"}
+NAMES = {
+    OWNER: "Zach",
+    OWNER2: "Mia",
+    ADMIN: "Riley",
+    MEMBER: "Lee",
+    SAM: "Sam",
+    KAI: "Kai",
+    ANA: "Ana",
+    SPAM: "spam1",
+    BOB: "Bob",
+    OTHERBOT: "OtherBot",
+    ROLE: "@Mods",
+}
 
 GUILDS = [
-    {"id": G1, "name": "Muse Lounge", "member_count": 1240,
-     "system_channel_id": WELCOME},
-    {"id": G2, "name": "Study Group", "member_count": 9,
-     "system_channel_id": None},
-    {"id": G3, "name": "Pixel Plaza", "member_count": 48213,
-     "system_channel_id": ART},
-] + [{"id": f"6100000000000000{i:04d}", "name": f"Server {i:02d}",
-      "member_count": 100 + i, "system_channel_id": None}
-     for i in range(1, 61)]
+    {"id": G1, "name": "Muse Lounge", "member_count": 1240, "system_channel_id": WELCOME},
+    {"id": G2, "name": "Study Group", "member_count": 9, "system_channel_id": None},
+    {"id": G3, "name": "Pixel Plaza", "member_count": 48213, "system_channel_id": ART},
+] + [
+    {
+        "id": f"6100000000000000{i:04d}",
+        "name": f"Server {i:02d}",
+        "member_count": 100 + i,
+        "system_channel_id": None,
+    }
+    for i in range(1, 61)
+]
 
 
 def _chan(cid, name, type_=0, parent=None, readable=True, can_send=True):
-    return {"id": cid, "name": name, "type": type_, "parent_id": parent,
-            "readable": readable, "can_send": can_send}
+    return {
+        "id": cid,
+        "name": name,
+        "type": type_,
+        "parent_id": parent,
+        "readable": readable,
+        "can_send": can_send,
+    }
 
 
 CHANNELS = {
-    G1: [_chan(CAT, "Staff", 4),
-         _chan(GENERAL, "general", 0, CAT),
-         _chan(MUSECHAT, "muse-chat"),
-         _chan(WELCOME, "welcome"),
-         _chan(LOBBY, "lobby", can_send=False),
-         _chan(HIDDEN, "hidden", readable=False, can_send=None)]
-    + [_chan(f"7100000000000000{i:04d}", f"room-{i:03d}")
-       for i in range(1, 75)],
+    G1: [
+        _chan(CAT, "Staff", 4),
+        _chan(GENERAL, "general", 0, CAT),
+        _chan(MUSECHAT, "muse-chat"),
+        _chan(WELCOME, "welcome"),
+        _chan(LOBBY, "lobby", can_send=False),
+        _chan(HIDDEN, "hidden", readable=False, can_send=None),
+    ]
+    + [_chan(f"7100000000000000{i:04d}", f"room-{i:03d}") for i in range(1, 75)],
     G2: [_chan(HOMEWORK, "homework")],
     G3: [_chan(ART, "art")],
 }
@@ -105,9 +127,11 @@ servers:
 """
 
 
-HOSTILE_MD = ("**b** __u__ @everyone @here <@&55500000000000000001> "
-              "[x](https://evil.example) ||s|| `c` # h https://e.x/a "
-              "\u202e ")
+HOSTILE_MD = (
+    "**b** __u__ @everyone @here <@&55500000000000000001> "
+    "[x](https://evil.example) ||s|| `c` # h https://e.x/a "
+    "\u202e "
+)
 
 
 def go_hostile():
@@ -115,17 +139,23 @@ def go_hostile():
     markdown, links and mentions, 200 servers, 280 channels in Muse
     Lounge, hostile display names. Changes this module's fixtures in
     place: call it only in a process of its own (test_crawl_hostile)."""
+
     def long(base, n=100):
         return ((base + " " + HOSTILE_MD) * 3)[:n]
+
     GUILDS[:] = [dict(g, name=long(g["name"])) for g in GUILDS] + [
-        {"id": f"6200000000000000{i:04d}", "name": long(f"Extra {i}"),
-         "member_count": 10, "system_channel_id": None}
-        for i in range(1, 138)]
+        {
+            "id": f"6200000000000000{i:04d}",
+            "name": long(f"Extra {i}"),
+            "member_count": 10,
+            "system_channel_id": None,
+        }
+        for i in range(1, 138)
+    ]
     for chans in CHANNELS.values():
         for c in chans:
             c["name"] = long(c["name"])
-    CHANNELS[G1] += [_chan(f"7200000000000000{i:04d}", long(f"zz-{i:03d}"))
-                     for i in range(1, 201)]
+    CHANNELS[G1] += [_chan(f"7200000000000000{i:04d}", long(f"zz-{i:03d}")) for i in range(1, 201)]
     for k in list(NAMES):
         NAMES[k] = ("**" + NAMES[k] + "** @everyone [x](https://e.x)")[:32]
 
@@ -134,25 +164,44 @@ def sf(ts, seq=1):
     return str(((int(ts * 1000) - 1420070400000) << 22) + seq)
 
 
-def _outcome(n, mins, code, status="skipped", channel=MUSECHAT, guild=G1,
-             author=SAM, detail=None, parent=None):
+def _outcome(
+    n,
+    mins,
+    code,
+    status="skipped",
+    channel=MUSECHAT,
+    guild=G1,
+    author=SAM,
+    detail=None,
+    parent=None,
+):
     at = NOW - mins * 60
-    return {"message_id": sf(at, n), "channel_id": channel,
-            "guild_id": guild, "parent_id": parent, "author_id": author,
-            "author": (NAMES.get(author) or "someone").lower()
-            if author else "olduser",
-            "status": status, "code": code, "detail": detail or {},
-            "at": at, "reason": code}
+    return {
+        "message_id": sf(at, n),
+        "channel_id": channel,
+        "guild_id": guild,
+        "parent_id": parent,
+        "author_id": author,
+        "author": (NAMES.get(author) or "someone").lower() if author else "olduser",
+        "status": status,
+        "code": code,
+        "detail": detail or {},
+        "at": at,
+        "reason": code,
+    }
 
 
 OUTCOMES = [
     _outcome(1, 4, "not-allowed", author=SPAM),
-    _outcome(2, 60, "cap", author=ANA,
-             detail={"key": "limits.per_person_per_day",
-                     "counter": f"server:{G1}", "cap": 5}),
+    _outcome(
+        2,
+        60,
+        "cap",
+        author=ANA,
+        detail={"key": "limits.per_person_per_day", "counter": f"server:{G1}", "cap": 5},
+    ),
     _outcome(3, 180, "replies-off", channel=GENERAL, author=KAI),
-    _outcome(4, 200, "bot-exchange", author=OTHERBOT,
-             detail={"limit": 4}),
+    _outcome(4, 200, "bot-exchange", author=OTHERBOT, detail={"limit": 4}),
     _outcome(5, 220, "suspicious-ignored", author=SAM),
     _outcome(6, 240, "quarantined", status="quarantined", author=SAM),
     _outcome(7, 260, "predates-join", author=SAM),
@@ -164,8 +213,7 @@ OUTCOMES = [
     _outcome(13, 380, "other", author=None),
     _outcome(14, 2, "replied", status="replied", author=KAI),
     _outcome(15, 1, "queued", status="queued", author=ANA),
-    _outcome(16, 30, "not-allowed", author=SAM, channel=THREAD,
-             parent=MUSECHAT),
+    _outcome(16, 30, "not-allowed", author=SAM, channel=THREAD, parent=MUSECHAT),
     _outcome(17, 10, "not-allowed", author=KAI, guild=G3, channel=ART),
     # The same cause twice (one fix each would be a duplicate custom_id).
     _outcome(18, 6, "not-allowed", author=SPAM),
@@ -177,12 +225,12 @@ OUTCOMES = [
 def undo_id(ctx, place, admin_gid=None):
     """The Undo custom_id a page renders for place now (with its group),
     or None when there is nothing to undo."""
-    _t, gid = MS.undo_preview(ctx.reload(), place,
-                              include_children=place.kind == "server",
-                              admin_gid=admin_gid)
+    _t, gid = MS.undo_preview(
+        ctx.reload(), place, include_children=place.kind == "server", admin_gid=admin_gid
+    )
     tok = {"defaults": "x", "dms": "d"}.get(place.kind) or (
-        f"s{place.guild_id}" if place.kind == "server"
-        else f"c{place.guild_id}.{place.channel_id}")
+        f"s{place.guild_id}" if place.kind == "server" else f"c{place.guild_id}.{place.channel_id}"
+    )
     return f"{P}un:{tok}:{gid}" if gid else None
 
 
@@ -193,6 +241,7 @@ def install_determinism():
     def gid(prefix="g"):
         counter["n"] += 1
         return f"{prefix}{counter['n']:010x}"
+
     MS._now = lambda: FIXED_AT
     MS.new_group_id = gid
     return counter
@@ -201,15 +250,25 @@ def install_determinism():
 class FakeCtx:
     """What monitor.SettingsCtx gives settings_ui.handle."""
 
-    def __init__(self, text=BASE, owners=(OWNER,), seed=True, guilds=None,
-                 channels=None, outcomes=None, broken_overlay=False):
+    def __init__(
+        self,
+        text=BASE,
+        owners=(OWNER,),
+        seed=True,
+        guilds=None,
+        channels=None,
+        outcomes=None,
+        broken_overlay=False,
+    ):
         d = scratch("muse-ui-")
         self.dir = d
         self.cfg = os.path.join(d, "config.yaml")
         with open(self.cfg, "w") as f:
-            f.write(text.replace(f'owners: ["{OWNER}"]', "owners: ["
-                                 + ", ".join(f'"{o}"' for o in owners)
-                                 + "]"))
+            f.write(
+                text.replace(
+                    f'owners: ["{OWNER}"]', "owners: [" + ", ".join(f'"{o}"' for o in owners) + "]"
+                )
+            )
         self.owners = set(owners)
         self.bot_id = BOT
         self.now = NOW
@@ -236,11 +295,20 @@ class FakeCtx:
     def _seed(self):
         """An owner's Discord change over a config.yaml value, and an
         admin's addition to Never answer."""
-        MS.apply(self.cfg, [MS.Change(MS.Place.server(G1), "who.replies",
-                                      "conversational")], OWNER, role="owner")
-        MS.apply(self.cfg, [MS.Change(MS.Place.server(G1), "who.ignore",
-                                      [BOB, SPAM])], ADMIN, role="admin", admin_gid=G1,
-                 info=self)
+        MS.apply(
+            self.cfg,
+            [MS.Change(MS.Place.server(G1), "who.replies", "conversational")],
+            OWNER,
+            role="owner",
+        )
+        MS.apply(
+            self.cfg,
+            [MS.Change(MS.Place.server(G1), "who.ignore", [BOB, SPAM])],
+            ADMIN,
+            role="admin",
+            admin_gid=G1,
+            info=self,
+        )
 
     def refresh(self):
         self.settings = MS.load(self.cfg)
@@ -279,8 +347,7 @@ class FakeCtx:
 
     def apply(self, changes, by, role, group=None, admin_gid=None):
         self.applied.append((list(changes), by, role, admin_gid))
-        return MS.apply(self.cfg, changes, by, group, role=role,
-                        admin_gid=admin_gid, info=self)
+        return MS.apply(self.cfg, changes, by, group, role=role, admin_gid=admin_gid, info=self)
 
     def undo(self, prefix, by, **kw):
         if kw.get("admin_gid"):
@@ -311,8 +378,7 @@ class FakeCtx:
             elif place.kind == "server":
                 ok = o.get("guild_id") == place.guild_id
             elif place.kind == "channel":
-                ok = (o.get("parent_id") or o.get("channel_id")) \
-                    == place.channel_id
+                ok = (o.get("parent_id") or o.get("channel_id")) == place.channel_id
             else:
                 ok = True
             if ok:
@@ -329,8 +395,7 @@ class FakeCtx:
     def stash_put(self, uid, payload, ttl=900):
         self._tok += 1
         tok = f"t{self._tok:09d}"
-        self.stash[tok] = (str(uid), json.loads(json.dumps(payload)),
-                           self.now + ttl)
+        self.stash[tok] = (str(uid), json.loads(json.dumps(payload)), self.now + ttl)
         return tok
 
     def stash_take(self, uid, tok):
@@ -351,8 +416,7 @@ class FakeCtx:
         return e[0]
 
     def session_put(self, uid, key, payload, ttl=900):
-        self.sessions[(str(uid), str(key))] = (
-            payload, self.now + ttl)
+        self.sessions[(str(uid), str(key))] = (payload, self.now + ttl)
 
     def session_drop(self, uid, key):
         self.sessions.pop((str(uid), str(key)), None)

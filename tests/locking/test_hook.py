@@ -6,6 +6,7 @@ the persona file is passed along (null when missing), and a corrupt
 outbox is tolerated. Runs the hook with bash and jq against stubbed
 hatch hook runtime functions (_lib/hook_runtime.sh).
 MUT_DIR = the package tree under test (default: this checkout)."""
+
 import json
 import os
 import shutil
@@ -13,8 +14,9 @@ import subprocess
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "_lib"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 from common import HOOK_RUNTIME, MUT_DIR, scratch  # noqa: E402
 
 HOOK = os.path.join(MUT_DIR, "hooks", "mention-watch.sh")
@@ -28,9 +30,13 @@ class MentionWatchLeases(unittest.TestCase):
         self.pkg = os.path.join(self.d, "pkg")
         os.makedirs(self.pkg)
         self.state = os.path.join(self.d, "hookstate.json")
-        self.env = dict(os.environ, HATCH_HOOK_RUNTIME=HOOK_RUNTIME,
-                        HOOK_STATE=self.state, MUSE_DISCORD_DIR=self.pkg,
-                        MUSE_DISCORD_CONFIG=self.p("config.yaml"))
+        self.env = dict(
+            os.environ,
+            HATCH_HOOK_RUNTIME=HOOK_RUNTIME,
+            HOOK_STATE=self.state,
+            MUSE_DISCORD_DIR=self.pkg,
+            MUSE_DISCORD_CONFIG=self.p("config.yaml"),
+        )
 
     def p(self, name):
         return os.path.join(self.pkg, name)
@@ -40,8 +46,7 @@ class MentionWatchLeases(unittest.TestCase):
             f.write(obj if isinstance(obj, str) else json.dumps(obj))
 
     def run_hook(self):
-        r = subprocess.run(["bash", HOOK], env=self.env, capture_output=True,
-                           text=True, timeout=30)
+        r = subprocess.run(["bash", HOOK], env=self.env, capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout, r.stderr
 
@@ -63,7 +68,7 @@ class MentionWatchLeases(unittest.TestCase):
             json.dump(st, f)
 
     def test_lease_lifecycle(self):
-        out, _ = self.run_hook()   # no queue file
+        out, _ = self.run_hook()  # no queue file
         self.assertIsNone(self.wake_ids(out), out)
         self.put("reply_queue.json", [])
         out, _ = self.run_hook()
@@ -71,10 +76,18 @@ class MentionWatchLeases(unittest.TestCase):
 
         self.put("config.yaml", 'persona: "mypersona.md"\n')
         self.put("mypersona.md", PERSONA)
-        self.put("reply_queue.json", [
-            {"message_id": "1", "channel_id": "9", "content": "hi"},
-            {"message_id": "2", "channel_id": "9", "burst": True,
-             "burst_fragments": [{"message_id": "3"}]}])
+        self.put(
+            "reply_queue.json",
+            [
+                {"message_id": "1", "channel_id": "9", "content": "hi"},
+                {
+                    "message_id": "2",
+                    "channel_id": "9",
+                    "burst": True,
+                    "burst_fragments": [{"message_id": "3"}],
+                },
+            ],
+        )
         out, _ = self.run_hook()
         self.assertEqual(self.wake_ids(out), ["1", "2"], out)
         self.assertEqual(self.last_payload["persona"], PERSONA)
@@ -85,20 +98,28 @@ class MentionWatchLeases(unittest.TestCase):
         self.assertIsNone(self.wake_ids(out), out)
 
         # A new item wakes alone.
-        self.put("reply_queue.json", [
-            {"message_id": "1", "channel_id": "9"},
-            {"message_id": "2", "channel_id": "9", "burst": True,
-             "burst_fragments": [{"message_id": "3"}]},
-            {"message_id": "4", "channel_id": "9"}])
+        self.put(
+            "reply_queue.json",
+            [
+                {"message_id": "1", "channel_id": "9"},
+                {
+                    "message_id": "2",
+                    "channel_id": "9",
+                    "burst": True,
+                    "burst_fragments": [{"message_id": "3"}],
+                },
+                {"message_id": "4", "channel_id": "9"},
+            ],
+        )
         out, _ = self.run_hook()
         self.assertEqual(self.wake_ids(out), ["4"], out)
 
         # Leases expire; 4 is answered in the outbox and 2 through its
         # fragment in the processing file: only 1 is handed out again.
-        self.put("reply_outbox.json",
-                 [{"item": "4", "channel_id": "9", "text": "hello"}])
-        self.put("reply_outbox.processing.json",
-                 [{"channel_id": "9", "reply_to": "3", "text": "x"}])
+        self.put("reply_outbox.json", [{"item": "4", "channel_id": "9", "text": "hello"}])
+        self.put(
+            "reply_outbox.processing.json", [{"channel_id": "9", "reply_to": "3", "text": "x"}]
+        )
         self.age_leases()
         out, _ = self.run_hook()
         self.assertEqual(self.wake_ids(out), ["1"], out)

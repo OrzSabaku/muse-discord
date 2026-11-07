@@ -23,6 +23,7 @@
 --config PATH picks the config file (default: $MUSE_DISCORD_CONFIG, else
 config.yaml in the package directory).
 """
+
 import argparse
 import json
 import os
@@ -42,8 +43,7 @@ SEND_NOW = os.path.join(PKG, T.SEND_NOW_FILE)
 
 
 def _cfg(args):
-    return args.config or os.environ.get("MUSE_DISCORD_CONFIG") \
-        or os.path.join(PKG, "config.yaml")
+    return args.config or os.environ.get("MUSE_DISCORD_CONFIG") or os.path.join(PKG, "config.yaml")
 
 
 def _settings(args):
@@ -65,30 +65,29 @@ def _why_off(st):
 def cmd_show(args):
     st = _settings(args)
     d = T.load_file(DATA)
-    pending = [p for p in d.get("pending") or [] if isinstance(p, dict)
-               and p.get("day")]
+    pending = [p for p in d.get("pending") or [] if isinstance(p, dict) and p.get("day")]
     why = _why_off(st)
-    install_id = T.read_install_id(ID_FILE, create=False) \
-        or "(made at the first send)"
+    install_id = T.read_install_id(ID_FILE, create=False) or "(made at the first send)"
     if why:
         print(f"Usage stats are {why}: nothing is sent.", file=sys.stderr)
     elif not T.endpoint():
-        print("No endpoint is configured (telemetry.TELEMETRY_URL): "
-              "nothing is sent.", file=sys.stderr)
+        print(
+            "No endpoint is configured (telemetry.TELEMETRY_URL): nothing is sent.", file=sys.stderr
+        )
     if pending and not why:
-        print(f"{len(pending)} closed day(s) waiting; the next send posts "
-              f"each of these:", file=sys.stderr)
+        print(
+            f"{len(pending)} closed day(s) waiting; the next send posts each of these:",
+            file=sys.stderr,
+        )
         out = [T.build_payload(p, install_id) for p in pending]
     else:
-        today = d.get("today") if isinstance(d.get("today"), dict) \
-            else T.new_day(T.utc_day())
+        today = d.get("today") if isinstance(d.get("today"), dict) else T.new_day(T.utc_day())
         rec = T.new_day(today.get("day") or T.utc_day())
         rec.update(today)
         gauges = dict(rec.get("gauges") or {})
         gauges.setdefault("version", T.installed_version(PKG))
         rec["gauges"] = gauges
-        print(f"Today ({rec['day']}) so far; sent only after the day "
-              f"closes:", file=sys.stderr)
+        print(f"Today ({rec['day']}) so far; sent only after the day closes:", file=sys.stderr)
         out = [T.build_payload(rec, install_id)]
     print(json.dumps(out, indent=2, sort_keys=False))
     return 0
@@ -105,33 +104,38 @@ def cmd_status(args):
         retry = d.get("retry_after")
         if last.get("ok"):
             then = ""
-        elif isinstance(retry, (int, float)) and abs(retry) < 1e11 \
-                and d.get("last_attempt") == T.utc_day():
+        elif (
+            isinstance(retry, (int, float))
+            and abs(retry) < 1e11
+            and d.get("last_attempt") == T.utc_day()
+        ):
             at = datetime.fromtimestamp(retry, timezone.utc)
             then = f"; the rest is retried after {at:%H:%M} UTC"
         else:
             then = "; the rest is retried the next day"
-        print(f"Last send:   {last.get('day')}: {last.get('sent', 0)} "
-              f"day(s) sent" + (f", {last['refused']} refused"
-                                if last.get("refused") else "") + then)
+        print(
+            f"Last send:   {last.get('day')}: {last.get('sent', 0)} "
+            f"day(s) sent" + (f", {last['refused']} refused" if last.get("refused") else "") + then
+        )
         if last.get("error"):
             print(f"Failed with: {last['error']}")
     else:
         print("Last send:   never")
-    pending = [p.get("day") for p in d.get("pending") or []
-               if isinstance(p, dict)]
-    print(f"Waiting:     {len(pending)} day(s)"
-          + (f" ({', '.join(pending)})" if pending else ""))
+    pending = [p.get("day") for p in d.get("pending") or [] if isinstance(p, dict)]
+    print(f"Waiting:     {len(pending)} day(s)" + (f" ({', '.join(pending)})" if pending else ""))
     after = d.get("send_after")
-    if pending and not why and T.endpoint() \
-            and isinstance(after, (int, float)) \
-            and d.get("last_attempt") != T.utc_day():
+    if (
+        pending
+        and not why
+        and T.endpoint()
+        and isinstance(after, (int, float))
+        and d.get("last_attempt") != T.utc_day()
+    ):
         at = datetime.fromtimestamp(after, timezone.utc)
         print(f"Next send:   after {at:%Y-%m-%d %H:%M} UTC")
     print(f"Install id:  {T.read_install_id(ID_FILE, create=False) or '(none yet)'}")
     if not os.path.exists(DATA):
-        print("(No counts yet: the monitor writes telemetry.json once it "
-              "runs.)")
+        print("(No counts yet: the monitor writes telemetry.json once it runs.)")
     return 0
 
 
@@ -145,24 +149,25 @@ def cmd_switch(args, value):
         if all(r.noop for r in rows):
             print(f"Usage stats are already {value}.")
         else:
-            MS.apply(cfg, changes, args.by,
-                     group=f"cli-{secrets.token_hex(4)}", role="owner")
-            print(f"Usage stats are now {value}"
-                  + (" (days it was off are never sent)." if value == "off"
-                     else "."))
+            MS.apply(cfg, changes, args.by, group=f"cli-{secrets.token_hex(4)}", role="owner")
+            print(
+                f"Usage stats are now {value}"
+                + (" (days it was off are never sent)." if value == "off" else ".")
+            )
     except MS.SettingsError as e:
         print(f"settings: {e}", file=sys.stderr)
         return 1
     if value == "on" and T.env_off():
-        print(f"Note: {T.ENV_SWITCH}={os.environ.get(T.ENV_SWITCH)} in this "
-              f"environment still turns them off where it is set.")
+        print(
+            f"Note: {T.ENV_SWITCH}={os.environ.get(T.ENV_SWITCH)} in this "
+            f"environment still turns them off where it is set."
+        )
     return 0
 
 
 def cmd_send(args):
     why = _why_off(_settings(args))
-    pending = [p for p in T.load_file(DATA).get("pending") or []
-               if isinstance(p, dict)]
+    pending = [p for p in T.load_file(DATA).get("pending") or [] if isinstance(p, dict)]
     if why:
         print(f"Usage stats are {why}: nothing is sent.")
         return 1
@@ -171,16 +176,17 @@ def cmd_send(args):
         return 1
     version = T.installed_version(PKG)
     if not T.is_release(version):
-        print(f"This copy ({version or 'unknown version'}) is not a "
-              f"release: only releases send.")
+        print(f"This copy ({version or 'unknown version'}) is not a release: only releases send.")
         return 1
     if not pending:
         print("Nothing is waiting to be sent.")
         return 0
     with open(SEND_NOW, "w"):
         pass
-    print(f"Asked the monitor to send {len(pending)} waiting day(s) now; "
-          f"check `bin/telemetry.py status` in a minute.")
+    print(
+        f"Asked the monitor to send {len(pending)} waiting day(s) now; "
+        f"check `bin/telemetry.py status` in a minute."
+    )
     return 0
 
 
@@ -195,13 +201,11 @@ def main(argv=None):
         prog="bin/telemetry.py",
         description="muse-discord anonymous usage stats",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__.split("\n\n", 1)[1])
+        epilog=__doc__.split("\n\n", 1)[1],
+    )
     ap.add_argument("--config")
-    ap.add_argument("--by", default="bin/telemetry.py",
-                    help="who asked, for off/on (a name)")
-    ap.add_argument("command",
-                    choices=("show", "status", "send", "off", "on",
-                             "reset-id"))
+    ap.add_argument("--by", default="bin/telemetry.py", help="who asked, for off/on (a name)")
+    ap.add_argument("command", choices=("show", "status", "send", "off", "on", "reset-id"))
     args = ap.parse_args(argv)
     if args.command == "show":
         return cmd_show(args)

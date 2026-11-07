@@ -37,6 +37,7 @@ MUSE_DISCORD_CONFIG env var), plus config.discord.yaml (changes made
 from Discord), both read through muse_settings.py. See
 config.example.yaml for the schema.
 """
+
 import contextlib
 import fcntl
 import hashlib
@@ -64,15 +65,15 @@ try:
     import yaml  # noqa: F401 (muse_settings needs it)
     from pydantic import TypeAdapter  # noqa: F401 (Pydantic v2 required)
 except ImportError:
-    print("PyYAML and Pydantic v2 are required: run uv sync",
-          file=sys.stderr)
+    print("PyYAML and Pydantic v2 are required: run uv sync", file=sys.stderr)
     sys.exit(1)
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(CODE_DIR))
-from muse_discord.paths import project_root
-from muse_discord import reply_protocol
-from muse_discord.reply_protocol import is_snowflake as _is_snowflake
+from muse_discord.paths import project_root  # noqa: E402 (local import path bootstrap)
+from muse_discord import reply_protocol  # noqa: E402 (local import path bootstrap)
+from muse_discord.reply_protocol import is_snowflake as _is_snowflake  # noqa: E402 (local import path bootstrap)
+
 BASE_DIR = str(project_root(__file__))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 QUEUE_FILE = os.path.join(BASE_DIR, "reply_queue.json")
@@ -89,18 +90,17 @@ HEARTBEAT_FILE = os.path.join(BASE_DIR, "monitor.heartbeat")
 LOCK_FILE = os.path.join(BASE_DIR, "reply.lock")
 # Outbox items the monitor has taken and is sending. If it dies mid-send
 # they are merged back on the next pass (part nonces keep resends safe).
-OUTBOX_PROCESSING_FILE = os.path.join(BASE_DIR,
-                                      "reply_outbox.processing.json")
+OUTBOX_PROCESSING_FILE = os.path.join(BASE_DIR, "reply_outbox.processing.json")
 # Malformed outbox items, set aside for the owner's review (last 100).
 OUTBOX_REJECTED_FILE = os.path.join(BASE_DIR, "reply_outbox.rejected.json")
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
 GENERATED_DIR = os.path.join(BASE_DIR, "generated")
 
+
 def _config_path():
     if len(sys.argv) > 2 and sys.argv[1] == "--config":
         return sys.argv[2]
-    return os.environ.get("MUSE_DISCORD_CONFIG") or os.path.join(
-        BASE_DIR, "config.yaml")
+    return os.environ.get("MUSE_DISCORD_CONFIG") or os.path.join(BASE_DIR, "config.yaml")
 
 
 def _import_local(name):
@@ -111,8 +111,7 @@ def _import_local(name):
         return importlib.import_module("muse_discord." + name)
     qualified = "muse_discord." + name
     cached = sys.modules.get(qualified)
-    if cached is not None and os.path.abspath(
-            getattr(cached, "__file__", "") or "") == here:
+    if cached is not None and os.path.abspath(getattr(cached, "__file__", "") or "") == here:
         return cached
     spec = importlib.util.spec_from_file_location(qualified, here)
     mod = importlib.util.module_from_spec(spec)
@@ -134,12 +133,11 @@ MS = _import_local("muse_settings")
 try:
     _SETTINGS = MS.Watcher(_config_path())
 except MS.SettingsError as e:
-    print(f"CONFIG ERROR: config.yaml is invalid; not starting.\n{e}",
-          file=sys.stderr, flush=True)
+    print(f"CONFIG ERROR: config.yaml is invalid; not starting.\n{e}", file=sys.stderr, flush=True)
     sys.exit(1)
 _S0 = _SETTINGS.current
-W = _import_local("muse_watches")      # reminders and watches
-SCAN = _import_local("secret_scan")    # the outgoing secret filter
+W = _import_local("muse_watches")  # reminders and watches
+SCAN = _import_local("secret_scan")  # the outgoing secret filter
 
 # Anonymous daily usage counts (telemetry.py). Off with
 # telemetry.usage_stats: off or MUSE_DISCORD_TELEMETRY=off.
@@ -158,15 +156,17 @@ def _import_telemetry():
     telemetry.py cannot be loaded (it never stops the bot)."""
     try:
         spec = importlib.util.spec_from_file_location(
-            "muse_telemetry", os.path.join(CODE_DIR, "telemetry.py"))
+            "muse_telemetry", os.path.join(CODE_DIR, "telemetry.py")
+        )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        return mod.Recorder(lambda: (TELEMETRY_FILE, TELEMETRY_ID_FILE,
-                                     TELEMETRY_WAKES_FILE),
-                            ms=MS, pkg_dir=BASE_DIR)
+        return mod.Recorder(
+            lambda: (TELEMETRY_FILE, TELEMETRY_ID_FILE, TELEMETRY_WAKES_FILE),
+            ms=MS,
+            pkg_dir=BASE_DIR,
+        )
     except Exception as e:
-        print(f"Telemetry not loaded ({type(e).__name__}); usage counts "
-              f"are off.", flush=True)
+        print(f"Telemetry not loaded ({type(e).__name__}); usage counts are off.", flush=True)
         return _NoTelemetry()
 
 
@@ -177,7 +177,7 @@ TM = _import_telemetry()
 # "Unprompted messages"). Off by default; when proactive.py cannot be
 # loaded the bot only replies.
 PROACTIVE_FILE = os.path.join(BASE_DIR, "proactive.json")
-PRO_KIND = "proactive"   # a heartbeat slot's queue item kind
+PRO_KIND = "proactive"  # a heartbeat slot's queue item kind
 # The live heartbeat slot's nonce, for the wake hook only (mode 600).
 PROACTIVE_NONCE_FILE = os.path.join(BASE_DIR, "proactive_nonce.json")
 
@@ -190,13 +190,13 @@ class _NoProactive:
 def _import_proactive():
     try:
         spec = importlib.util.spec_from_file_location(
-            "muse_proactive", os.path.join(CODE_DIR, "proactive.py"))
+            "muse_proactive", os.path.join(CODE_DIR, "proactive.py")
+        )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         return mod.Proactive(globals())
     except Exception as e:
-        print(f"proactive.py not loaded ({type(e).__name__}); the bot only "
-              f"replies.", flush=True)
+        print(f"proactive.py not loaded ({type(e).__name__}); the bot only replies.", flush=True)
         return _NoProactive()
 
 
@@ -227,13 +227,11 @@ def settings():
         if changed:
             _SETTINGS_PENDING.append(prev)
         pending = None
-        if _SETTINGS_PENDING \
-                and threading.current_thread() is threading.main_thread():
+        if _SETTINGS_PENDING and threading.current_thread() is threading.main_thread():
             pending = _SETTINGS_PENDING[0]
             del _SETTINGS_PENDING[:]
     if err:
-        print(f"Config re-read failed; keeping the previous settings:\n"
-              f"{err}", flush=True)
+        print(f"Config re-read failed; keeping the previous settings:\n{err}", flush=True)
     if pending is not None:
         _on_settings_changed(pending, cur)
     return cur
@@ -241,16 +239,13 @@ def settings():
 
 def _on_settings_changed(prev, cur):
     global OWNER_USER_IDS
-    print("Settings reloaded (config.yaml or config.discord.yaml "
-          "changed).", flush=True)
+    print("Settings reloaded (config.yaml or config.discord.yaml changed).", flush=True)
     if sorted(cur.owners) != sorted(prev.owners):
         OWNER_USER_IDS = set(cur.owners)
-        print(f"Owners are now: {', '.join(sorted(OWNER_USER_IDS)) or 'none'}",
-              flush=True)
+        print(f"Owners are now: {', '.join(sorted(OWNER_USER_IDS)) or 'none'}", flush=True)
 
 
-def _cfg_num(section, key, default, cast, name, minimum=None,
-             maximum=None):
+def _cfg_num(section, key, default, cast, name, minimum=None, maximum=None):
     """Resolve one numeric setting. Only a missing or null value means
     "use the default": an explicit 0 is honored wherever 0 is a real
     setting. Where a value would busy-loop, divide by zero, or blank
@@ -261,17 +256,23 @@ def _cfg_num(section, key, default, cast, name, minimum=None,
         return cast(default)
     try:
         val = cast(raw)
-    except (TypeError, ValueError):
-        print(f"WARNING: config {name}={raw!r} is not a number; using "
-              f"the default {default}.", flush=True)
+    except TypeError, ValueError:
+        print(
+            f"WARNING: config {name}={raw!r} is not a number; using the default {default}.",
+            flush=True,
+        )
         return cast(default)
     if minimum is not None and val < minimum:
-        print(f"WARNING: config {name}={raw!r} is below the minimum "
-              f"{minimum}; using {minimum}.", flush=True)
+        print(
+            f"WARNING: config {name}={raw!r} is below the minimum {minimum}; using {minimum}.",
+            flush=True,
+        )
         return cast(minimum)
     if maximum is not None and val > maximum:
-        print(f"WARNING: config {name}={raw!r} is above the maximum "
-              f"{maximum}; using {maximum}.", flush=True)
+        print(
+            f"WARNING: config {name}={raw!r} is above the maximum {maximum}; using {maximum}.",
+            flush=True,
+        )
         return cast(maximum)
     return val
 
@@ -285,12 +286,13 @@ FOLLOW_UP_WINDOW_SECS = 120
 # Test-only (the e2e harness's driver bots stand in for people): these
 # author ids count as human everywhere the monitor checks author.bot
 # (see is_bot_author). Absent or empty = no effect.
-TREAT_AS_HUMAN = {str(u) for u in
-                  (CFG.get("testing") or {}).get("treat_as_human") or []}
+TREAT_AS_HUMAN = {str(u) for u in (CFG.get("testing") or {}).get("treat_as_human") or []}
 if TREAT_AS_HUMAN:
-    print(f"WARNING: testing.treat_as_human is set: {len(TREAT_AS_HUMAN)} "
-          f"bot account(s) are treated as humans. Test servers only.",
-          flush=True)
+    print(
+        f"WARNING: testing.treat_as_human is set: {len(TREAT_AS_HUMAN)} "
+        f"bot account(s) are treated as humans. Test servers only.",
+        flush=True,
+    )
 
 
 def _who(msg):
@@ -302,53 +304,69 @@ def is_bot_author(author):
     """True when a message author is a bot (Discord's author.bot), unless
     testing.treat_as_human lists its id."""
     author = author or {}
-    return bool(author.get("bot")) \
-        and str(author.get("id")) not in TREAT_AS_HUMAN
+    return bool(author.get("bot")) and str(author.get("id")) not in TREAT_AS_HUMAN
 
 
 # 0 = no coalescing: every trigger is queued on the next tick.
 _ENGINE = _S0.engine or {}
 _ENG = "engine"
-COALESCE_SECS = _cfg_num(_ENGINE, "coalesce_seconds", 5, float,
-                         f"{_ENG}.coalesce_seconds", minimum=0)
+COALESCE_SECS = _cfg_num(
+    _ENGINE, "coalesce_seconds", 5, float, f"{_ENG}.coalesce_seconds", minimum=0
+)
 # Bots running this package send long replies as 2-4 parts with a 2-4s
 # typing beat between them, so a bot's burst gets a longer window to
 # arrive whole before its trigger is queued.
 BOT_COALESCE_SECS = max(COALESCE_SECS, 15.0)
 # Every part is cut to this length too, so it may not exceed Discord's
 # 2000-character message limit; 0 would blank every reply.
-MAX_REPLY_CHARS = _cfg_num(_ENGINE, "max_reply_chars", 1800, int,
-                           f"{_ENG}.max_reply_chars", minimum=1,
-                           maximum=2000)
+MAX_REPLY_CHARS = _cfg_num(
+    _ENGINE, "max_reply_chars", 1800, int, f"{_ENG}.max_reply_chars", minimum=1, maximum=2000
+)
 # Each full poll is a request per channel: 0 would busy-loop the main
 # loop and hammer Discord's per-IP rate limit.
-POLL_INTERVAL = _cfg_num(_ENGINE, "rest_poll_seconds", 30, int,
-                         "engine.rest_poll_seconds", minimum=10)
+POLL_INTERVAL = _cfg_num(
+    _ENGINE, "rest_poll_seconds", 30, int, "engine.rest_poll_seconds", minimum=10
+)
 _SWEEP_CFG = _ENGINE.get("sweep") or {}
 # Used as a modulus: 0 would abort every poll cycle midway.
-SWEEP_EVERY_CYCLES = _cfg_num(_SWEEP_CFG, "every_cycles", 6, int,
-                              "engine.sweep.every_cycles", minimum=1)
-SWEEP_GRACE_SECS = _cfg_num(_SWEEP_CFG, "grace_seconds", 240, float,
-                            "engine.sweep.grace_seconds", minimum=0)
+SWEEP_EVERY_CYCLES = _cfg_num(
+    _SWEEP_CFG, "every_cycles", 6, int, "engine.sweep.every_cycles", minimum=1
+)
+SWEEP_GRACE_SECS = _cfg_num(
+    _SWEEP_CFG, "grace_seconds", 240, float, "engine.sweep.grace_seconds", minimum=0
+)
 # 0 = no mention is young enough to sweep: recovery is off, by choice.
-SWEEP_MAX_AGE_SECS = _cfg_num(_SWEEP_CFG, "max_age_hours", 6, float,
-                              "engine.sweep.max_age_hours",
-                              minimum=0) * 3600
+SWEEP_MAX_AGE_SECS = (
+    _cfg_num(_SWEEP_CFG, "max_age_hours", 6, float, "engine.sweep.max_age_hours", minimum=0) * 3600
+)
 # 0 = never requeue; a lost mention is ledgered as skipped instead.
-SWEEP_MAX_RECOVERIES = _cfg_num(_SWEEP_CFG, "max_recoveries", 2, int,
-                                "engine.sweep.max_recoveries", minimum=0)
+SWEEP_MAX_RECOVERIES = _cfg_num(
+    _SWEEP_CFG, "max_recoveries", 2, int, "engine.sweep.max_recoveries", minimum=0
+)
 _BACKOFF_CFG = _ENGINE.get("backoff") or {}
 # A zero backoff would answer a 429 with more requests at once.
-BACKOFF_INITIAL_SECS = _cfg_num(_BACKOFF_CFG, "initial_seconds", 60, float,
-                                "engine.backoff.initial_seconds",
-                                minimum=1)
-BACKOFF_MAX_SECS = _cfg_num(_BACKOFF_CFG, "max_seconds", 900, float,
-                            "engine.backoff.max_seconds", minimum=1)
+BACKOFF_INITIAL_SECS = _cfg_num(
+    _BACKOFF_CFG, "initial_seconds", 60, float, "engine.backoff.initial_seconds", minimum=1
+)
+BACKOFF_MAX_SECS = _cfg_num(
+    _BACKOFF_CFG, "max_seconds", 900, float, "engine.backoff.max_seconds", minimum=1
+)
 # Discovery probes every channel; 0 would re-run it on every poll.
 CHANNEL_REFRESH_CYCLES = max(
-    1, round(_cfg_num(_ENGINE, "discovery_refresh_minutes", 30, float,
-                      "engine.discovery_refresh_minutes", minimum=1) * 60
-             / POLL_INTERVAL))
+    1,
+    round(
+        _cfg_num(
+            _ENGINE,
+            "discovery_refresh_minutes",
+            30,
+            float,
+            "engine.discovery_refresh_minutes",
+            minimum=1,
+        )
+        * 60
+        / POLL_INTERVAL
+    ),
+)
 
 
 def _load_token():
@@ -373,10 +391,12 @@ def _load_token():
 
 TOKEN = _load_token()
 if not TOKEN:
-    print("No bot token: pass one as argv[1], or point token_from (old "
-          "layout: bot.token_env / bot.token_file) at an environment "
-          "variable or a file holding it (mode 600).",
-          file=sys.stderr)
+    print(
+        "No bot token: pass one as argv[1], or point token_from (old "
+        "layout: bot.token_env / bot.token_file) at an environment "
+        "variable or a file holding it (mode 600).",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 API = "https://discord.com/api/v10"
@@ -399,7 +419,13 @@ MEDIA_TTL_SECS = 3600  # downloaded media older than this is swept each poll
 # as a subdomain ("media.tenor.com"), never as a lookalike
 # ("evil-tenor.com"); see embed_host_allowed and _fetch_addrs, which
 # _fetch_complete applies to every URL and every redirect hop.
-EMBED_MEDIA_HOST_SUFFIXES = ("discordapp.com", "discordapp.net", "tenor.com", "giphy" + ".com", "klipy.com")
+EMBED_MEDIA_HOST_SUFFIXES = (
+    "discordapp.com",
+    "discordapp.net",
+    "tenor.com",
+    "giphy" + ".com",
+    "klipy.com",
+)
 FETCH_MAX_REDIRECTS = 3
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".gif", ".webp")
 CTYPE_EXT = {"image/gif": ".gif", "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
@@ -414,8 +440,12 @@ FFMPEG_TIMEOUT = 60
 # extension, so a crafted HLS or concat playlist saved as a "video" would
 # make them read other local files or fetch URLs. Only the expected
 # container demuxers may run, and only on a plain local file.
-FFMPEG_INPUT_GUARD = ["-format_whitelist", "mov,mp4,matroska,webm,avi",
-                      "-protocol_whitelist", "file"]
+FFMPEG_INPUT_GUARD = [
+    "-format_whitelist",
+    "mov,mp4,matroska,webm,avi",
+    "-protocol_whitelist",
+    "file",
+]
 
 # Documents: download text-ish attachments and extract their text so the
 # worker can read them. The extracted text is inlined on the queue item
@@ -424,10 +454,37 @@ FFMPEG_INPUT_GUARD = ["-format_whitelist", "mov,mp4,matroska,webm,avi",
 MAX_DOC_BYTES = 4 * 1024 * 1024
 MAX_DOCS_PER_MESSAGE = 3
 DOC_TEXT_CHARS = 6000  # max extracted chars per document
-TEXT_EXTS = (".txt", ".md", ".markdown", ".csv", ".json", ".jsonl", ".log",
-             ".py", ".js", ".ts", ".tsx", ".jsx", ".rs", ".go", ".java",
-             ".c", ".cpp", ".h", ".hpp", ".cs", ".rb", ".sh", ".yaml",
-             ".yml", ".toml", ".xml", ".html", ".css", ".sql")
+TEXT_EXTS = (
+    ".txt",
+    ".md",
+    ".markdown",
+    ".csv",
+    ".json",
+    ".jsonl",
+    ".log",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".rs",
+    ".go",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".cs",
+    ".rb",
+    ".sh",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".xml",
+    ".html",
+    ".css",
+    ".sql",
+)
 PDF_EXTS = (".pdf",)
 DOCX_EXTS = (".docx",)
 PDFTOTEXT_TIMEOUT = 30
@@ -462,10 +519,12 @@ HISTORY_ATTACHED = 8
 CHANNELS = {}
 GUILDS = {}
 
+
 # Channel display for logs, history context, and queue items. Guild-qualified
 # so the worker can tell one server's #general from another's.
 def channel_display(info):
     return "%s #%s" % (info.get("guild_name", "?"), info.get("name", "?"))
+
 
 # Channel types the bot can meaningfully read: 0 = text, 5 = announcement.
 READABLE_CHANNEL_TYPES = (0, 5)
@@ -485,8 +544,7 @@ def get_guilds():
     None when the list could not be fetched: a failure is not "in no
     guilds", and must not unmonitor everything."""
     try:
-        out = [(g["id"], g.get("name") or g["id"])
-               for g in api_get("/users/@me/guilds")]
+        out = [(g["id"], g.get("name") or g["id"]) for g in api_get("/users/@me/guilds")]
     except Exception as e:
         print(f"Guild discovery failed: {e}", flush=True)
         return None
@@ -521,24 +579,28 @@ def _guild_base_perms(gid, gobj):
     for role in roles:
         try:
             role_values[str(role["id"])] = int(role.get("permissions") or 0)
-        except (KeyError, TypeError, ValueError):
+        except KeyError, TypeError, ValueError:
             continue
     member_roles.intersection_update(role_values)
     try:
         from muse_discord.discord_permissions import guild_permissions
+
         perms = guild_permissions(gid, role_values, gobj.get("owner_id"), BOT_ID, member_roles)
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return None, [], joined_at
     return perms, member_roles, joined_at
 
 
 def _channel_perms(gid, base_perms, overwrites, member_role_ids, member_id=None):
     from muse_discord.discord_permissions import channel_permissions
+
     roles = dict.fromkeys(map(str, member_role_ids), 0)
     roles[str(gid)] = base_perms
     try:
-        return channel_permissions(gid, roles, None, member_id or BOT_ID, member_role_ids, overwrites)
-    except (KeyError, TypeError, ValueError):
+        return channel_permissions(
+            gid, roles, None, member_id or BOT_ID, member_role_ids, overwrites
+        )
+    except KeyError, TypeError, ValueError:
         return None
 
 
@@ -606,8 +668,7 @@ def discover_channels_iter(previous=None):
             channels = api_get(f"/guilds/{gid}/channels")
         except Exception as e:
             print(f"Channel list failed for {gname}: {e}", flush=True)
-            found.update({c: i for c, i in previous.items()
-                          if i.get("guild_id") == gid})
+            found.update({c: i for c, i in previous.items() if i.get("guild_id") == gid})
             continue  # (its _GUILD_CHANNELS entry stays as it was)
         finally:
             yield
@@ -615,17 +676,22 @@ def discover_channels_iter(previous=None):
         # /settings channel and category pickers (threads are not
         # listed: they follow their parent).
         _GUILD_CHANNELS[gid] = [
-            {"id": ch["id"], "name": ch.get("name") or ch["id"],
-             "type": ch.get("type"), "parent_id": ch.get("parent_id"),
-             "position": ch.get("position")}
-            for ch in channels if isinstance(ch, dict) and ch.get("id")]
+            {
+                "id": ch["id"],
+                "name": ch.get("name") or ch["id"],
+                "type": ch.get("type"),
+                "parent_id": ch.get("parent_id"),
+                "position": ch.get("position"),
+            }
+            for ch in channels
+            if isinstance(ch, dict) and ch.get("id")
+        ]
         names_by_id = {ch["id"]: ch.get("name", "?") for ch in channels}
         for ch in channels:
             if ch.get("parent_id"):
                 CHANNEL_CATEGORY[ch["id"]] = ch["parent_id"]
             # Who else can read it (watches: the requester's view).
-            _CHANNEL_OVERWRITES[ch["id"]] = \
-                ch.get("permission_overwrites") or []
+            _CHANNEL_OVERWRITES[ch["id"]] = ch.get("permission_overwrites") or []
         perms_by_id = {}
         for ch in channels:
             ctype = ch.get("type")
@@ -634,9 +700,9 @@ def discover_channels_iter(previous=None):
             cid = ch["id"]
             perms = None
             if base_perms is not None:
-                perms = _channel_perms(gid, base_perms,
-                                       ch.get("permission_overwrites"),
-                                       member_roles)
+                perms = _channel_perms(
+                    gid, base_perms, ch.get("permission_overwrites"), member_roles
+                )
                 perms_by_id[cid] = perms
             if ctype not in READABLE_CHANNEL_TYPES:
                 continue  # forum/media: only their threads are read
@@ -655,13 +721,22 @@ def discover_channels_iter(previous=None):
             can_send = None
             if perms is not None:
                 can_send = bool(perms & PERM_SEND_MESSAGES)
-            found[cid] = {"name": ch["name"], "guild_id": gid,
-                          "guild_name": gname, "can_send": can_send}
+            found[cid] = {
+                "name": ch["name"],
+                "guild_id": gid,
+                "guild_name": gname,
+                "can_send": can_send,
+            }
         # Threads (forum posts, text-channel threads) never appear in the
         # guild channel list, so they need their own discovery or the bot
         # is blind inside every post.
-        found.update((yield from discover_threads_iter(
-            gid, gname, names_by_id, found, perms_by_id, previous)))
+        found.update(
+            (
+                yield from discover_threads_iter(
+                    gid, gname, names_by_id, found, perms_by_id, previous
+                )
+            )
+        )
     return found, guilds_out
 
 
@@ -675,13 +750,12 @@ def discover_channels_iter(previous=None):
 # reply. Older threads seen for the first time keep the usual seeding:
 # their history is history.
 MONITOR_STARTED = time.time()
-NEW_THREAD_SLACK_SECS = 60   # clock skew between us and Discord
-_THREADS_LISTED = {}         # guild id -> when its threads were last listed
-_NEW_THREADS = set()         # thread ids to seed at their start
+NEW_THREAD_SLACK_SECS = 60  # clock skew between us and Discord
+_THREADS_LISTED = {}  # guild id -> when its threads were last listed
+_NEW_THREADS = set()  # thread ids to seed at their start
 
 
-def discover_threads_iter(gid, gname, names_by_id, known_ids,
-                          perms_by_id=None, previous=None):
+def discover_threads_iter(gid, gname, names_by_id, known_ids, perms_by_id=None, previous=None):
     """{thread_id: info} for the active threads in one guild that the bot
     can read and whose ids aren't in known_ids yet, as a generator that
     yields after each request (see discover_channels_iter).
@@ -702,13 +776,14 @@ def discover_threads_iter(gid, gname, names_by_id, known_ids,
         resp = api_get(f"/guilds/{gid}/threads/active")
     except Exception as e:
         print(f"Thread list failed for {gname}: {e}", flush=True)
-        return {t: i for t, i in previous.items()
-                if i.get("guild_id") == gid and i.get("thread")
-                and t not in known_ids}
+        return {
+            t: i
+            for t, i in previous.items()
+            if i.get("guild_id") == gid and i.get("thread") and t not in known_ids
+        }
     finally:
         yield
-    since = _THREADS_LISTED.get(gid, MONITOR_STARTED) \
-        - NEW_THREAD_SLACK_SECS
+    since = _THREADS_LISTED.get(gid, MONITOR_STARTED) - NEW_THREAD_SLACK_SECS
     _THREADS_LISTED[gid] = listed_at
     for t in resp.get("threads", []):
         tid = t["id"]
@@ -730,14 +805,17 @@ def discover_threads_iter(gid, gname, names_by_id, known_ids,
         if perms_by_id is not None:
             parent_perms = perms_by_id.get(t.get("parent_id"))
             if parent_perms is not None:
-                can_send = bool(parent_perms
-                                & (PERM_SEND_IN_THREADS | PERM_SEND_MESSAGES))
+                can_send = bool(parent_perms & (PERM_SEND_IN_THREADS | PERM_SEND_MESSAGES))
         parent = names_by_id.get(t.get("parent_id"), "thread")
-        out[tid] = {"name": f"{parent} > {t.get('name', 'thread')}",
-                    "guild_id": gid, "guild_name": gname,
-                    "can_send": can_send,
-                    "thread": True, "parent_id": t.get("parent_id"),
-                    "private": t.get("type") == 12}
+        out[tid] = {
+            "name": f"{parent} > {t.get('name', 'thread')}",
+            "guild_id": gid,
+            "guild_name": gname,
+            "can_send": can_send,
+            "thread": True,
+            "parent_id": t.get("parent_id"),
+            "private": t.get("type") == 12,
+        }
         if tid not in previous and _snowflake_ts(tid) >= since:
             _NEW_THREADS.add(tid)
     return out
@@ -775,11 +853,11 @@ def seed_channel_seen(cid, cname, state):
     if msgs:
         newest = max(msgs, key=lambda m: int(m["id"]))
         state["last_seen"][cid] = newest["id"]
-        print(f"Tracking new channel #{cname} from message "
-              f"{newest['id']}.", flush=True)
+        print(f"Tracking new channel #{cname} from message {newest['id']}.", flush=True)
     else:
         state["last_seen"][cid] = now_snowflake()
         print(f"Tracking new channel #{cname} from now.", flush=True)
+
 
 # Prompt-injection / exfiltration patterns. A match means the message is
 # quarantined for the owner's review instead of queued for auto-reply.
@@ -812,8 +890,10 @@ INJECTION_PATTERNS = [
 
 def discord_request(method, path, data=None, *, files=(), timeout=20, anonymous=False):
     from muse_discord.discord_rest import transport
+
     return transport(None if anonymous else TOKEN, API).request(
-        method, path, data, files=files, timeout=timeout)
+        method, path, data, files=files, timeout=timeout
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -839,7 +919,7 @@ def _note_rate_limit(exc):
     if hdrs is not None:
         try:
             delay = float(hdrs.get("Retry-After"))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             delay = None
     if delay is None:
         try:
@@ -847,15 +927,15 @@ def _note_rate_limit(exc):
         except Exception:
             delay = None
     if delay is None:
-        delay = min(BACKOFF_MAX_SECS, BACKOFF_INITIAL_SECS * (2 ** _rl_backoff_step)) \
-            + random.uniform(0, 5)
+        delay = min(
+            BACKOFF_MAX_SECS, BACKOFF_INITIAL_SECS * (2**_rl_backoff_step)
+        ) + random.uniform(0, 5)
         _rl_backoff_step = min(_rl_backoff_step + 1, 5)
     delay = max(1.0, min(float(delay), 3600.0))
     if now + delay > _rl_until:
         _rl_until = now + delay
     if now >= _rl_storm_logged_until:
-        print(f"RATE LIMITED: backing off REST for {delay:.0f}s.",
-              flush=True)
+        print(f"RATE LIMITED: backing off REST for {delay:.0f}s.", flush=True)
         _rl_storm_logged_until = _rl_until
 
 
@@ -898,10 +978,12 @@ _heartbeat_at = 0.0
 
 
 def token_rejected_exit(where):
-    print(f"TOKEN REJECTED: Discord refused the bot token ({where}); it "
-          f"was probably reset in the developer portal. Exiting. Store a "
-          f"fresh token and the watchdog starts the monitor again.",
-          flush=True)
+    print(
+        f"TOKEN REJECTED: Discord refused the bot token ({where}); it "
+        f"was probably reset in the developer portal. Exiting. Store a "
+        f"fresh token and the watchdog starts the monitor again.",
+        flush=True,
+    )
     sys.exit(EXIT_TOKEN_REJECTED)
 
 
@@ -962,7 +1044,7 @@ def _live_nonces():
         body = cache.get("body")
         if isinstance(body, dict):
             out |= {v for v in body.values() if isinstance(v, str) and v}
-    try:   # a live heartbeat slot's nonce (proactive.py)
+    try:  # a live heartbeat slot's nonce (proactive.py)
         out |= {v for v in (PRO.secret_nonces() or ()) if v}
     except Exception:
         pass
@@ -977,6 +1059,7 @@ def _live_nonces():
         elif isinstance(v, list):
             for x in v:
                 walk(x)
+
     for cache in (_OWNER_ITEMS_WRITTEN, _WEB_DUE_WRITTEN):
         walk(cache.get("body"))
     return out
@@ -989,7 +1072,7 @@ def secret_in(text):
 
 def _payload_strings(v, key=None):
     if isinstance(v, str):
-        if key != "nonce":   # Discord's own send nonce, derived
+        if key != "nonce":  # Discord's own send nonce, derived
             yield v
     elif isinstance(v, dict):
         for k, x in v.items():
@@ -1009,8 +1092,7 @@ def guard_outgoing(data, where):
     for text in texts + ["".join(texts)]:
         what = secret_in(text)
         if what:
-            print(f"Blocked a send to {where}: it contained {what}; "
-                  f"nothing was sent.", flush=True)
+            print(f"Blocked a send to {where}: it contained {what}; nothing was sent.", flush=True)
             _secret_alert(where)
             raise SecretBlocked(f"blocked: it contained {what}")
     return data
@@ -1023,9 +1105,11 @@ def _secret_alert(where):
         return
     _SECRET_ALERT.update(day=day, busy=True)
     try:
-        notify_owners("I didn't send a reply because it looked like it "
-                      "held a secret (my bot token or one of my private "
-                      "codes). I tell you about this at most once a day.")
+        notify_owners(
+            "I didn't send a reply because it looked like it "
+            "held a secret (my bot token or one of my private "
+            "codes). I tell you about this at most once a day."
+        )
     finally:
         _SECRET_ALERT["busy"] = False
 
@@ -1055,9 +1139,9 @@ def atomic_write(path, obj, mode=None, text=None):
             mode = os.stat(path).st_mode & 0o777
         except OSError:
             mode = 0o644
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
-                               prefix="." + os.path.basename(path) + ".",
-                               suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(path) or ".", prefix="." + os.path.basename(path) + ".", suffix=".tmp"
+    )
     try:
         with os.fdopen(fd, "w") as f:
             os.fchmod(f.fileno(), mode)
@@ -1094,9 +1178,12 @@ def shared_lock():
                 break
             except OSError:
                 if time.time() >= deadline:
-                    print(f"WARNING: {os.path.basename(LOCK_FILE)} held "
-                          f"for over {LOCK_WAIT_SECS}s; going ahead "
-                          f"without it.", flush=True)
+                    print(
+                        f"WARNING: {os.path.basename(LOCK_FILE)} held "
+                        f"for over {LOCK_WAIT_SECS}s; going ahead "
+                        f"without it.",
+                        flush=True,
+                    )
                     break
                 time.sleep(0.05)
         yield
@@ -1118,7 +1205,7 @@ def _read_json(path, kind=dict):
             data = json.load(f)
     except FileNotFoundError:
         return kind()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     return data if isinstance(data, kind) else None
 
@@ -1136,8 +1223,7 @@ def load_queue():
 def _queue_apply(add=(), drop=None):
     """queue_edit's body, for callers already holding shared_lock."""
     queue = load_queue()
-    kept = [q for q in queue
-            if not (drop and isinstance(q, dict) and drop(q))]
+    kept = [q for q in queue if not (drop and isinstance(q, dict) and drop(q))]
     have = {q.get("message_id") for q in kept if isinstance(q, dict)}
     added = 0
     for item in add:
@@ -1178,8 +1264,9 @@ def load_state():
     state.pop("bot_runs", None)  # leftover from the removed bot turn cap
     state.pop("web_nonces", None)  # leftover: web watches are DM only now
     # Bursts staged by the removed name trigger: not direct address.
-    state["pending"] = {k: v for k, v in state.get("pending", {}).items()
-                        if v.get("kind") != "name_drop"}
+    state["pending"] = {
+        k: v for k, v in state.get("pending", {}).items() if v.get("kind") != "name_drop"
+    }
     # The ownerless-server gate holds from the first message on, even
     # when the boot discovery fails.
     mirror_owner_presence(state)
@@ -1223,25 +1310,30 @@ def quarantine(msg, channel_name, matched_pattern, fragments=()):
         "quarantined_at": datetime.now(timezone.utc).isoformat(),
     }
     if fragments:
-        entry["fragments"] = [{"message_id": f["id"],
-                               "content": f.get("content", "")}
-                              for f in fragments]
+        entry["fragments"] = [
+            {"message_id": f["id"], "content": f.get("content", "")} for f in fragments
+        ]
     q = _read_json(QUARANTINE_FILE, list)
-    if q is None:   # kept for the owner, never silently emptied
+    if q is None:  # kept for the owner, never silently emptied
         with contextlib.suppress(OSError):
             os.replace(QUARANTINE_FILE, QUARANTINE_FILE + ".bad")
-        print("quarantine.json was unreadable; moved to quarantine.json.bad.",
-              flush=True)
+        print("quarantine.json was unreadable; moved to quarantine.json.bad.", flush=True)
         q = []
     q.append(entry)
     atomic_write(QUARANTINE_FILE, q[-100:])  # keep last 100
-    ledger_record_many([msg["id"]] + [f["id"] for f in fragments],
-                       "quarantined", matched_pattern,
-                       channel_id=msg.get("channel_id"),
-                       author=entry["author"],
-                       author_id=(msg.get("author") or {}).get("id"))
-    print(f"Quarantined suspicious message from {entry['author']} in #{channel_name} "
-          f"(matched: {matched_pattern}): {entry['content'][:80]}", flush=True)
+    ledger_record_many(
+        [msg["id"]] + [f["id"] for f in fragments],
+        "quarantined",
+        matched_pattern,
+        channel_id=msg.get("channel_id"),
+        author=entry["author"],
+        author_id=(msg.get("author") or {}).get("id"),
+    )
+    print(
+        f"Quarantined suspicious message from {entry['author']} in #{channel_name} "
+        f"(matched: {matched_pattern}): {entry['content'][:80]}",
+        flush=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1262,21 +1354,34 @@ def _ledger_load():
 
 
 def _ledger_save(d):
-    items = sorted(d["entries"].items(),
-                   key=lambda kv: kv[1].get("updated", 0))
+    items = sorted(d["entries"].items(), key=lambda kv: kv[1].get("updated", 0))
     d["entries"] = dict(items[-1000:])
     atomic_write(LEDGER_FILE, d)
 
 
-def ledger_record(mid, status, reason="", channel_id=None, author=None,
-                  recoveries=None, author_id=None, detail=None):
-    ledger_record_many([mid], status, reason, channel_id, author,
-                       recoveries, author_id, detail)
+def ledger_record(
+    mid,
+    status,
+    reason="",
+    channel_id=None,
+    author=None,
+    recoveries=None,
+    author_id=None,
+    detail=None,
+):
+    ledger_record_many([mid], status, reason, channel_id, author, recoveries, author_id, detail)
 
 
-def ledger_record_many(mids, status, reason="", channel_id=None,
-                       author=None, recoveries=None, author_id=None,
-                       detail=None):
+def ledger_record_many(
+    mids,
+    status,
+    reason="",
+    channel_id=None,
+    author=None,
+    recoveries=None,
+    author_id=None,
+    detail=None,
+):
     """ledger_record for several ids in one write: a burst's trigger and
     its fragments always share one outcome. Each entry also keeps the
     author's id and a reason code (ledger_code; "Why no reply?" in
@@ -1293,21 +1398,26 @@ def ledger_record_many(mids, status, reason="", channel_id=None,
     info = CHANNELS.get(str(channel_id)) if channel_id else None
     where = {}
     if info and info.get("guild_id"):
-        where = {"guild_id": info["guild_id"],
-                 "parent_id": info.get("parent_id") if info.get("thread")
-                 else None}
-    elif channel_id and (channel_id in DM_CHANNELS
-                         or channel_id in DM_CHANNEL_USER):
+        where = {
+            "guild_id": info["guild_id"],
+            "parent_id": info.get("parent_id") if info.get("thread") else None,
+        }
+    elif channel_id and (channel_id in DM_CHANNELS or channel_id in DM_CHANNEL_USER):
         where = {"dm": True}
     for mid in mids:
         ent = d["entries"].get(mid, {})
         ent.update(where)
-        ent.update({"status": status, "reason": reason,
-                    "channel_id": channel_id or ent.get("channel_id"),
-                    "author": author or ent.get("author"),
-                    "author_id": str(author_id) if author_id
-                    else ent.get("author_id"),
-                    "code": code, "updated": time.time()})
+        ent.update(
+            {
+                "status": status,
+                "reason": reason,
+                "channel_id": channel_id or ent.get("channel_id"),
+                "author": author or ent.get("author"),
+                "author_id": str(author_id) if author_id else ent.get("author_id"),
+                "code": code,
+                "updated": time.time(),
+            }
+        )
         if detail is not None:
             ent["detail"] = detail
         else:
@@ -1382,8 +1492,7 @@ def remember_name(uid, name):
 
 
 def _ledger_terminal(mid):
-    return _ledger_load()["entries"].get(mid, {}).get("status") \
-        in LEDGER_TERMINAL
+    return _ledger_load()["entries"].get(mid, {}).get("status") in LEDGER_TERMINAL
 
 
 def _quarantine_ids():
@@ -1391,8 +1500,9 @@ def _quarantine_ids():
     for e in _read_json(QUARANTINE_FILE, list) or []:
         if isinstance(e, dict):
             ids.add(e.get("message_id"))
-            ids.update(fr.get("message_id") for fr in e.get("fragments") or []
-                       if isinstance(fr, dict))
+            ids.update(
+                fr.get("message_id") for fr in e.get("fragments") or [] if isinstance(fr, dict)
+            )
     return ids
 
 
@@ -1429,27 +1539,31 @@ def rate_block(state, user_id, channel_id=None, scope=None):
     scopes = rate.setdefault("scopes", {})
 
     for cid, cap in st.cap_layers("limits.per_day", scope):
-        n = rate["day_count"] if cid == "everywhere" \
-            else (scopes.get(cid) or {}).get("count", 0)
+        n = rate["day_count"] if cid == "everywhere" else (scopes.get(cid) or {}).get("count", 0)
         if n >= cap:
             where = "" if cid == "everywhere" else f" for {cid}"
-            print(f"Rate limit: daily cap ({cap}){where} reached, "
-                  f"skipping.", flush=True)
+            print(f"Rate limit: daily cap ({cap}){where} reached, skipping.", flush=True)
             return {"key": "limits.per_day", "counter": cid, "cap": cap}
 
-    day_start = datetime.now(timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0).timestamp()
+    day_start = (
+        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    )
     for cid, cap in st.cap_layers("limits.per_person_per_day", scope):
-        users = rate["users"] if cid == "everywhere" \
+        users = (
+            rate["users"]
+            if cid == "everywhere"
             else scopes.setdefault(cid, {}).setdefault("users", {})
+        )
         user_hits = [t for t in users.get(user_id, []) if t >= day_start]
         users[user_id] = user_hits
         if len(user_hits) >= cap:
-            print(f"Rate limit: user {user_id} hit per-user daily cap"
-                  f"{'' if cid == 'everywhere' else ' for ' + cid}, "
-                  f"skipping.", flush=True)
-            return {"key": "limits.per_person_per_day", "counter": cid,
-                    "cap": cap}
+            print(
+                f"Rate limit: user {user_id} hit per-user daily cap"
+                f"{'' if cid == 'everywhere' else ' for ' + cid}, "
+                f"skipping.",
+                flush=True,
+            )
+            return {"key": "limits.per_person_per_day", "counter": cid, "cap": cap}
 
     return None
 
@@ -1471,9 +1585,8 @@ def rate_record(state, user_id, scope=None):
 
 def _iso_ts(iso):
     try:
-        return datetime.fromisoformat(
-            str(iso).replace("Z", "+00:00")).timestamp()
-    except (TypeError, ValueError):
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except TypeError, ValueError:
         return None
 
 
@@ -1502,8 +1615,11 @@ def join_watermark(state, gid):
     first_seen = state.setdefault("guild_first_seen", {})
     if gid not in first_seen:
         first_seen[gid] = time.time()
-        print(f"Join time unknown for guild {gid}; ignoring messages "
-              f"older than now until Discord reports it.", flush=True)
+        print(
+            f"Join time unknown for guild {gid}; ignoring messages "
+            f"older than now until Discord reports it.",
+            flush=True,
+        )
     return first_seen[gid]
 
 
@@ -1535,8 +1651,7 @@ def scope_for(guild_id=None, channel_id=None, dm=False):
     chan = channel_id
     if info.get("thread") and info.get("parent_id"):
         chan = info["parent_id"]  # threads and forum posts: the parent
-    cat = CHANNEL_CATEGORY.get(chan) \
-        or (CHANNELS.get(chan) or {}).get("category_id")
+    cat = CHANNEL_CATEGORY.get(chan) or (CHANNELS.get(chan) or {}).get("category_id")
     gname = (GUILDS.get(gid) or {}).get("name") or info.get("guild_name")
     return MS.Scope.server(gid, gname, chan, cat)
 
@@ -1566,14 +1681,12 @@ def member_roles(guild_id, user_id):
     if rest_backing_off():
         return hit[0] if hit else set()
     try:
-        roles = set((api_get(f"/guilds/{guild_id}/members/{user_id}")
-                     or {}).get("roles") or [])
+        roles = set((api_get(f"/guilds/{guild_id}/members/{user_id}") or {}).get("roles") or [])
     except Exception:
         roles = hit[0] if hit else set()
     _MEMBER_ROLES[key] = (roles, time.time())
     if len(_MEMBER_ROLES) > 2000:
-        for k in sorted(_MEMBER_ROLES,
-                        key=lambda k: _MEMBER_ROLES[k][1])[:500]:
+        for k in sorted(_MEMBER_ROLES, key=lambda k: _MEMBER_ROLES[k][1])[:500]:
             del _MEMBER_ROLES[k]
     return roles
 
@@ -1608,6 +1721,7 @@ def who_allows(msg, guild_id, resolved):
         if "roles" in member:
             return set(member.get("roles") or [])
         return member_roles(guild_id, uid)
+
     if people_match(resolved["who.ignore"], uid, roles):
         return False
     return people_match(resolved["who.allow"], uid, roles)
@@ -1715,8 +1829,7 @@ def open_follow_up(state, channel_id, user_id):
     fu = state.setdefault("follow_up", {})
     now = time.time()
     fu[f"{channel_id}:{user_id}"] = now
-    for k in [k for k, t in fu.items()
-              if now - t > FOLLOW_UP_WINDOW_SECS]:
+    for k in [k for k, t in fu.items() if now - t > FOLLOW_UP_WINDOW_SECS]:
         del fu[k]
 
 
@@ -1758,8 +1871,7 @@ def own_replies_in_run(history, msg):
     that ends just before msg (since a human last spoke in the channel):
     the bot's consecutive replies in a bot-to-bot exchange."""
     n = 0
-    for h in reversed([h for h in history
-                       if int(h["id"]) < int(msg["id"])]):
+    for h in reversed([h for h in history if int(h["id"]) < int(msg["id"])]):
         if not h.get("bot"):
             break
         if h.get("author_id") == BOT_ID:
@@ -1804,40 +1916,46 @@ def _join_summary(gid, ginfo, channels):
     visible = sorted(
         (info.get("name", "?"), info.get("can_send"))
         for info in channels.values()
-        if info.get("guild_id") == gid and not info.get("thread"))
-    shown = ", ".join("#" + n + (" (read-only)" if s is False else "")
-                      for n, s in visible[:40])
+        if info.get("guild_id") == gid and not info.get("thread")
+    )
+    shown = ", ".join("#" + n + (" (read-only)" if s is False else "") for n, s in visible[:40])
     if len(visible) > 40:
         shown += f", and {len(visible) - 40} more"
     st = settings()
     res = st.resolve(MS.Scope.server(gid, name))
     seen = f"Channels I can see ({len(visible)}): {shown or 'none'}\n"
     if owners_absent(gid) and OWNER_IN_GUILD.get(gid) is None:
-        return (f"I was added to **{name}**. I couldn't check yet whether "
-                f"any of you is in that server, so I'm not answering "
-                f"anyone there for now.\n{seen}"
-                f"To let me talk there, press **Configure** and pick When "
-                f"it answers.")
+        return (
+            f"I was added to **{name}**. I couldn't check yet whether "
+            f"any of you is in that server, so I'm not answering "
+            f"anyone there for now.\n{seen}"
+            f"To let me talk there, press **Configure** and pick When "
+            f"it answers."
+        )
     if owners_absent(gid):
-        return (f"I was added to **{name}**, a server none of you is in, "
-                f"so I'm not answering anyone there.\n{seen}"
-                f"To let me talk there, press **Configure** and pick When "
-                f"it answers. To remove me, a server admin there can kick "
-                f"me.")
-    replies = {"freely": "I may join conversations without being mentioned there",
-               "off": "I stay quiet there",
-               "when-addressed": "I answer @mentions and replies to my "
-                                 "messages there",
-               "conversational": "I answer @mentions and replies to my "
-                                 "messages there, and the follow-ups of "
-                                 "someone I just answered"}
-    on = (["image and video generation"] if res.get("media.enabled")
-          else [])
-    return (f"I just joined **{name}**.\n"
-            f"{replies.get(res['who.replies'], replies['when-addressed'])}"
-            f". Extras on there: {', '.join(on) or 'none'}.\n{seen}"
-            f"To change what I do there, press **Configure** or use "
-            f"/settings.")
+        return (
+            f"I was added to **{name}**, a server none of you is in, "
+            f"so I'm not answering anyone there.\n{seen}"
+            f"To let me talk there, press **Configure** and pick When "
+            f"it answers. To remove me, a server admin there can kick "
+            f"me."
+        )
+    replies = {
+        "freely": "I may join conversations without being mentioned there",
+        "off": "I stay quiet there",
+        "when-addressed": "I answer @mentions and replies to my messages there",
+        "conversational": "I answer @mentions and replies to my "
+        "messages there, and the follow-ups of "
+        "someone I just answered",
+    }
+    on = ["image and video generation"] if res.get("media.enabled") else []
+    return (
+        f"I just joined **{name}**.\n"
+        f"{replies.get(res['who.replies'], replies['when-addressed'])}"
+        f". Extras on there: {', '.join(on) or 'none'}.\n{seen}"
+        f"To change what I do there, press **Configure** or use "
+        f"/settings."
+    )
 
 
 # Servers none of the owners is in. A public bot can be
@@ -1861,14 +1979,17 @@ def _join_summary(gid, ginfo, channels):
 OWNER_IN_GUILD = {}
 OWNER_RECHECK_SECS = 3600
 OWNER_CHECKS_PER_PASS = 5
-OWNER_NOTICE_WAIT_FAILS = 3   # failed checks before a join notice says so
+OWNER_NOTICE_WAIT_FAILS = 3  # failed checks before a join notice says so
 
 
 def _owner_entry(e):
     if isinstance(e, dict):
-        return {"in": bool(e.get("in")), "checked": bool(e.get("checked")),
-                "next": float(e.get("next") or 0),
-                "fails": int(e.get("fails") or 0)}
+        return {
+            "in": bool(e.get("in")),
+            "checked": bool(e.get("checked")),
+            "next": float(e.get("next") or 0),
+            "fails": int(e.get("fails") or 0),
+        }
     return None
 
 
@@ -1882,8 +2003,7 @@ def mirror_owner_presence(state):
         else:
             seen[gid] = e
     OWNER_IN_GUILD.clear()
-    OWNER_IN_GUILD.update({g: (e["in"] if e["checked"] else None)
-                           for g, e in seen.items()})
+    OWNER_IN_GUILD.update({g: (e["in"] if e["checked"] else None) for g, e in seen.items()})
 
 
 def owner_member(gid):
@@ -1903,7 +2023,8 @@ def owner_member(gid):
 def note_guild_join_for_owners(state, gid):
     """A join: the server is ownerless until a check says otherwise."""
     state.setdefault("owner_in_guild", {}).setdefault(
-        gid, {"in": False, "checked": False, "next": 0, "fails": 0})
+        gid, {"in": False, "checked": False, "next": 0, "fails": 0}
+    )
     OWNER_IN_GUILD.setdefault(gid, None)
 
 
@@ -1921,24 +2042,28 @@ def check_owner_presence(state, guilds, joined=(), every=False):
             e.update({"in": True, "checked": True})
     _OWNER_SPOKE.clear()
     if OWNER_USER_IDS and not rest_backing_off():
-        due = sorted((e["next"], gid) for gid, e in seen.items()
-                     if not e["in"] and e["next"] <= now and gid in guilds)
-        for _next, gid in due[:None if every else OWNER_CHECKS_PER_PASS]:
+        due = sorted(
+            (e["next"], gid)
+            for gid, e in seen.items()
+            if not e["in"] and e["next"] <= now and gid in guilds
+        )
+        for _next, gid in due[: None if every else OWNER_CHECKS_PER_PASS]:
             if rest_backing_off():
-                break   # the rest stay gated, and are checked later
+                break  # the rest stay gated, and are checked later
             e = seen[gid]
             res = owner_member(gid)
             if res is None:
                 e["fails"] += 1
-                e["next"] = now + min(60 * 2 ** e["fails"],
-                                      OWNER_RECHECK_SECS)
+                e["next"] = now + min(60 * 2 ** e["fails"], OWNER_RECHECK_SECS)
                 continue
-            e.update({"in": res, "checked": True, "fails": 0,
-                      "next": now + OWNER_RECHECK_SECS})
+            e.update({"in": res, "checked": True, "fails": 0, "next": now + OWNER_RECHECK_SECS})
             if not res:
-                print(f"No owner is in server {gid}: answering nobody "
-                      f"there until an owner chooses When it answers "
-                      f"for it.", flush=True)
+                print(
+                    f"No owner is in server {gid}: answering nobody "
+                    f"there until an owner chooses When it answers "
+                    f"for it.",
+                    flush=True,
+                )
     mirror_owner_presence(state)
 
 
@@ -1951,8 +2076,7 @@ def owners_absent(gid):
     """True when no owner is known to be in this server (checked and
     absent, or not checked yet since the bot joined) and no owner chose
     When it answers for it: then it answers nobody there."""
-    if not gid or not OWNER_USER_IDS or gid not in OWNER_IN_GUILD \
-            or OWNER_IN_GUILD[gid] is True:
+    if not gid or not OWNER_USER_IDS or gid not in OWNER_IN_GUILD or OWNER_IN_GUILD[gid] is True:
         return False
     return not settings().owner_sets_server(gid, "who.replies")
 
@@ -1961,16 +2085,29 @@ def owner_check_pending(state, gid):
     """True while a just-joined server's owner check has not answered
     and has not failed often enough to give up waiting for it."""
     e = (state.get("owner_in_guild") or {}).get(gid)
-    return isinstance(e, dict) and not e.get("checked") \
+    return (
+        isinstance(e, dict)
+        and not e.get("checked")
         and int(e.get("fails") or 0) < OWNER_NOTICE_WAIT_FAILS
+    )
 
 
 def configure_button(gid):
     """The join notice's button: opens that server's /settings page
     (handled by settings_ui, custom_id mdset:open:server:<id>)."""
-    return [{"type": 1, "components": [
-        {"type": 2, "style": 1, "label": "Configure",
-         "custom_id": f"{SETTINGS_PREFIX}:open:server:{gid}"}]}]
+    return [
+        {
+            "type": 1,
+            "components": [
+                {
+                    "type": 2,
+                    "style": 1,
+                    "label": "Configure",
+                    "custom_id": f"{SETTINGS_PREFIX}:open:server:{gid}",
+                }
+            ],
+        }
+    ]
 
 
 def sync_guilds(state, guilds, channels):
@@ -1983,21 +2120,27 @@ def sync_guilds(state, guilds, channels):
     known = state.setdefault("known_guilds", {})
     notices = state.setdefault("join_notices", [])
     # Approximate member counts, for bin/settings.py's risk checks.
-    state["guild_members"] = {gid: _MEMBER_COUNTS[gid] for gid in guilds
-                              if isinstance(_MEMBER_COUNTS.get(gid), int)}
+    state["guild_members"] = {
+        gid: _MEMBER_COUNTS[gid] for gid in guilds if isinstance(_MEMBER_COUNTS.get(gid), int)
+    }
     for gid, ginfo in guilds.items():
         note_guild_joined(state, gid, ginfo.get("joined_at"))
         is_new = gid not in known
         known[gid] = ginfo.get("name") or gid
         if is_new and not first_run:
-            print(f"Joined server {known[gid]} ({gid}): its settings "
-                  f"come from all_servers until it has its own.",
-                  flush=True)
+            print(
+                f"Joined server {known[gid]} ({gid}): its settings "
+                f"come from all_servers until it has its own.",
+                flush=True,
+            )
             if gid not in notices:
                 notices.append(gid)
-    check_owner_presence(state, guilds, list(guilds) if first_run
-                         else [g for g in notices if g in guilds],
-                         every=first_run)
+    check_owner_presence(
+        state,
+        guilds,
+        list(guilds) if first_run else [g for g in notices if g in guilds],
+        every=first_run,
+    )
     flush_join_notices(state, guilds, channels)
     try:
         warn_stale_labels()
@@ -2012,15 +2155,16 @@ def warn_stale_labels():
     """A `name:` label in config.yaml is only for people; say so once
     when Discord calls that server or channel something else now."""
     for sid, label in settings().labels.items():
-        now = (GUILDS.get(sid) or {}).get("name") \
-            or (CHANNELS.get(sid) or {}).get("name")
-        if not now or not label or str(label).lstrip("#") == now \
-                or (sid, label) in _stale_labels:
+        now = (GUILDS.get(sid) or {}).get("name") or (CHANNELS.get(sid) or {}).get("name")
+        if not now or not label or str(label).lstrip("#") == now or (sid, label) in _stale_labels:
             continue
         _stale_labels.add((sid, label))
-        print(f"Note: config.yaml labels {sid} \"{label}\", but Discord "
-              f"calls it \"{now}\" now (the label is only for you; "
-              f"the id is what counts).", flush=True)
+        print(
+            f'Note: config.yaml labels {sid} "{label}", but Discord '
+            f'calls it "{now}" now (the label is only for you; '
+            f"the id is what counts).",
+            flush=True,
+        )
 
 
 def flush_join_notices(state, guilds, channels):
@@ -2035,9 +2179,9 @@ def flush_join_notices(state, guilds, channels):
         if owner_check_pending(state, gid):
             left.append(gid)  # say what the owner check found
             continue
-        if not notify_owners(_join_summary(gid, guilds.get(gid) or {},
-                                           channels),
-                             components=configure_button(gid)):
+        if not notify_owners(
+            _join_summary(gid, guilds.get(gid) or {}, channels), components=configure_button(gid)
+        ):
             left.append(gid)
     state["join_notices"] = left
 
@@ -2129,9 +2273,11 @@ def _version_installed(tag, timeout=5):
     before the notice went out, or since). False when git cannot tell,
     e.g. the tag was never fetched."""
     try:
-        r = subprocess.run(["git", "-C", BASE_DIR, "merge-base",
-                            "--is-ancestor", f"refs/tags/{tag}", "HEAD"],
-                           capture_output=True, timeout=timeout)
+        r = subprocess.run(
+            ["git", "-C", BASE_DIR, "merge-base", "--is-ancestor", f"refs/tags/{tag}", "HEAD"],
+            capture_output=True,
+            timeout=timeout,
+        )
     except Exception:
         return False
     return r.returncode == 0
@@ -2147,11 +2293,13 @@ def _entry_line(heading):
 def update_notice_text(info):
     version = info["latest"]
     installed = info.get("installed")
-    on = (f"you're on {installed}" if release_version(installed)
-          else "you're on an unreleased version")
+    on = (
+        f"you're on {installed}"
+        if release_version(installed)
+        else "you're on an unreleased version"
+    )
     lines = [f"**muse-discord {version} is out** ({on})."]
-    entries = [_entry_line(str(e))[:150]
-               for e in info.get("entries") or [] if e]
+    entries = [_entry_line(str(e))[:150] for e in info.get("entries") or [] if e]
     if entries:
         lines.append("What's new:")
         lines += ["- " + e for e in entries[:UPDATE_ENTRIES_SHOWN]]
@@ -2160,21 +2308,26 @@ def update_notice_text(info):
     else:
         lines.append("See the changelog for what's new.")
     if info.get("action_needed"):
-        lines.append("Some changes need a step from you; your Muse walks "
-                     "you through them.")
-    lines.append(f"**Update now**: your Muse updates to {version} in its "
-                 "main chat and asks before touching anything you "
-                 f"changed. **Later**: skip {version}; I'll ask again when "
-                 "a newer version comes out.")
+        lines.append("Some changes need a step from you; your Muse walks you through them.")
+    lines.append(
+        f"**Update now**: your Muse updates to {version} in its "
+        "main chat and asks before touching anything you "
+        f"changed. **Later**: skip {version}; I'll ask again when "
+        "a newer version comes out."
+    )
     return "\n".join(lines)[:1990]
 
 
 def update_buttons(version):
-    return [{"type": 1, "components": [
-        {"type": 2, "style": 1, "label": "Update now",
-         "custom_id": f"mdupd:now:{version}"},
-        {"type": 2, "style": 2, "label": "Later",
-         "custom_id": f"mdupd:later:{version}"}]}]
+    return [
+        {
+            "type": 1,
+            "components": [
+                {"type": 2, "style": 1, "label": "Update now", "custom_id": f"mdupd:now:{version}"},
+                {"type": 2, "style": 2, "label": "Later", "custom_id": f"mdupd:later:{version}"},
+            ],
+        }
+    ]
 
 
 def announce_update(state):
@@ -2193,27 +2346,25 @@ def announce_update(state):
         upd.clear()
         upd.update(version=version, at=int(time.time()), owed=[], tries=0)
         if _version_installed(version):
-            print(f"Update {version} is already installed; no notice.",
-                  flush=True)
+            print(f"Update {version} is already installed; no notice.", flush=True)
         elif not OWNER_USER_IDS:
-            print(f"Update {version} available (no owners configured to "
-                  f"tell).", flush=True)
+            print(f"Update {version} available (no owners configured to tell).", flush=True)
         else:
-            upd.update(owed=sorted(OWNER_USER_IDS),
-                       text=update_notice_text(info))
-            print(f"Update {version} available: DMing the owners.",
-                  flush=True)
+            upd.update(owed=sorted(OWNER_USER_IDS), text=update_notice_text(info))
+            print(f"Update {version} available: DMing the owners.", flush=True)
         _update_announced["version"] = version
     owed = upd.get("owed") or []
     if not owed or rest_backing_off():
         return
-    payload = {"content": upd.get("text") or "", "allowed_mentions":
-               {"parse": []}, "components": update_buttons(upd["version"])}
+    payload = {
+        "content": upd.get("text") or "",
+        "allowed_mentions": {"parse": []},
+        "components": update_buttons(upd["version"]),
+    }
     upd["owed"] = [uid for uid in owed if not dm_owner(uid, payload)]
     upd["tries"] = upd.get("tries", 0) + 1
     if upd["owed"] and upd["tries"] >= UPDATE_DM_TRIES:
-        print(f"Update notice undeliverable to {', '.join(upd['owed'])}; "
-              f"giving up.", flush=True)
+        print(f"Update notice undeliverable to {', '.join(upd['owed'])}; giving up.", flush=True)
         upd["owed"] = []
 
 
@@ -2232,9 +2383,12 @@ def apply_record(state, rec):
         upd = state.setdefault("update_notice", {})
         if rec.get("version") == upd.get("version"):
             upd["choice"] = {k: rec.get(k) for k in ("action", "by", "at")}
-        print(f"Owner {rec.get('by')} chose "
-              f"{'Update now' if rec.get('action') == 'now' else 'Later'} "
-              f"for update {rec.get('version')}.", flush=True)
+        print(
+            f"Owner {rec.get('by')} chose "
+            f"{'Update now' if rec.get('action') == 'now' else 'Later'} "
+            f"for update {rec.get('version')}.",
+            flush=True,
+        )
     elif rec.get("kind") == "hold_choice":
         hid = rec.get("hold")
         hold = state.get("holds", {}).pop(hid, None)
@@ -2247,20 +2401,20 @@ def apply_record(state, rec):
             # attachment pipeline, settling); the hold id lets this one
             # item past the never_share check.
             state.setdefault("hold_released", {})[hid] = {
-                "at": time.time(), "qid": hold.get("qid"),
-                "channel_id": str((hold.get("item") or {})
-                                  .get("channel_id"))}
-            state.setdefault("released", []).append(
-                dict(hold["item"], _hold=hid))
-            print(f"Owner {rec.get('by')} chose Send anyway for the held "
-                  f"reply in {where}.", flush=True)
+                "at": time.time(),
+                "qid": hold.get("qid"),
+                "channel_id": str((hold.get("item") or {}).get("channel_id")),
+            }
+            state.setdefault("released", []).append(dict(hold["item"], _hold=hid))
+            print(
+                f"Owner {rec.get('by')} chose Send anyway for the held reply in {where}.",
+                flush=True,
+            )
         else:
-            _settle(state, hold["item"], "skipped",
-                    "never_share hold discarded by an owner")
-            print(f"Owner {rec.get('by')} discarded the held reply in "
-                  f"{where}.", flush=True)
+            _settle(state, hold["item"], "skipped", "never_share hold discarded by an owner")
+            print(f"Owner {rec.get('by')} discarded the held reply in {where}.", flush=True)
     elif rec.get("kind") == "proactive_yes":
-        PRO.apply_button(rec)   # a person's own Yes (proactive.py)
+        PRO.apply_button(rec)  # a person's own Yes (proactive.py)
 
 
 # Interaction dispatch: one handler per key, the custom_id prefix (the
@@ -2278,17 +2432,21 @@ def register_interaction(key, handler, owner_only=True):
 
 def ephemeral(text):
     """A callback response only the clicking user sees."""
-    return {"type": 4, "data": {"content": text, "flags": 64,
-                                "allowed_mentions": {"parse": []}}}
+    return {"type": 4, "data": {"content": text, "flags": 64, "allowed_mentions": {"parse": []}}}
 
 
 def closed_card(ix, line):
     """The clicked message, buttons removed, with line added: what was
     chosen."""
     original = (ix.get("message") or {}).get("content") or ""
-    return {"type": 7, "data": {
-        "content": original[:1990 - len(line)] + "\n\n" + line,
-        "components": [], "allowed_mentions": {"parse": []}}}
+    return {
+        "type": 7,
+        "data": {
+            "content": original[: 1990 - len(line)] + "\n\n" + line,
+            "components": [],
+            "allowed_mentions": {"parse": []},
+        },
+    }
 
 
 def interaction_user_id(ix):
@@ -2300,10 +2458,10 @@ def dispatch_interaction(ix, record):
     data = ix.get("data") or {}
     if ix.get("type") in (3, 5):  # MESSAGE_COMPONENT, MODAL_SUBMIT
         key, _, rest = str(data.get("custom_id") or "").partition(":")
-    elif ix.get("type") == 2:    # APPLICATION_COMMAND
+    elif ix.get("type") == 2:  # APPLICATION_COMMAND
         key, rest = "/" + str(data.get("name") or ""), ""
     else:
-        return None              # nothing to answer (e.g. autocomplete)
+        return None  # nothing to answer (e.g. autocomplete)
     entry = INTERACTION_HANDLERS.get(key)
     if entry is None:
         return ephemeral("That control is no longer active.")
@@ -2316,8 +2474,10 @@ def dispatch_interaction(ix, record):
 
 def interaction_callback(ix, response):
     """Anonymous interaction token auth, independent of Bot-token failures."""
-    path = (f"/interactions/{urllib.parse.quote(str(ix['id']), safe='')}/"
-            f"{urllib.parse.quote(str(ix['token']), safe='')}/callback")
+    path = (
+        f"/interactions/{urllib.parse.quote(str(ix['id']), safe='')}/"
+        f"{urllib.parse.quote(str(ix['token']), safe='')}/callback"
+    )
     response = guard_outgoing(response, "an interaction response")
     discord_request("POST", path, response, timeout=INTERACTION_CALLBACK_TIMEOUT, anonymous=True)
 
@@ -2345,34 +2505,32 @@ def on_update_button(ix, rest, uid, record):
         return ephemeral("That control is no longer active.")
     announced = _update_announced["version"]
     if version != announced:
-        if release_version(announced) \
-                and release_version(version) < release_version(announced):
-            return ephemeral(f"This message is out of date: {announced} "
-                             f"is out now. Use the newest update message.")
+        if release_version(announced) and release_version(version) < release_version(announced):
+            return ephemeral(
+                f"This message is out of date: {announced} "
+                f"is out now. Use the newest update message."
+            )
         return ephemeral("That control is no longer active.")
     # Short timeout: the whole answer must land within Discord's 3s.
     if _version_installed(version, timeout=1):
-        return ephemeral(f"{version} is already installed; nothing to "
-                         f"do.")
+        return ephemeral(f"{version} is already installed; nothing to do.")
     now = int(time.time())
     if action == "now":
-        if (_read_json(UPDATE_REQUEST_FILE) or {}).get("version") \
-                != version:
+        if (_read_json(UPDATE_REQUEST_FILE) or {}).get("version") != version:
             try:
-                atomic_write(UPDATE_REQUEST_FILE, {
-                    "version": version, "requested_at": now, "by": uid})
+                atomic_write(
+                    UPDATE_REQUEST_FILE, {"version": version, "requested_at": now, "by": uid}
+                )
             except OSError as e:
-                print(f"Could not write update_request.json: {e}",
-                      flush=True)
-                return ephemeral("I could not record the request; try "
-                                 "again in a moment.")
-        line = (f"**Update now** chosen. Your Muse is starting the update "
-                f"to {version} in its main chat.")
+                print(f"Could not write update_request.json: {e}", flush=True)
+                return ephemeral("I could not record the request; try again in a moment.")
+        line = (
+            f"**Update now** chosen. Your Muse is starting the update "
+            f"to {version} in its main chat."
+        )
     else:
-        line = (f"**Later** chosen. I won't offer {version} again, only "
-                f"newer versions.")
-    record({"kind": "update_choice", "version": version, "action": action,
-            "by": uid, "at": now})
+        line = f"**Later** chosen. I won't offer {version} again, only newer versions."
+    record({"kind": "update_choice", "version": version, "action": action, "by": uid, "at": now})
     return closed_card(ix, line)
 
 
@@ -2405,24 +2563,29 @@ def never_share_hit(state, item, qid, parts):
         return False  # an owner chose Send anyway
     meta = state.get("item_meta", {}).get(qid) if qid else None
     if meta:
-        owner_dm = bool(meta.get("dm")) \
-            and str(meta.get("author_id")) in OWNER_USER_IDS
+        owner_dm = bool(meta.get("dm")) and str(meta.get("author_id")) in OWNER_USER_IDS
     else:
-        owner_dm = DM_CHANNEL_USER.get(item.get("channel_id")) \
-            in OWNER_USER_IDS
+        owner_dm = DM_CHANNEL_USER.get(item.get("channel_id")) in OWNER_USER_IDS
     if owner_dm:
         return False
     text = "\n".join(parts)
-    return any(re.search(r"(?<!\w)" + re.escape(str(p)) + r"(?!\w)", text,
-                         re.IGNORECASE) for p in phrases if str(p).strip())
+    return any(
+        re.search(r"(?<!\w)" + re.escape(str(p)) + r"(?!\w)", text, re.IGNORECASE)
+        for p in phrases
+        if str(p).strip()
+    )
 
 
 def hold_buttons(hid):
-    return [{"type": 1, "components": [
-        {"type": 2, "style": 4, "label": "Send anyway",
-         "custom_id": f"mdhold:send:{hid}"},
-        {"type": 2, "style": 2, "label": "Discard",
-         "custom_id": f"mdhold:discard:{hid}"}]}]
+    return [
+        {
+            "type": 1,
+            "components": [
+                {"type": 2, "style": 4, "label": "Send anyway", "custom_id": f"mdhold:send:{hid}"},
+                {"type": 2, "style": 2, "label": "Discard", "custom_id": f"mdhold:discard:{hid}"},
+            ],
+        }
+    ]
 
 
 def hold_reply(state, item, qid, parts):
@@ -2432,25 +2595,37 @@ def hold_reply(state, item, qid, parts):
     to = item.get("author") or "someone"
     state.setdefault("holds", {})[hid] = {
         "item": {k: v for k, v in item.items() if k != "_retry"},
-        "at": time.time(), "qid": qid, "where": where, "to": to}
+        "at": time.time(),
+        "qid": qid,
+        "where": where,
+        "to": to,
+    }
     _holds_live[hid] = time.time()
     _settle(state, item, "skipped", "held for owner review (never_share)")
-    head = (f"**I held back a reply** to {to} in {where}: it contains one "
-            f"of your never-share phrases, so I didn't post it.\n")
-    tail = ("\n**Send anyway** posts it as written; **Discard** drops "
-            "it. If you don't choose within a day, I drop it.")
+    head = (
+        f"**I held back a reply** to {to} in {where}: it contains one "
+        f"of your never-share phrases, so I didn't post it.\n"
+    )
+    tail = (
+        "\n**Send anyway** posts it as written; **Discard** drops "
+        "it. If you don't choose within a day, I drop it."
+    )
     body = "> " + "\n".join(parts).replace("\n", "\n> ")
     room = 1990 - len(head) - len(tail)
     if len(body) > room:
-        body = body[:room - 1] + "\u2026"
-    payload = {"content": head + body + tail,
-               "allowed_mentions": {"parse": []},
-               "components": hold_buttons(hid)}
-    delivered = [uid for uid in sorted(OWNER_USER_IDS)
-                 if dm_owner(uid, payload)]
-    print(f"Held a reply to {to} in {where}: it contains a never_share "
-          f"phrase; {'owners DMed' if delivered else 'no owner reachable'}"
-          f" (hold {hid}).", flush=True)
+        body = body[: room - 1] + "\u2026"
+    payload = {
+        "content": head + body + tail,
+        "allowed_mentions": {"parse": []},
+        "components": hold_buttons(hid),
+    }
+    delivered = [uid for uid in sorted(OWNER_USER_IDS) if dm_owner(uid, payload)]
+    print(
+        f"Held a reply to {to} in {where}: it contains a never_share "
+        f"phrase; {'owners DMed' if delivered else 'no owner reachable'}"
+        f" (hold {hid}).",
+        flush=True,
+    )
 
 
 def expire_holds(state):
@@ -2460,30 +2635,34 @@ def expire_holds(state):
         if now - hold.get("at", 0) >= HOLD_TTL_SECS:
             del holds[hid]
             _holds_live.pop(hid, None)
-            _settle(state, hold["item"], "skipped",
-                    "never_share hold expired (24 h)")
-            print(f"Held reply in {hold.get('where')} expired undecided; "
-                  f"discarded.", flush=True)
+            _settle(state, hold["item"], "skipped", "never_share hold expired (24 h)")
+            print(f"Held reply in {hold.get('where')} expired undecided; discarded.", flush=True)
     released = state.get("hold_released") or {}
-    for hid in [h for h, t in released.items()
-                if now - (t.get("at", 0) if isinstance(t, dict) else t)
-                > 2 * 86400]:
+    for hid in [
+        h
+        for h, t in released.items()
+        if now - (t.get("at", 0) if isinstance(t, dict) else t) > 2 * 86400
+    ]:
         del released[hid]
 
 
 def on_hold_button(ix, rest, uid, record):
     action, _, hid = rest.partition(":")
     at = _holds_live.get(hid)
-    if action not in ("send", "discard") or at is None \
-            or time.time() - at >= HOLD_TTL_SECS:
-        return ephemeral("That reply is no longer waiting: it was sent or "
-                         "dropped, or a day went by.")
+    if action not in ("send", "discard") or at is None or time.time() - at >= HOLD_TTL_SECS:
+        return ephemeral(
+            "That reply is no longer waiting: it was sent or dropped, or a day went by."
+        )
     _holds_live.pop(hid, None)  # one decision per hold
-    record({"kind": "hold_choice", "hold": hid, "action": action,
-            "by": uid, "at": int(time.time())})
-    return closed_card(ix, "**Send anyway** chosen: posting it now."
-                       if action == "send"
-                       else "**Discarded**: it will not be posted.")
+    record(
+        {"kind": "hold_choice", "hold": hid, "action": action, "by": uid, "at": int(time.time())}
+    )
+    return closed_card(
+        ix,
+        "**Send anyway** chosen: posting it now."
+        if action == "send"
+        else "**Discarded**: it will not be posted.",
+    )
 
 
 register_interaction("mdhold", on_hold_button)
@@ -2492,8 +2671,7 @@ register_interaction("mdhold", on_hold_button)
 def on_proactive_button(ix, rest, uid, record):
     """mdpro:yes:<token>: the Yes on the monitor's own question to one
     person (proactive.py, asks); anyone may click, only theirs counts."""
-    return PRO.on_button(ix, rest, uid, record) \
-        or ephemeral("That button is no longer active.")
+    return PRO.on_button(ix, rest, uid, record) or ephemeral("That button is no longer active.")
 
 
 register_interaction("mdpro", on_proactive_button, owner_only=False)
@@ -2507,8 +2685,7 @@ SETTINGS_PREFIX = "mdset"
 SETTINGS_COMMAND = {
     "name": "settings",
     "type": 1,  # CHAT_INPUT
-    "description": "See or change this bot's settings (owners; server "
-                   "admins can make it quieter)",
+    "description": "See or change this bot's settings (owners; server admins can make it quieter)",
     # Interaction context types: 0 GUILD, 1 BOT_DM (not 2, group DMs).
     "contexts": [0, 1],
     # Installation contexts: 0 GUILD_INSTALL only (no user installs).
@@ -2534,7 +2711,7 @@ ADMIN_DIGEST_SECS = 60
 
 # Directory for SettingsCtx, built on the main loop from discovery and
 # the gateway, published as one immutable snapshot under _DIRECTORY_LOCK.
-_MEMBER_COUNTS = {}   # guild id -> member count (approximate)
+_MEMBER_COUNTS = {}  # guild id -> member count (approximate)
 _GUILD_CHANNELS = {}  # guild id -> [{"id","name","type","parent_id",..}]
 _DIRECTORY = {"guilds": [], "channels": {}, "where": {}}
 _DIRECTORY_LOCK = threading.Lock()
@@ -2553,8 +2730,11 @@ def publish_directory():
     parent)."""
     guilds = []
     for gid, info in GUILDS.items():
-        g = {"id": gid, "name": (info or {}).get("name") or gid,
-             "member_count": _MEMBER_COUNTS.get(gid)}
+        g = {
+            "id": gid,
+            "name": (info or {}).get("name") or gid,
+            "member_count": _MEMBER_COUNTS.get(gid),
+        }
         guilds.append(g)
     guilds.sort(key=lambda g: (str(g["name"]).lower(), g["id"]))
     channels = {}
@@ -2568,13 +2748,13 @@ def publish_directory():
             c["can_send"] = (mon or {}).get("can_send")
             out.append(c)
         channels[gid] = out
-    where = {cid: (info.get("guild_id"),
-                   info.get("parent_id") if info.get("thread") else None)
-             for cid, info in CHANNELS.items()}
+    where = {
+        cid: (info.get("guild_id"), info.get("parent_id") if info.get("thread") else None)
+        for cid, info in CHANNELS.items()
+    }
     global _DIRECTORY
     with _DIRECTORY_LOCK:
-        _DIRECTORY = {"guilds": guilds, "channels": channels,
-                      "where": where}
+        _DIRECTORY = {"guilds": guilds, "channels": channels, "where": where}
     body = {"guilds": guilds, "channels": channels}
     if body != _DIRECTORY_WRITTEN["body"]:
         try:
@@ -2618,8 +2798,7 @@ class SettingsCtx:
 
     def channels(self, guild_id):
         with _DIRECTORY_LOCK:
-            return [dict(c) for c in
-                    _DIRECTORY["channels"].get(str(guild_id)) or []]
+            return [dict(c) for c in _DIRECTORY["channels"].get(str(guild_id)) or []]
 
     def write(self, key, value, by):
         """One change by `by` (its role inferred: a non-owner is an
@@ -2646,8 +2825,9 @@ class SettingsCtx:
         are checked against the admin rule with admin_gid and this ctx's
         channel lists."""
         with _OVERLAY_LOCK:
-            out = MS.apply(_SETTINGS.config_path, changes, by, group, role=role, admin_gid=admin_gid,
-                           info=self)
+            out = MS.apply(
+                _SETTINGS.config_path, changes, by, group, role=role, admin_gid=admin_gid, info=self
+            )
         settings()
         return out
 
@@ -2715,7 +2895,7 @@ class SettingsCtx:
             if ok:
                 out.append(o)
         out.sort(key=lambda o: o["at"], reverse=True)
-        return out[:max(0, int(limit))]
+        return out[: max(0, int(limit))]
 
     def outcome(self, message_id):
         """recent_outcomes' entry for one message, or None."""
@@ -2728,8 +2908,7 @@ class SettingsCtx:
 
     def names(self, some_id):
         """A server's or channel's name for muse_settings' sentences."""
-        return _directory_name(some_id) \
-            or settings().labels.get(str(some_id))
+        return _directory_name(some_id) or settings().labels.get(str(some_id))
 
     def reload(self):
         """A fresh Settings through the monitor's own watcher, so the
@@ -2742,11 +2921,10 @@ class SettingsCtx:
         ADMIN_DIGEST_SECS)."""
         gid = str(guild_id)
         with _ADMIN_LOCK:
-            entry = _ADMIN_CHANGES.setdefault(
-                gid, {"first": time.time(), "changes": []})
-            entry["changes"].append({"user": str(user_id), "key": key,
-                                     "old": old, "new": new,
-                                     "at": time.time()})
+            entry = _ADMIN_CHANGES.setdefault(gid, {"first": time.time(), "changes": []})
+            entry["changes"].append(
+                {"user": str(user_id), "key": key, "old": old, "new": new, "at": time.time()}
+            )
 
     def log(self, msg):
         print(f"/settings: {msg}", flush=True)
@@ -2768,15 +2946,25 @@ def _outcome(mid, e, where):
             gid = info.get("guild_id")
             parent = info.get("parent_id") if info.get("thread") else None
     dm = gid is None and bool(
-        e.get("dm") or cid in DM_CHANNELS or cid in DM_CHANNEL_USER
-        or code in ("dm-off", "dm-not-allowed"))
-    return {"message_id": mid, "channel_id": cid or None,
-            "guild_id": gid, "parent_id": parent, "dm": dm,
-            "author_id": e.get("author_id"), "author": e.get("author"),
-            "status": e.get("status"),
-            "code": code,
-            "detail": e.get("detail") or {}, "reason": e.get("reason"),
-            "at": e.get("updated") or _snowflake_ts(mid)}
+        e.get("dm")
+        or cid in DM_CHANNELS
+        or cid in DM_CHANNEL_USER
+        or code in ("dm-off", "dm-not-allowed")
+    )
+    return {
+        "message_id": mid,
+        "channel_id": cid or None,
+        "guild_id": gid,
+        "parent_id": parent,
+        "dm": dm,
+        "author_id": e.get("author_id"),
+        "author": e.get("author"),
+        "status": e.get("status"),
+        "code": code,
+        "detail": e.get("detail") or {},
+        "reason": e.get("reason"),
+        "at": e.get("updated") or _snowflake_ts(mid),
+    }
 
 
 def _show_value(v):
@@ -2811,36 +2999,36 @@ def _digest_name(some_id):
 
 
 def _digest_words(c):
-    """"In #general, When it answers: Chatty → Off" for a change whose
+    """ "In #general, When it answers: Chatty → Off" for a change whose
     key is an overlay key (what /settings sends), else None."""
     try:
         path, key = MS.parse_key(c["key"])
         place = MS.place_of_path(path)
         if place is None or MS.CORE.get(key) is None:
             return None
-        return MS.describe_change(place, key, c["old"], c["new"],
-                                  _digest_name, path)
+        return MS.describe_change(place, key, c["old"], c["new"], _digest_name, path)
     except Exception:
         return None
 
 
 def admin_digest_text(gid, changes):
-    name = _directory_name(gid) or (GUILDS.get(gid) or {}).get("name") \
-        or gid
+    name = _directory_name(gid) or (GUILDS.get(gid) or {}).get("name") or gid
     head = f"**A server admin changed my settings in {name}:**\n"
-    tail = ("\nAdmins can only make me quieter. To undo a change, use "
-            "/settings there and press Undo.")
+    tail = (
+        "\nAdmins can only make me quieter. To undo a change, use /settings there and press Undo."
+    )
     lines = []
     for c in changes:
-        when = datetime.fromtimestamp(c["at"], timezone.utc) \
-            .strftime("%H:%M UTC")
+        when = datetime.fromtimestamp(c["at"], timezone.utc).strftime("%H:%M UTC")
         words = _digest_words(c)
         if words:
             lines.append(f"- <@{c['user']}>: {words}, {when}")
             continue
-        lines.append(f"- <@{c['user']}> set `{c['key']}` to "
-                     f"{_show_value(c['new'])} (was "
-                     f"{_show_value(c['old'])}), {when}")
+        lines.append(
+            f"- <@{c['user']}> set `{c['key']}` to "
+            f"{_show_value(c['new'])} (was "
+            f"{_show_value(c['old'])}), {when}"
+        )
     kept = []
     room = 1900 - len(head) - len(tail) - len("- and 9999 more")
     for line in lines:
@@ -2857,8 +3045,11 @@ def flush_admin_digests(force=False):
     retried. Returns how many went out."""
     now = time.time()
     with _ADMIN_LOCK:
-        due = {gid: e for gid, e in _ADMIN_CHANGES.items()
-               if force or now - e["first"] >= ADMIN_DIGEST_SECS}
+        due = {
+            gid: e
+            for gid, e in _ADMIN_CHANGES.items()
+            if force or now - e["first"] >= ADMIN_DIGEST_SECS
+        }
     if not due or rest_backing_off():
         return 0
     sent = 0
@@ -2870,8 +3061,7 @@ def flush_admin_digests(force=False):
                 if cur is entry:
                     del _ADMIN_CHANGES[gid]
         else:
-            print(f"Admin digest for server {gid} undelivered; retrying.",
-                  flush=True)
+            print(f"Admin digest for server {gid} undelivered; retrying.", flush=True)
     return sent
 
 
@@ -2894,15 +3084,17 @@ def _publish(path, body, cache, check=False, create=True):
     it differs from the last write (cache: {"body"}), or (check) the file
     was lost or mangled. create=False: an empty body never creates the
     file. False when the write failed (logged)."""
-    if body == cache.get("body") and cache.get("path", path) == path \
-            and not (check and not _private_file_ok(path, body)):
+    if (
+        body == cache.get("body")
+        and cache.get("path", path) == path
+        and not (check and not _private_file_ok(path, body))
+    ):
         return True
     if create or body or os.path.exists(path):
         try:
             _write_private(path, body)
         except OSError as e:
-            print(f"Could not write {os.path.basename(path)}: {e}",
-                  flush=True)
+            print(f"Could not write {os.path.basename(path)}: {e}", flush=True)
             return False
     cache.update(body=body, path=path)
     return True
@@ -2930,13 +3122,14 @@ def owner_dm_write_nonces(state):
     only when that changed; expired ones dropped)."""
     n = state.get("nl_nonces") or {}
     now = time.time()
-    for k in [k for k, v in n.items()
-              if not isinstance(v, dict) or now - v.get("at", 0)
-              > OWNER_DM_NONCE_MAX_AGE]:
+    for k in [
+        k
+        for k, v in n.items()
+        if not isinstance(v, dict) or now - v.get("at", 0) > OWNER_DM_NONCE_MAX_AGE
+    ]:
         del n[k]
-    owner_items_write(state)   # an owner DM's command uses its nonce
-    _publish(OWNER_DM_NONCES_FILE, {k: v["nonce"] for k, v in n.items()},
-             _OWNER_DM_NONCES_WRITTEN)
+    owner_items_write(state)  # an owner DM's command uses its nonce
+    _publish(OWNER_DM_NONCES_FILE, {k: v["nonce"] for k, v in n.items()}, _OWNER_DM_NONCES_WRITTEN)
 
 
 # ---------------------------------------------------------------------------
@@ -2964,8 +3157,7 @@ def _meta_owner_dm(meta):
         return False
     if "owner_dm" in meta:
         return bool(meta["owner_dm"])
-    return bool(meta.get("dm")) \
-        and str(meta.get("author_id")) in OWNER_USER_IDS
+    return bool(meta.get("dm")) and str(meta.get("author_id")) in OWNER_USER_IDS
 
 
 def is_owner_dm_item(state, mid):
@@ -2995,8 +3187,7 @@ def owner_dm_channels(state):
 def _owner_dm_channel_of(state, qid):
     meta = (state.get("item_meta") or {}).get(qid) or {}
     e = (state.get("nl_nonces") or {}).get(qid) or {}
-    cid = meta.get("channel_id") or (e.get("channel_id")
-                                     if isinstance(e, dict) else None)
+    cid = meta.get("channel_id") or (e.get("channel_id") if isinstance(e, dict) else None)
     return str(cid) if cid else None
 
 
@@ -3017,7 +3208,7 @@ def queue_index(state):
     reply_aliases are bounded, and lost with state.json)."""
     try:
         queue = load_queue()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         queue = []
     frags, owners, channels = {}, {}, {}
     for q in queue:
@@ -3038,8 +3229,7 @@ def trigger_of(state, mid, frags=None):
     maps to its trigger (reply_aliases, the queue's bursts, an owner
     DM's nonce entry), anything else to itself."""
     mid = str(mid)
-    t = (state.get("reply_aliases") or {}).get(mid) \
-        or (frags or {}).get(mid)
+    t = (state.get("reply_aliases") or {}).get(mid) or (frags or {}).get(mid)
     if t:
         return str(t)
     for k, e in (state.get("nl_nonces") or {}).items():
@@ -3067,8 +3257,8 @@ def channel_kind(cid):
             return None
         _CHANNEL_LOOKUP[cid] = (
             ch.get("type") in (1, 3),
-            frozenset(str((r or {}).get("id"))
-                      for r in ch.get("recipients") or []))
+            frozenset(str((r or {}).get("id")) for r in ch.get("recipients") or []),
+        )
     dm, recips = _CHANNEL_LOOKUP[cid]
     if not dm:
         return "guild"
@@ -3081,24 +3271,22 @@ def _unknown_channel_problem(state, triggers, cid, index):
     the channel of the (non-owner) item it answers, or in a known
     non-owner DM. Anything else is looked up (the monitor's records of
     the owners' DM channels are best effort), failing closed."""
-    if cid in CHANNELS or any(str(c.get("id")) == cid
-                              for cs in _GUILD_CHANNELS.values()
-                              for c in cs):
+    if cid in CHANNELS or any(
+        str(c.get("id")) == cid for cs in _GUILD_CHANNELS.values() for c in cs
+    ):
         return None
     if len(triggers) == 1:
         t = next(iter(triggers))
         meta = (state.get("item_meta") or {}).get(t) or {}
-        if cid in (str(meta.get("channel_id")),
-                   index["channels"].get(t)):
+        if cid in (str(meta.get("channel_id")), index["channels"].get(t)):
             return None
     if cid in DM_CHANNEL_USER:
-        return None   # a listed person's DM (owners' were caught above)
+        return None  # a listed person's DM (owners' were caught above)
     kind = channel_kind(cid)
     if kind in ("guild", "dm"):
         return None
     if kind == "owner_dm":
-        return ("owner DM channel: the item names no owner DM that holds "
-                "a live nonce")
+        return "owner DM channel: the item names no owner DM that holds a live nonce"
     return f"channel {cid}: unknown, and could not be looked up"
 
 
@@ -3115,43 +3303,42 @@ def owner_dm_gate(state, item, index=None):
     index = index or {"frags": {}, "owners": {}, "channels": {}}
     named = [str(item[f]) for f in ("item", "reply_to") if item.get(f)]
     triggers = {trigger_of(state, m, index["frags"]) for m in named}
-    owner = {t for t in triggers
-             if is_owner_dm_item(state, t) or t in index["owners"]}
+    owner = {t for t in triggers if is_owner_dm_item(state, t) or t in index["owners"]}
     cid = str(item.get("channel_id") or "")
     if not owner:
-        if cid not in owner_dm_channels(state) \
-                and cid not in index["owners"].values():
+        if cid not in owner_dm_channels(state) and cid not in index["owners"].values():
             return _unknown_channel_problem(state, triggers, cid, index)
         # An item may always answer in its own channel: one queued in
         # this DM before its author became an owner. (Nobody else's
         # item lives in an owner's 1:1 DM.)
-        meta = (state.get("item_meta") or {}).get(next(iter(triggers))) \
-            if len(triggers) == 1 else None
+        meta = (
+            (state.get("item_meta") or {}).get(next(iter(triggers))) if len(triggers) == 1 else None
+        )
         if meta and str(meta.get("channel_id")) == cid:
             return None
-        return ("owner DM channel: the item names no owner DM that holds "
-                "a live nonce")
+        return "owner DM channel: the item names no owner DM that holds a live nonce"
     if len(owner) != 1 or len(triggers) != 1:
-        return ("owner DM: the item must answer exactly one owner DM, "
-                "named by item and reply_to, in its own channel")
+        return (
+            "owner DM: the item must answer exactly one owner DM, "
+            "named by item and reply_to, in its own channel"
+        )
     qid = owner.pop()
     if item.get("item") and str(item["item"]) != qid:
         return "owner DM: item must be the DM's own message_id"
-    if cid != (_owner_dm_channel_of(state, qid)
-               or index["owners"].get(qid)):
+    if cid != (_owner_dm_channel_of(state, qid) or index["owners"].get(qid)):
         return f"owner DM {qid}: wrong channel"
     got, problem = item_nonce(item)
     if problem:
         return f"owner DM {qid}: bad nonce ({problem})"
     want = ((state.get("nl_nonces") or {}).get(qid) or {}).get("nonce")
     if not want:
-        return (f"owner DM {qid}: bad nonce (none live: answered "
-                f"already, or not handed out yet)")
+        return f"owner DM {qid}: bad nonce (none live: answered already, or not handed out yet)"
     if not got:
-        return (f"owner DM {qid}: bad nonce (missing: copy the item's "
-                f"{OWNER_DM_NONCE_FIELD} from the wake payload)")
-    if not hmac.compare_digest(str(want).encode(),
-                               got.encode("utf-8", "replace")):
+        return (
+            f"owner DM {qid}: bad nonce (missing: copy the item's "
+            f"{OWNER_DM_NONCE_FIELD} from the wake payload)"
+        )
+    if not hmac.compare_digest(str(want).encode(), got.encode("utf-8", "replace")):
         return f"owner DM {qid}: bad nonce (wrong)"
     return None
 
@@ -3166,8 +3353,7 @@ def redact_nonces(item):
         out[OWNER_DM_NONCE_FIELD] = "(redacted)"
     if REPLY_NONCE_FIELD in out:
         out[REPLY_NONCE_FIELD] = "(redacted)"
-    if isinstance(out.get("settings"), dict) \
-            and "nonce" in out["settings"]:
+    if isinstance(out.get("settings"), dict) and "nonce" in out["settings"]:
         out["settings"] = dict(out["settings"], nonce="(redacted)")
     return out
 
@@ -3182,8 +3368,7 @@ def redact_nonces(item):
 # that looks like a secret; at most MEMORY_PER_DAY a day.
 # memory.save_dms: off turns it off.
 # ---------------------------------------------------------------------------
-MEMORY_FILE = os.environ.get("MUSE_MEMORY_FILE") \
-    or os.path.expanduser("~/MEMORY.md")
+MEMORY_FILE = os.environ.get("MUSE_MEMORY_FILE") or os.path.expanduser("~/MEMORY.md")
 MEMORY_FACTS_PER_ITEM = 5
 MEMORY_FACT_MAX = 300
 MEMORY_PER_DAY = 20
@@ -3211,16 +3396,26 @@ def remember_check(state, item, qid, index):
         return "remember: only in an owner's own DM", None
     want = ((state.get("nl_nonces") or {}).get(t) or {}).get("nonce")
     got, _problem = item_nonce(item)
-    if not want or not got or not hmac.compare_digest(
-            str(want).encode(), got.encode("utf-8", "replace")):
+    if (
+        not want
+        or not got
+        or not hmac.compare_digest(str(want).encode(), got.encode("utf-8", "replace"))
+    ):
         return "remember: needs the owner DM's live nonce", None
     meta = (state.get("item_meta") or {}).get(t) or {}
-    if meta.get("kind") != "dm" or not meta.get("owner_dm") \
-            or str(meta.get("author_id")) not in OWNER_USER_IDS \
-            or meta.get("forwarded") or meta.get("has_inputs"):
-        print(f"Not saving facts from owner DM {t} to memory: not the "
-              f"owner's own words (a notice, forward, attachment or "
-              f"reply), or not an owner now.", flush=True)
+    if (
+        meta.get("kind") != "dm"
+        or not meta.get("owner_dm")
+        or str(meta.get("author_id")) not in OWNER_USER_IDS
+        or meta.get("forwarded")
+        or meta.get("has_inputs")
+    ):
+        print(
+            f"Not saving facts from owner DM {t} to memory: not the "
+            f"owner's own words (a notice, forward, attachment or "
+            f"reply), or not an owner now.",
+            flush=True,
+        )
         return None, None
     return None, t
 
@@ -3232,17 +3427,18 @@ def save_facts(state, item, t):
         return
     done = state.setdefault("remembered", {})
     if t in done:
-        return                 # a resend of an item already saved
+        return  # a resend of an item already saved
     if not settings().top("memory.save_dms"):
-        print("Not saving facts to memory: memory.save_dms is off.",
-              flush=True)
+        print("Not saving facts to memory: memory.save_dms is off.", flush=True)
         return
     if not os.path.isfile(MEMORY_FILE):
         if not _MEMORY_MISSING["logged"]:
             _MEMORY_MISSING["logged"] = True
-            print(f"Not saving facts to memory: no {MEMORY_FILE} (set "
-                  f"MUSE_MEMORY_FILE to the Muse's memory file).",
-                  flush=True)
+            print(
+                f"Not saving facts to memory: no {MEMORY_FILE} (set "
+                f"MUSE_MEMORY_FILE to the Muse's memory file).",
+                flush=True,
+            )
         return
     today = time.strftime("%Y-%m-%d", time.gmtime())
     used = state.get("remembered_day") or {}
@@ -3251,8 +3447,7 @@ def save_facts(state, item, t):
     for fact in item["remember"][:MEMORY_FACTS_PER_ITEM]:
         flat = " ".join(str(fact).split())
         if secret_in(flat):
-            print("Not saving a fact to memory: it looks like a secret.",
-                  flush=True)
+            print("Not saving a fact to memory: it looks like a secret.", flush=True)
             continue
         line = memory_line(flat)
         if not line or n + len(lines) >= MEMORY_PER_DAY:
@@ -3265,13 +3460,12 @@ def save_facts(state, item, t):
                 if end:
                     f.seek(end - 1)
                 gap = b"\n" if end and f.read(1) != b"\n" else b""
-            with open(MEMORY_FILE, "ab") as f:   # appended: one write
+            with open(MEMORY_FILE, "ab") as f:  # appended: one write
                 f.write(gap + "".join(lines).encode("utf-8", "replace"))
         except OSError as e:
             print(f"Could not save facts to memory: {e}", flush=True)
             return
-        print(f"Saved {len(lines)} fact(s) from owner DM {t} to "
-              f"{MEMORY_FILE}.", flush=True)
+        print(f"Saved {len(lines)} fact(s) from owner DM {t} to {MEMORY_FILE}.", flush=True)
     done[t] = int(time.time())
     _keep_last(done, 300)
     state["remembered_day"] = {"day": today, "n": n + len(lines)}
@@ -3287,11 +3481,10 @@ def _queued_owner_dm(state, q):
         return _meta_owner_dm(meta)
     card = q.get("settings") if isinstance(q.get("settings"), dict) else {}
     # (A reminder or web watch firing in an owner's DM is one too.)
-    dm = q.get("kind") == "dm" or (q.get("kind") in ("reminder",
-                                                     "watch-met")
-                                   and card.get("where") == "dm")
-    return dm and card.get("speaker") == "owner" \
-        and str(q.get("author_id")) in OWNER_USER_IDS
+    dm = q.get("kind") == "dm" or (
+        q.get("kind") in ("reminder", "watch-met") and card.get("where") == "dm"
+    )
+    return dm and card.get("speaker") == "owner" and str(q.get("author_id")) in OWNER_USER_IDS
 
 
 def owner_dm_upkeep(state, force=False):
@@ -3307,16 +3500,18 @@ def owner_dm_upkeep(state, force=False):
     _OWNER_DM_UPKEEP["next"] = now + OWNER_DM_UPKEEP_SECS
     try:
         queue = load_queue()
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return
     n = state.setdefault("nl_nonces", {})
     for q in queue:
-        if not isinstance(q, dict) or not q.get("message_id") \
-                or not _queued_owner_dm(state, q):
+        if not isinstance(q, dict) or not q.get("message_id") or not _queued_owner_dm(state, q):
             continue
         mid = str(q["message_id"])
-        frags = [str(f["message_id"]) for f in q.get("burst_fragments")
-                 or [] if isinstance(f, dict) and f.get("message_id")]
+        frags = [
+            str(f["message_id"])
+            for f in q.get("burst_fragments") or []
+            if isinstance(f, dict) and f.get("message_id")
+        ]
         e = n.get(mid)
         if isinstance(e, dict) and e.get("nonce"):
             e["at"] = now
@@ -3325,12 +3520,14 @@ def owner_dm_upkeep(state, force=False):
             if frags and not e.get("fragments"):
                 e["fragments"] = frags
             continue
-        n[mid] = {"nonce": secrets.token_hex(16), "at": now,
-                  "channel_id": str(q.get("channel_id") or "")}
+        n[mid] = {
+            "nonce": secrets.token_hex(16),
+            "at": now,
+            "channel_id": str(q.get("channel_id") or ""),
+        }
         if frags:
             n[mid]["fragments"] = frags
-        print(f"Owner DM {mid} had no nonce; minted one for its next "
-              f"wake.", flush=True)
+        print(f"Owner DM {mid} had no nonce; minted one for its next wake.", flush=True)
     owner_items_upkeep(state, queue, now)
     owner_dm_write_nonces(state)
 
@@ -3362,8 +3559,7 @@ def owner_own_words(content):
     text = content if isinstance(content, str) else ""
     text = re.sub(r"```.*?(```|$)", " ", text, flags=re.S)
     text = re.sub(r"`[^`\n]*`", " ", text)
-    return "\n".join(ln for ln in text.split("\n")
-                     if not ln.lstrip().startswith(">"))
+    return "\n".join(ln for ln in text.split("\n") if not ln.lstrip().startswith(">"))
 
 
 def _norm_name(text):
@@ -3375,7 +3571,8 @@ def _norm_name(text):
 BARE_NAME_STOPWORDS = frozenset(
     "the a an to in into on of for and or but this that these those it "
     "its here there me you him her us them my your our their all any "
-    "some channel server thread".split())
+    "some channel server thread".split()
+)
 _THREAD_TYPES = (10, 11, 12)
 
 
@@ -3387,8 +3584,7 @@ def _server_channels(gid):
         if isinstance(c, dict) and c.get("type") not in (4,) + _THREAD_TYPES:
             out[str(c.get("id"))] = str(c.get("name") or "")
     for cid, info in CHANNELS.items():
-        if str(info.get("guild_id")) == str(gid) and not info.get("thread") \
-                and str(cid) not in out:
+        if str(info.get("guild_id")) == str(gid) and not info.get("thread") and str(cid) not in out:
             out[str(cid)] = str(info.get("name") or "")
     return out
 
@@ -3405,17 +3601,18 @@ def owner_targets(content, guild_id=None):
     owner's words (owner_own_words)."""
     text = owner_own_words(content)
     ids = set(re.findall(r"<#([1-9][0-9]{16,19})>", text))
-    names = {n.lower() for n in re.findall(
-        r"(?<![\w&<#])#([^\s#<>@:,;!?()\[\]{}'\"`*~|]{1,100})", text)}
+    names = {
+        n.lower() for n in re.findall(r"(?<![\w&<#])#([^\s#<>@:,;!?()\[\]{}'\"`*~|]{1,100})", text)
+    }
     if guild_id:
         pools = [_server_channels(guild_id)]
     else:
-        pools = [_server_channels(g) for g in
-                 {str(i.get("guild_id")) for i in CHANNELS.values()}
-                 | set(_GUILD_CHANNELS)]
+        pools = [
+            _server_channels(g)
+            for g in {str(i.get("guild_id")) for i in CHANNELS.values()} | set(_GUILD_CHANNELS)
+        ]
     for name in names:
-        hits = {cid for pool in pools for cid, n in pool.items()
-                if n.lower() == name}
+        hits = {cid for pool in pools for cid, n in pool.items() if n.lower() == name}
         if guild_id or len(hits) == 1:
             ids |= hits
     post = set()
@@ -3423,22 +3620,30 @@ def owner_targets(content, guild_id=None):
         words = _norm_name(text)
         for cid, n in _server_channels(guild_id).items():
             bare = _norm_name(n)
-            if len(bare) >= 3 and bare not in BARE_NAME_STOPWORDS \
-                    and re.search(r"(?<!\w)(?:in|to|into) (?:the )?"
-                                  + re.escape(bare) + r"(?!\w)", words):
+            if (
+                len(bare) >= 3
+                and bare not in BARE_NAME_STOPWORDS
+                and re.search(
+                    r"(?<!\w)(?:in|to|into) (?:the )?" + re.escape(bare) + r"(?!\w)", words
+                )
+            ):
                 post.add(cid)
     return sorted(ids), sorted(post - ids)
 
 
-def note_owner_item(state, mid, dm=False, channel_id=None, content="",
-                    guild_id=None):
+def note_owner_item(state, mid, dm=False, channel_id=None, content="", guild_id=None):
     """Queue item mid is an owner's command: mint its nonce (an owner
     DM's is its owner_dm_nonce), resolve where the owner's own words
     point (owner_targets, ids only), and write owner_items.json."""
     e = state.setdefault("owner_items", {})
     ids, post = owner_targets(content, guild_id)
-    e[str(mid)] = {"at": time.time(), "channel_id": str(channel_id or ""),
-                   "dm": bool(dm), "channels": ids, "post_channels": post}
+    e[str(mid)] = {
+        "at": time.time(),
+        "channel_id": str(channel_id or ""),
+        "dm": bool(dm),
+        "channels": ids,
+        "post_channels": post,
+    }
     if not dm:
         e[str(mid)]["nonce"] = secrets.token_hex(16)
     _keep_last(e, 300)
@@ -3461,10 +3666,13 @@ def owner_items_write(state, check=False):
             continue
         n = e.get("nonce") or (nl.get(mid) or {}).get("nonce")
         if n:
-            body[mid] = {"nonce": n, "channel_id": e.get("channel_id"),
-                         "dm": bool(e.get("dm")),
-                         "channels": e.get("channels") or [],
-                         "post_channels": e.get("post_channels") or []}
+            body[mid] = {
+                "nonce": n,
+                "channel_id": e.get("channel_id"),
+                "dm": bool(e.get("dm")),
+                "channels": e.get("channels") or [],
+                "post_channels": e.get("post_channels") or [],
+            }
     _publish(OWNER_ITEMS_FILE, body, _OWNER_ITEMS_WRITTEN, check)
 
 
@@ -3473,19 +3681,28 @@ def owner_items_upkeep(state, queue, now):
     a queued owner command that has none (state.json lost); rewrite a
     lost or mangled owner_items.json. Then the same for reply nonces."""
     e = state.setdefault("owner_items", {})
-    queued = {str(q["message_id"]): q for q in queue
-              if isinstance(q, dict) and q.get("message_id")}
-    for mid in [m for m, v in e.items() if m not in queued and (
-            not isinstance(v, dict)
-            or now - v.get("at", 0) > OWNER_ITEM_GRACE_SECS)]:
+    queued = {str(q["message_id"]): q for q in queue if isinstance(q, dict) and q.get("message_id")}
+    for mid in [
+        m
+        for m, v in e.items()
+        if m not in queued
+        and (not isinstance(v, dict) or now - v.get("at", 0) > OWNER_ITEM_GRACE_SECS)
+    ]:
         del e[mid]
     for mid, q in queued.items():
-        if mid not in e and q.get("owner_command") is True \
-                and str(q.get("author_id")) in OWNER_USER_IDS:
-            note_owner_item(state, mid, dm=_queued_owner_dm(state, q),
-                            channel_id=q.get("channel_id"),
-                            content=q.get("content"),
-                            guild_id=q.get("guild_id"))
+        if (
+            mid not in e
+            and q.get("owner_command") is True
+            and str(q.get("author_id")) in OWNER_USER_IDS
+        ):
+            note_owner_item(
+                state,
+                mid,
+                dm=_queued_owner_dm(state, q),
+                channel_id=q.get("channel_id"),
+                content=q.get("content"),
+                guild_id=q.get("guild_id"),
+            )
     owner_items_write(state, check=True)
     reply_nonces_upkeep(state, queued, now)
 
@@ -3512,39 +3729,45 @@ def reply_nonce_mint(state, mid):
     n = state.setdefault("reply_nonces", {})
     e = n.get(str(mid))
     if not (isinstance(e, dict) and e.get("nonce")):
-        n[str(mid)] = e = {"nonce": secrets.token_hex(16),
-                           "at": time.time()}
+        n[str(mid)] = e = {"nonce": secrets.token_hex(16), "at": time.time()}
         _keep_last(n, 1000)
     reply_nonces_write(state)
     return e["nonce"]
 
 
 def reply_nonces_write(state, check=False):
-    body = {k: v["nonce"] for k, v in (state.get("reply_nonces")
-                                       or {}).items()
-            if isinstance(v, dict) and v.get("nonce")}
+    body = {
+        k: v["nonce"]
+        for k, v in (state.get("reply_nonces") or {}).items()
+        if isinstance(v, dict) and v.get("nonce")
+    }
     if not _publish(ITEM_NONCES_FILE, body, _ITEM_NONCES_WRITTEN, check):
         # The wake hook cannot hand out nonces it cannot read, so no
         # reply can be sent: say so (not "the prompt is out of date").
         day = time.strftime("%Y-%m-%d")
         if _ITEM_NONCES_ALERT["day"] != day:
             _ITEM_NONCES_ALERT["day"] = day
-            notify_owners("I can't save files in my folder, so I can't "
-                          "send replies right now. The disk may be full, "
-                          "or the folder's permissions changed.")
+            notify_owners(
+                "I can't save files in my folder, so I can't "
+                "send replies right now. The disk may be full, "
+                "or the folder's permissions changed."
+            )
 
 
 def reply_nonces_upkeep(state, queued, now):
     """Every queued item holds a live reply_nonce (minted again when
     state.json was lost); ones no longer queued are dropped."""
     n = state.setdefault("reply_nonces", {})
-    for mid in [m for m, v in n.items() if m not in queued and (
-            not isinstance(v, dict)
-            or now - v.get("at", 0) > OWNER_ITEM_GRACE_SECS)]:
+    for mid in [
+        m
+        for m, v in n.items()
+        if m not in queued
+        and (not isinstance(v, dict) or now - v.get("at", 0) > OWNER_ITEM_GRACE_SECS)
+    ]:
         del n[mid]
     for mid, q in queued.items():
         if q.get("kind") == PRO_KIND:
-            continue   # a heartbeat slot: its slot nonce binds it
+            continue  # a heartbeat slot: its slot nonce binds it
         if not (n.get(mid) or {}).get("nonce"):
             n[mid] = {"nonce": secrets.token_hex(16), "at": now}
     reply_nonces_write(state, check=True)
@@ -3582,13 +3805,11 @@ def ensure_settings_command(app_id):
     "Why no reply?" message command WHY_COMMAND. Returns "created",
     "updated" or "unchanged" (the first that applies: /settings, then
     the message command); raises on failure."""
-    base = f"/applications/{urllib.parse.quote(str(app_id), safe='')}" \
-        "/commands"
+    base = f"/applications/{urllib.parse.quote(str(app_id), safe='')}/commands"
     have = api_get(base)
     if not isinstance(have, list):
         raise ValueError(f"unexpected command list: {str(have)[:80]}")
-    r1 = _ensure_command(base, have, SETTINGS_COMMAND,
-                         (SETTINGS_COMMAND["name"],))
+    r1 = _ensure_command(base, have, SETTINGS_COMMAND, (SETTINGS_COMMAND["name"],))
     r2 = _ensure_command(base, have, WHY_COMMAND, WHY_NAMES)
     return r1 if r1 != "unchanged" else r2
 
@@ -3597,9 +3818,11 @@ def _ensure_command(base, have, want, names):
     """Create or update one command (names: what it may be called; the
     one already registered is kept). A message command name Discord
     refuses (400) is retried with the next name."""
-    mine = [c for c in have if isinstance(c, dict)
-            and c.get("name") in names
-            and c.get("type", 1) == want["type"]]
+    mine = [
+        c
+        for c in have
+        if isinstance(c, dict) and c.get("name") in names and c.get("type", 1) == want["type"]
+    ]
     if mine:
         want = dict(want, name=mine[0]["name"])
         if not _command_differs(mine[0], want):
@@ -3614,8 +3837,9 @@ def _ensure_command(base, have, want, names):
         except Exception as e:
             if getattr(e, "code", None) != 400 or i == len(names) - 1:
                 raise
-            print(f"Discord refused the command name {name!r}; trying "
-                  f"{names[i + 1]!r}.", flush=True)
+            print(
+                f"Discord refused the command name {name!r}; trying {names[i + 1]!r}.", flush=True
+            )
     return "unchanged"
 
 
@@ -3624,15 +3848,13 @@ def register_commands(gateway_status=None):
     try per COMMAND_RETRY_SECS). Never raises."""
     reg = _COMMAND_REG
     now = time.time()
-    if reg["done"] or now < reg["next_try"] or BOT_USER_ID is None \
-            or rest_backing_off():
+    if reg["done"] or now < reg["next_try"] or BOT_USER_ID is None or rest_backing_off():
         return None
     reg["next_try"] = now + COMMAND_RETRY_SECS
     try:
         if not _APP_ID["id"]:
             app = (gateway_status or {}).get("application") or {}
-            _APP_ID["id"] = app.get("id") if isinstance(app, dict) \
-                else None
+            _APP_ID["id"] = app.get("id") if isinstance(app, dict) else None
         if not _APP_ID["id"]:
             _APP_ID["id"] = (api_get("/applications/@me") or {}).get("id")
         if not _APP_ID["id"]:
@@ -3641,18 +3863,25 @@ def register_commands(gateway_status=None):
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
         if err != reg["last_error"]:
-            hint = (" (the bot's invite may lack the applications.commands "
-                    "scope; see docs/SETUP.md)"
-                    if getattr(e, "code", None) == 403 else "")
-            print(f"/settings command registration failed ({err}){hint}; "
-                  f"retrying in {COMMAND_RETRY_SECS}s.", flush=True)
+            hint = (
+                " (the bot's invite may lack the applications.commands scope; see docs/SETUP.md)"
+                if getattr(e, "code", None) == 403
+                else ""
+            )
+            print(
+                f"/settings command registration failed ({err}){hint}; "
+                f"retrying in {COMMAND_RETRY_SECS}s.",
+                flush=True,
+            )
         reg["last_error"] = err
         return None
     reg["done"] = True
     reg["last_error"] = None
     if result != "unchanged":
-        print(f"/settings command {result} (global; it can take a moment "
-              f"to show up in Discord).", flush=True)
+        print(
+            f"/settings command {result} (global; it can take a moment to show up in Discord).",
+            flush=True,
+        )
     return result
 
 
@@ -3682,8 +3911,9 @@ def trigger_kind(msg, guild_id=None, state=None):
 def addresses_bot(msg):
     """Direct address as bot.respond_to defines it: a platform @mention
     or a Discord reply to the bot."""
-    return ("mention" in RESPOND_TO and is_mention(msg)) \
-        or ("reply_to_bot" in RESPOND_TO and is_reply_to_bot(msg))
+    return ("mention" in RESPOND_TO and is_mention(msg)) or (
+        "reply_to_bot" in RESPOND_TO and is_reply_to_bot(msg)
+    )
 
 
 def trigger_verdict(msg, guild_id=None, state=None):
@@ -3693,31 +3923,33 @@ def trigger_verdict(msg, guild_id=None, state=None):
     author = _who(msg)
     if author.get("id") == BOT_ID:
         return None, None
-    gid = guild_id or msg.get("guild_id") \
+    gid = (
+        guild_id
+        or msg.get("guild_id")
         or (CHANNELS.get(msg.get("channel_id")) or {}).get("guild_id")
+    )
     here = settings().resolve(scope_for(gid, msg.get("channel_id")))
     replies = here["who.replies"]
     direct = addresses_bot(msg)
     owner = str(author.get("id") or "") in OWNER_USER_IDS
-    if owner and gid and gid in OWNER_IN_GUILD \
-            and OWNER_IN_GUILD[gid] is not True:
+    if owner and gid and gid in OWNER_IN_GUILD and OWNER_IN_GUILD[gid] is not True:
         OWNER_IN_GUILD[gid] = True  # an owner wrote there: a member
         _OWNER_SPOKE[gid] = True
     if replies == "off":
         return None, "who.replies is off here" if direct else None
     if not owner and owners_absent(gid):
-        return None, ("none of the owners is in this server"
-                      if direct else None)
+        return None, ("none of the owners is in this server" if direct else None)
     if is_bot_author(author) and here["who.bots"] == "ignore":
         return None, "who.bots: ignore" if direct else None
     freely = replies == "freely" and not is_bot_author(author)
-    if not direct and not freely and not (state is not None
-                           and replies == "conversational"
-                           and follow_up_open(state, msg)):
+    if (
+        not direct
+        and not freely
+        and not (state is not None and replies == "conversational" and follow_up_open(state, msg))
+    ):
         return None, None
     if not who_allows(msg, gid, here):
-        return None, ("not allowed by who.allow / who.ignore"
-                      if direct else None)
+        return None, ("not allowed by who.allow / who.ignore" if direct else None)
     return ("mention" if direct else "follow_up"), None
 
 
@@ -3728,11 +3960,15 @@ def note_refused(msg, cname, reason):
     later, after a setting is relaxed. A deliberately ignored message
     stays ignored. Ordinary chatter is never ledgered."""
     author = _who(msg)
-    ledger_record(msg["id"], "skipped", f"settings: {reason}",
-                  channel_id=msg.get("channel_id"),
-                  author=author.get("username"), author_id=author.get("id"))
-    print(f"Not answering {author.get('username')} in {cname}: "
-          f"{reason}.", flush=True)
+    ledger_record(
+        msg["id"],
+        "skipped",
+        f"settings: {reason}",
+        channel_id=msg.get("channel_id"),
+        author=author.get("username"),
+        author_id=author.get("id"),
+    )
+    print(f"Not answering {author.get('username')} in {cname}: {reason}.", flush=True)
 
 
 def is_reply_to_bot(msg):
@@ -3783,9 +4019,11 @@ def hold_fragment(state, channel_id, msg):
     entry = state.get("pending", {}).get(key)
     if entry and msg["id"] != entry["first_id"]:
         entry["fragments"].append(msg)
-        print(f"Holding fragment from {_who(msg).get('username')} in "
-              f"{entry['channel_name']} for one coalesced reply.",
-              flush=True)
+        print(
+            f"Holding fragment from {_who(msg).get('username')} in "
+            f"{entry['channel_name']} for one coalesced reply.",
+            flush=True,
+        )
         return True
     return False
 
@@ -3801,14 +4039,16 @@ def stage_trigger(state, msg, cname, guild_id, kind, dm=False):
     pending = state.setdefault("pending", {})
     if key in pending:
         entry = pending[key]
-        if msg["id"] == entry["first_id"] or any(
-                f["id"] == msg["id"] for f in entry["fragments"]):
+        if msg["id"] == entry["first_id"] or any(f["id"] == msg["id"] for f in entry["fragments"]):
             return  # already in this burst (staged twice): nothing to add
         if kind == "mention" and entry.get("kind") == "follow_up":
             entry["kind"] = "mention"  # direct address beats a follow-up
         entry["fragments"].append(msg)
-        print(f"Additional trigger from {_who(msg).get('username')} "
-              f"folded into pending burst in {cname}.", flush=True)
+        print(
+            f"Additional trigger from {_who(msg).get('username')} "
+            f"folded into pending burst in {cname}.",
+            flush=True,
+        )
         return
     pending[key] = {
         "first_id": msg["id"],
@@ -3819,14 +4059,12 @@ def stage_trigger(state, msg, cname, guild_id, kind, dm=False):
         "kind": kind,  # "mention" | "follow_up" | "dm"
         "dm": dm,
         "first_seen": time.time(),
-        "window": BOT_COALESCE_SECS
-        if is_bot_author(msg.get("author")) else COALESCE_SECS,
+        "window": BOT_COALESCE_SECS if is_bot_author(msg.get("author")) else COALESCE_SECS,
         "trigger": msg,
         "fragments": [],
     }
     note_ingested(state, msg["id"])
-    print(f"Staged {kind} from {_who(msg).get('username')} "
-          f"in {cname} for coalescing.", flush=True)
+    print(f"Staged {kind} from {_who(msg).get('username')} in {cname} for coalescing.", flush=True)
 
 
 def stage_found(state, msg, cname, guild_id, kind):
@@ -3855,6 +4093,8 @@ def alias_fragments(state, trigger_id, fragments):
     for f in fragments:
         aliases[f["id"]] = trigger_id
     _keep_last(aliases, 500)
+
+
 # ---------------------------------------------------------------------------
 # Early burst flush. The coalesce window (behavior.coalesce_seconds, or
 # BOT_COALESCE_SECS for bot authors) is the MAXIMUM wait. With the
@@ -3895,8 +4135,7 @@ def note_activity(channel_id, user_id, msg_id=None):
     _activity[key] = act
     if len(_activity) > 1000:
         cutoff = time.time() - 600
-        for k in [k for k, a in _activity.items()
-                  if a.get("msg_at", 0) < cutoff]:
+        for k in [k for k, a in _activity.items() if a.get("msg_at", 0) < cutoff]:
             del _activity[k]
 
 
@@ -3905,15 +4144,14 @@ def burst_quiet(entry, now):
     act = _activity.get(f"{entry['channel_id']}:{entry['author_id']}")
     if not act or not act.get("msg_id"):
         return False
-    newest = max([entry["trigger"]] + entry["fragments"],
-                 key=lambda m: int(m["id"]))
+    newest = max([entry["trigger"]] + entry["fragments"], key=lambda m: int(m["id"]))
     if act["msg_id"] != newest["id"]:
         return False  # the gateway did not see the newest message
     if act.get("typing_seq", 0) > act["msg_seq"]:
         return False  # typing again since their newest message
-    quiet = BOT_BURST_QUIET_SECS \
-        if is_bot_author(entry["trigger"].get("author")) \
-        else BURST_QUIET_SECS
+    quiet = (
+        BOT_BURST_QUIET_SECS if is_bot_author(entry["trigger"].get("author")) else BURST_QUIET_SECS
+    )
     if entry.get("dm") and quiet == BURST_QUIET_SECS:
         quiet = DM_BURST_QUIET_SECS  # a human's DM
     return now - act["msg_at"] >= quiet
@@ -3928,14 +4166,12 @@ def pending_wait(state, now):
     for entry in state.get("pending", {}).values():
         if entry.get("next_try", 0) > now:
             continue  # enqueue back-off: its retry is minutes away
-        due.append(entry.get("first_seen", now)
-                   + entry.get("window", COALESCE_SECS))
-        act = _activity.get(f"{entry.get('channel_id')}:"
-                            f"{entry.get('author_id')}") or {}
+        due.append(entry.get("first_seen", now) + entry.get("window", COALESCE_SECS))
+        act = _activity.get(f"{entry.get('channel_id')}:{entry.get('author_id')}") or {}
         if act.get("msg_at"):
-            due.append(act["msg_at"] + (DM_BURST_QUIET_SECS
-                                        if entry.get("dm")
-                                        else BURST_QUIET_SECS))
+            due.append(
+                act["msg_at"] + (DM_BURST_QUIET_SECS if entry.get("dm") else BURST_QUIET_SECS)
+            )
     if not due:
         return None
     ahead = [d - now for d in due if d > now]
@@ -3954,17 +4190,21 @@ def flush_pending(state, queue, force=False):
         if not force and entry.get("next_try", 0) > now:
             continue  # enqueue failed recently; backing off before retry
         early = burst_quiet(entry, now)
-        if force or early or now - entry["first_seen"] >= entry.get(
-                "window", COALESCE_SECS):
+        if force or early or now - entry["first_seen"] >= entry.get("window", COALESCE_SECS):
             trigger = entry["trigger"]
             who = _who(trigger).get("username")
             n_queue = len(queue)
             try:
-                ok = enqueue_message(trigger, entry["channel_name"], state,
-                                     queue, dm=entry["kind"] == "dm",
-                                     fragments=entry["fragments"],
-                                     guild_id=entry["guild_id"],
-                                     follow_up=entry["kind"] == "follow_up")
+                ok = enqueue_message(
+                    trigger,
+                    entry["channel_name"],
+                    state,
+                    queue,
+                    dm=entry["kind"] == "dm",
+                    fragments=entry["fragments"],
+                    guild_id=entry["guild_id"],
+                    follow_up=entry["kind"] == "follow_up",
+                )
             except Exception as e:
                 # One poison burst must not hold back every other one:
                 # it is retried (then ledgered) like a failed enqueue.
@@ -3975,9 +4215,11 @@ def flush_pending(state, queue, force=False):
                 ok = False
             n_frag = len(entry["fragments"])
             why = " (author stopped typing)" if early and not force else ""
-            print(f"Flushed {entry['kind']} burst ({1 + n_frag} message(s)) "
-                  f"from {who} in {entry['channel_name']}: queued={ok}{why}",
-                  flush=True)
+            print(
+                f"Flushed {entry['kind']} burst ({1 + n_frag} message(s)) "
+                f"from {who} in {entry['channel_name']}: queued={ok}{why}",
+                flush=True,
+            )
             if ok:
                 del pending[key]
                 flushed = True
@@ -3987,8 +4229,7 @@ def flush_pending(state, queue, force=False):
                 # fragments ride on that item.
                 alias_fragments(state, trigger["id"], entry["fragments"])
                 del pending[key]
-            elif trigger["id"] in _quarantine_ids() \
-                    or _ledger_terminal(trigger["id"]):
+            elif trigger["id"] in _quarantine_ids() or _ledger_terminal(trigger["id"]):
                 # quarantine() or an enqueue gate (join watermark)
                 # already ledgered it.
                 del pending[key]
@@ -3998,21 +4239,28 @@ def flush_pending(state, queue, force=False):
                 entry["tries"] = entry.get("tries", 0) + 1
                 if entry["tries"] >= 3:
                     ledger_record_many(
-                        [trigger["id"]]
-                        + [f["id"] for f in entry["fragments"]],
-                        "skipped", f"enqueue failed {entry['tries']}x",
-                        channel_id=entry["channel_id"], author=who,
-                        author_id=_who(trigger).get("id"))
-                    print(f"Dropping burst from {who} in "
-                          f"{entry['channel_name']} after 3 failed "
-                          f"enqueues (recorded in mention ledger).",
-                          flush=True)
+                        [trigger["id"]] + [f["id"] for f in entry["fragments"]],
+                        "skipped",
+                        f"enqueue failed {entry['tries']}x",
+                        channel_id=entry["channel_id"],
+                        author=who,
+                        author_id=_who(trigger).get("id"),
+                    )
+                    print(
+                        f"Dropping burst from {who} in "
+                        f"{entry['channel_name']} after 3 failed "
+                        f"enqueues (recorded in mention ledger).",
+                        flush=True,
+                    )
                     del pending[key]
                 else:
                     entry["next_try"] = now + 300
-                    print(f"Enqueue failed for burst in "
-                          f"{entry['channel_name']}; retry "
-                          f"{entry['tries']}/3 in 5 min.", flush=True)
+                    print(
+                        f"Enqueue failed for burst in "
+                        f"{entry['channel_name']}; retry "
+                        f"{entry['tries']}/3 in 5 min.",
+                        flush=True,
+                    )
     return flushed
 
 
@@ -4043,11 +4291,9 @@ def reply_reference(message_id):
     return {"message_id": message_id, "fail_if_not_exists": False}
 
 
-def send_reply(channel_id, text, reply_to=None, nonce=None,
-               components=None, mentions=None):
+def send_reply(channel_id, text, reply_to=None, nonce=None, components=None, mentions=None):
     text = guard_outgoing({"content": text}, channel_id)["content"]
-    data = {"content": text,
-            "allowed_mentions": mentions or SEND_ALLOWED_MENTIONS}
+    data = {"content": text, "allowed_mentions": mentions or SEND_ALLOWED_MENTIONS}
     if components:
         data["components"] = components
     if reply_to:
@@ -4089,15 +4335,14 @@ TYPING_EVERY_SECS = 8
 TYPING_MAX_SECS = 180
 _typing_lock = threading.Lock()
 _typing_sources = {}  # "burst:<key>" / "item:<id>" -> (channel_id, start)
-_typing_last = {}     # channel_id -> time of the last typing ping
+_typing_last = {}  # channel_id -> time of the last typing ping
 
 
 def typing_sync(prefix, current):
     """Make current ({key: (channel_id, start_ts)}) the full set of typing
     sources whose keys start with prefix."""
     with _typing_lock:
-        for key in [k for k in _typing_sources
-                    if k.startswith(prefix) and k not in current]:
+        for key in [k for k in _typing_sources if k.startswith(prefix) and k not in current]:
             del _typing_sources[key]
         _typing_sources.update(current)
 
@@ -4123,17 +4368,14 @@ def typing_refresh(state, queue=None):
         # rate cap would otherwise keep it typing for the ~15 min of
         # retries).
         if entry.get("next_try", 0) <= now:
-            bursts["burst:" + key] = (entry["channel_id"],
-                                      entry.get("first_seen", now))
+            bursts["burst:" + key] = (entry["channel_id"], entry.get("first_seen", now))
     typing_sync("burst:", bursts)
     items = {}
     for item in load_queue() if queue is None else queue:
-        if not isinstance(item, dict) or not item.get("channel_id") \
-                or not item.get("message_id"):
+        if not isinstance(item, dict) or not item.get("channel_id") or not item.get("message_id"):
             continue
         start = item.get("queued_at") or _snowflake_ts(item["message_id"])
-        items["item:" + str(item["message_id"])] = (item["channel_id"],
-                                                    start)
+        items["item:" + str(item["message_id"])] = (item["channel_id"], start)
     typing_sync("item:", items)
 
 
@@ -4145,13 +4387,11 @@ def _typing_thread_main():
                 continue
             now = time.time()
             with _typing_lock:
-                active = {cid for cid, start in _typing_sources.values()
-                          if now - start < TYPING_MAX_SECS}
-                due = [cid for cid in active
-                       if now - _typing_last.get(cid, 0)
-                       >= TYPING_EVERY_SECS]
-                for cid in [c for c, t in _typing_last.items()
-                            if now - t > 60]:
+                active = {
+                    cid for cid, start in _typing_sources.values() if now - start < TYPING_MAX_SECS
+                }
+                due = [cid for cid in active if now - _typing_last.get(cid, 0) >= TYPING_EVERY_SECS]
+                for cid in [c for c, t in _typing_last.items() if now - t > 60]:
                     del _typing_last[cid]
             for cid in due:
                 send_typing(cid)
@@ -4165,7 +4405,11 @@ def add_reaction(channel_id, message_id, emoji):
     encoded = urllib.parse.quote(emoji, safe="")  # "/" stays in the segment
     try:
         guard_outgoing({"content": emoji}, channel_id)
-        _api_call(lambda: discord_request("PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded}/@me"))
+        _api_call(
+            lambda: discord_request(
+                "PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded}/@me"
+            )
+        )
         return True
     except Exception as e:
         print(f"Reaction {emoji!r} failed on {message_id}: {e}", flush=True)
@@ -4192,8 +4436,7 @@ def normalize_parts(item):
     budget of all parts together (the later ones are cut first).
     """
     raw = item.get("parts")
-    clean = ([p for p in raw if isinstance(p, str) and p.strip()]
-             if isinstance(raw, list) else [])
+    clean = [p for p in raw if isinstance(p, str) and p.strip()] if isinstance(raw, list) else []
     if clean:
         parts = [sanitize_reply(p) for p in clean[:MAX_PARTS]]
         if len(clean) > MAX_PARTS:
@@ -4211,8 +4454,9 @@ def normalize_parts(item):
     return out
 
 
-def send_fragmented(channel_id, parts, reply_to=None, attachments=(),
-                    mentions=None, nonce_key=None):
+def send_fragmented(
+    channel_id, parts, reply_to=None, attachments=(), mentions=None, nonce_key=None
+):
     """Send a reply as sequential messages, like a person thinking aloud.
 
     The first part is threaded under reply_to; follow-ups go out as plain
@@ -4228,7 +4472,7 @@ def send_fragmented(channel_id, parts, reply_to=None, attachments=(),
     """
     # Every part checked before the first goes out: a secret in part 3
     # never leaves parts 1 and 2 half-sent.
-    guard_outgoing({"content": list(parts)}, channel_id)   # and joined
+    guard_outgoing({"content": list(parts)}, channel_id)  # and joined
     last_idx = len(parts) - 1
     sent = []
     for i, part in enumerate(parts):
@@ -4240,8 +4484,8 @@ def send_fragmented(channel_id, parts, reply_to=None, attachments=(),
         try:
             if i == last_idx and attachments:
                 got = send_reply_with_files(
-                    channel_id, part, attachments,
-                    reply_to if i == 0 else None, nonce, **kw)
+                    channel_id, part, attachments, reply_to if i == 0 else None, nonce, **kw
+                )
             elif i == 0:
                 got = send_reply(channel_id, part, reply_to, nonce, **kw)
             else:
@@ -4257,8 +4501,7 @@ def send_fragmented(channel_id, parts, reply_to=None, attachments=(),
     return sent
 
 
-def send_reply_with_files(channel_id, text, files, reply_to=None,
-                          nonce=None, mentions=None):
+def send_reply_with_files(channel_id, text, files, reply_to=None, nonce=None, mentions=None):
     """Send a message with file attachments via multipart/form-data.
     files: list of (local_path, filename)."""
     guard_outgoing({"content": text, "files": [name for _, name in files]}, channel_id)
@@ -4266,15 +4509,24 @@ def send_reply_with_files(channel_id, text, files, reply_to=None,
     for path, name in files:
         with open(path, "rb") as f:
             blobs.append((name, f.read()))
-    guard_outgoing({"content": text, "data": [blob.decode("latin-1") for _, blob in blobs],
-                    "files": [name for name, _ in blobs]}, channel_id)
+    guard_outgoing(
+        {
+            "content": text,
+            "data": [blob.decode("latin-1") for _, blob in blobs],
+            "files": [name for name, _ in blobs],
+        },
+        channel_id,
+    )
     payload = {"content": text, "allowed_mentions": mentions or SEND_ALLOWED_MENTIONS}
     if reply_to:
         payload["message_reference"] = reply_reference(reply_to)
     if nonce:
         payload.update(nonce=nonce, enforce_nonce=True)
-    return _api_call(lambda: discord_request("POST", f"/channels/{channel_id}/messages",
-                                           payload, files=blobs, timeout=60))
+    return _api_call(
+        lambda: discord_request(
+            "POST", f"/channels/{channel_id}/messages", payload, files=blobs, timeout=60
+        )
+    )
 
 
 def fit_for_discord(path):
@@ -4286,14 +4538,42 @@ def fit_for_discord(path):
     ext = os.path.splitext(path)[1].lower()
     if ext in (".png", ".jpg", ".jpeg", ".webp"):
         out = path + ".fit.jpg"
-        cmd = ["ffmpeg", "-v", "error", "-i", path, "-vf",
-               "scale='min(1600,iw)':-2", "-q:v", "5", "-y", out]
+        cmd = [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            path,
+            "-vf",
+            "scale='min(1600,iw)':-2",
+            "-q:v",
+            "5",
+            "-y",
+            out,
+        ]
     elif ext in (".mp4", ".mov", ".webm"):
         out = path + ".fit.mp4"
-        cmd = ["ffmpeg", "-v", "error", "-i", path, "-vf",
-               "scale='min(1280,iw)':-2", "-c:v", "libx264", "-pix_fmt",
-               "yuv420p", "-crf", "28", "-preset", "veryfast",
-               "-c:a", "aac", "-y", out]
+        cmd = [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            path,
+            "-vf",
+            "scale='min(1280,iw)':-2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-crf",
+            "28",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-y",
+            out,
+        ]
     else:
         return None, None
     try:
@@ -4324,8 +4604,7 @@ def sweep_generated():
                     for sub in os.listdir(fpath):
                         spath = os.path.join(fpath, sub)
                         try:
-                            if now - os.lstat(spath).st_mtime \
-                                    > GENERATED_TTL_SECS:
+                            if now - os.lstat(spath).st_mtime > GENERATED_TTL_SECS:
                                 os.remove(spath)
                                 removed = True
                         except OSError:
@@ -4334,8 +4613,8 @@ def sweep_generated():
                     # or is old itself: the worker may have just created
                     # it and not written its file yet.
                     if not os.listdir(fpath) and (
-                            removed or now - os.path.getmtime(fpath)
-                            > GENERATED_TTL_SECS):
+                        removed or now - os.path.getmtime(fpath) > GENERATED_TTL_SECS
+                    ):
                         os.rmdir(fpath)
                 elif now - os.path.getmtime(fpath) > GENERATED_TTL_SECS:
                     os.remove(fpath)
@@ -4349,9 +4628,11 @@ def sweep_gen_state(state):
     Approvals from before channel binding (a bare timestamp) go too."""
     approved = state.get("gen_approved", {})
     now = time.time()
-    for mid in [m for m, a in approved.items()
-                if not isinstance(a, dict)
-                or now - a.get("ts", 0) > GENERATED_TTL_SECS]:
+    for mid in [
+        m
+        for m, a in approved.items()
+        if not isinstance(a, dict) or now - a.get("ts", 0) > GENERATED_TTL_SECS
+    ]:
         approved.pop(mid, None)
     if len(state.get("gen_sent", [])) > 50:
         state["gen_sent"] = state["gen_sent"][-50:]
@@ -4369,11 +4650,16 @@ def media_permission(state, scope, here, author_matches):
         return False
     counts = _media_counts(state)
     for counter, cap in settings().cap_layers("media.per_day", scope):
-        sent = counts.get("sent_today", 0) if counter == "everywhere" \
+        sent = (
+            counts.get("sent_today", 0)
+            if counter == "everywhere"
             else (counts.get("counts") or {}).get(counter, 0)
+        )
         if sent >= cap:
-            print(f"Media generation: daily cap ({cap}) reached; not "
-                  f"granting may_generate", flush=True)
+            print(
+                f"Media generation: daily cap ({cap}) reached; not granting may_generate",
+                flush=True,
+            )
             return False
     return True
 
@@ -4422,12 +4708,10 @@ def _validate_gen_paths(paths, item_id):
         if not isinstance(p, str):
             continue
         # Workers sometimes hand over paths relative to $HOME.
-        ap = p if os.path.isabs(p) else os.path.join(
-            os.path.expanduser("~"), p)
+        ap = p if os.path.isabs(p) else os.path.join(os.path.expanduser("~"), p)
         rp = os.path.realpath(ap)
         if item_root is None or not rp.startswith(item_root + os.sep):
-            print(f"Dropping attachment outside generated/{item_id}/: {p}",
-                  flush=True)
+            print(f"Dropping attachment outside generated/{item_id}/: {p}", flush=True)
             continue
         if not os.path.isfile(rp):
             print(f"Dropping missing attachment: {p}", flush=True)
@@ -4473,14 +4757,16 @@ def _gen_item_id(state, item):
     reply_to = item.get("reply_to")
     resolved = None
     if reply_to is not None:
-        resolved = str(state.get("reply_aliases", {}).get(str(reply_to),
-                                                          reply_to))
+        resolved = str(state.get("reply_aliases", {}).get(str(reply_to), reply_to))
     claimed = item.get("item")
     if claimed is None:
         return resolved
     if resolved is not None and str(claimed) != resolved:
-        print(f"Note: outbox item names item {claimed} but replies to "
-              f"{reply_to} (item {resolved}); no attachments", flush=True)
+        print(
+            f"Note: outbox item names item {claimed} but replies to "
+            f"{reply_to} (item {resolved}); no attachments",
+            flush=True,
+        )
         return None
     return str(claimed)
 
@@ -4489,8 +4775,7 @@ def _gen_approval(state, item_id):
     """The live generation approval for a queue item ({"ts",
     "channel_id"}), or None."""
     a = state.get("gen_approved", {}).get(item_id) if item_id else None
-    if not isinstance(a, dict) \
-            or time.time() - a.get("ts", 0) > GENERATED_TTL_SECS:
+    if not isinstance(a, dict) or time.time() - a.get("ts", 0) > GENERATED_TTL_SECS:
         return None
     return a
 
@@ -4523,24 +4808,45 @@ def _fetch_complete(url, max_bytes, timeout, kind):
         for _ in range(FETCH_MAX_REDIRECTS + 1):
             addrs = _fetch_addrs(hop)
             if not addrs:
-                print("Refusing %s download from %s: not https, not an "
-                      "allowlisted media host, or not a public address" %
-                      (kind, hop[:120]), flush=True)
+                print(
+                    "Refusing %s download from %s: not https, not an "
+                    "allowlisted media host, or not a public address" % (kind, hop[:120]),
+                    flush=True,
+                )
                 return None, None
             p = urllib.parse.urlparse(hop)
-            pin = "%s:%d:%s" % (p.hostname, p.port or 443, ",".join(
-                "[%s]" % a if ":" in a else a for a in addrs))
+            pin = "%s:%d:%s" % (
+                p.hostname,
+                p.port or 443,
+                ",".join("[%s]" % a if ":" in a else a for a in addrs),
+            )
             r = subprocess.run(
-                ["curl", "-sS", "-f", "--proto", "=https", "--resolve", pin,
-                 "--max-time", str(timeout),
-                 "--max-filesize", str(max_bytes), "-A", ua,
-                 "-w", "\n%{http_code}\n%{content_type}\n%{redirect_url}",
-                 hop],
-                capture_output=True, timeout=timeout + 10)
+                [
+                    "curl",
+                    "-sS",
+                    "-f",
+                    "--proto",
+                    "=https",
+                    "--resolve",
+                    pin,
+                    "--max-time",
+                    str(timeout),
+                    "--max-filesize",
+                    str(max_bytes),
+                    "-A",
+                    ua,
+                    "-w",
+                    "\n%{http_code}\n%{content_type}\n%{redirect_url}",
+                    hop,
+                ],
+                capture_output=True,
+                timeout=timeout + 10,
+            )
             if r.returncode != 0 or not r.stdout:
-                print("curl %s download failed: %s" %
-                      (kind, r.stderr.decode(errors="replace")[:150]),
-                      flush=True)
+                print(
+                    "curl %s download failed: %s" % (kind, r.stderr.decode(errors="replace")[:150]),
+                    flush=True,
+                )
                 break
             body, code, ctype, nxt = r.stdout.rsplit(b"\n", 3)
             code = code.decode(errors="replace").strip()
@@ -4551,12 +4857,13 @@ def _fetch_complete(url, max_bytes, timeout, kind):
             ctype = ctype.decode(errors="replace").split(";")[0].strip().lower()
             if code.startswith("2") and body and len(body) <= max_bytes:
                 return bytes(body), ctype
-            print("curl %s download failed: HTTP %s" % (kind, code),
-                  flush=True)
+            print("curl %s download failed: HTTP %s" % (kind, code), flush=True)
             break
         else:
-            print("curl %s download failed: more than %d redirects" %
-                  (kind, FETCH_MAX_REDIRECTS), flush=True)
+            print(
+                "curl %s download failed: more than %d redirects" % (kind, FETCH_MAX_REDIRECTS),
+                flush=True,
+            )
             return None, None
     except FileNotFoundError:
         pass  # no curl installed; fall through to urllib
@@ -4584,7 +4891,7 @@ def _fetch_complete(url, max_bytes, timeout, kind):
                 if resp.status == 206:
                     try:
                         expected = int(resp.headers.get("Content-Range", "").rsplit("/", 1)[1])
-                    except (ValueError, IndexError):
+                    except ValueError, IndexError:
                         pass
                 elif expected is None:
                     try:
@@ -4610,9 +4917,11 @@ def _fetch_complete(url, max_bytes, timeout, kind):
 
 
 # kind -> (size cap, timeout, the content type it must have: "" = any).
-DOWNLOADS = {"image": (MAX_MEDIA_BYTES, 20, "image/"),
-             "video": (MAX_VIDEO_BYTES, 60, "video/"),
-             "document": (MAX_DOC_BYTES, 20, "")}
+DOWNLOADS = {
+    "image": (MAX_MEDIA_BYTES, 20, "image/"),
+    "video": (MAX_VIDEO_BYTES, 60, "video/"),
+    "document": (MAX_DOC_BYTES, 20, ""),
+}
 
 
 def download(kind, url, dest_path):
@@ -4645,8 +4954,12 @@ def extract_document_text(path, content_type, filename):
         return t or None
 
     # Plain text and friends: read directly.
-    if ctype.startswith("text/") or ext in TEXT_EXTS or ctype.endswith("+json") \
-            or ctype in ("application/json", "application/x-sh"):
+    if (
+        ctype.startswith("text/")
+        or ext in TEXT_EXTS
+        or ctype.endswith("+json")
+        or ctype in ("application/json", "application/x-sh")
+    ):
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 return _truncate(f.read())
@@ -4659,7 +4972,10 @@ def extract_document_text(path, content_type, filename):
         try:
             proc = subprocess.run(
                 ["pdftotext", "-layout", path, "-"],
-                capture_output=True, text=True, timeout=PDFTOTEXT_TIMEOUT)
+                capture_output=True,
+                text=True,
+                timeout=PDFTOTEXT_TIMEOUT,
+            )
             if proc.returncode == 0 and proc.stdout.strip():
                 return _truncate(proc.stdout)
             print("pdftotext found no text in %s" % filename, flush=True)
@@ -4669,10 +4985,13 @@ def extract_document_text(path, content_type, filename):
             return None
 
     # DOCX: python-docx paragraph text.
-    if ctype == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" \
-            or ext in DOCX_EXTS:
+    if (
+        ctype == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        or ext in DOCX_EXTS
+    ):
         try:
             import docx
+
             doc = docx.Document(path)
             text = "\n".join(p.text for p in doc.paragraphs)
             return _truncate(text)
@@ -4688,10 +5007,21 @@ def extract_frames(video_path, out_prefix, count=VIDEO_FRAME_COUNT):
     Returns the list of frame paths (may be empty on failure)."""
     try:
         probe = subprocess.run(
-            ["ffprobe", "-v", "error", *FFMPEG_INPUT_GUARD,
-             "-show_entries", "format=duration", "-of", "csv=p=0",
-             video_path],
-            capture_output=True, text=True, timeout=30)
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                *FFMPEG_INPUT_GUARD,
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                video_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         duration = float((probe.stdout or "").strip() or 0)
     except Exception:
         duration = 0
@@ -4702,10 +5032,23 @@ def extract_frames(video_path, out_prefix, count=VIDEO_FRAME_COUNT):
         out = "%s_frame%d.png" % (out_prefix, i)
         try:
             subprocess.run(
-                ["ffmpeg", "-v", "error", "-ss", str(t),
-                 *FFMPEG_INPUT_GUARD, "-i", video_path,
-                 "-frames:v", "1", "-y", out],
-                capture_output=True, timeout=FFMPEG_TIMEOUT)
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-ss",
+                    str(t),
+                    *FFMPEG_INPUT_GUARD,
+                    "-i",
+                    video_path,
+                    "-frames:v",
+                    "1",
+                    "-y",
+                    out,
+                ],
+                capture_output=True,
+                timeout=FFMPEG_TIMEOUT,
+            )
             if os.path.exists(out) and os.path.getsize(out) > 0:
                 frames.append(out)
         except Exception as e:
@@ -4730,8 +5073,7 @@ def embed_host_allowed(url):
         host = (urllib.parse.urlparse(url).hostname or "").rstrip(".")
     except ValueError:
         return False
-    return any(host == s or host.endswith("." + s)
-               for s in EMBED_MEDIA_HOST_SUFFIXES)
+    return any(host == s or host.endswith("." + s) for s in EMBED_MEDIA_HOST_SUFFIXES)
 
 
 def _fetch_addrs(url):
@@ -4747,9 +5089,8 @@ def _fetch_addrs(url):
     if p.scheme != "https" or not embed_host_allowed(url):
         return None
     try:
-        infos = socket.getaddrinfo(p.hostname, port,
-                                   proto=socket.IPPROTO_TCP)
-    except (OSError, UnicodeError):
+        infos = socket.getaddrinfo(p.hostname, port, proto=socket.IPPROTO_TCP)
+    except OSError, UnicodeError:
         return None
     addrs = []
     for info in infos:
@@ -4767,12 +5108,12 @@ def _fetch_addrs(url):
 class _FetchRedirectHandler(urllib.request.HTTPRedirectHandler):
     """urllib's side of _fetch_complete's redirect policy: at most
     FETCH_MAX_REDIRECTS hops, each to a URL that passes _fetch_addrs."""
+
     max_redirections = FETCH_MAX_REDIRECTS
 
     def redirect_request(self, req, fp, code, msg, hdrs, newurl):
         if not _fetch_addrs(newurl):
-            raise urllib.error.HTTPError(
-                newurl, code, "redirect to a disallowed URL", hdrs, fp)
+            raise urllib.error.HTTPError(newurl, code, "redirect to a disallowed URL", hdrs, fp)
         return super().redirect_request(req, fp, code, msg, hdrs, newurl)
 
 
@@ -4799,11 +5140,16 @@ def collect_media(msg):
             candidates.append((url, "attachment:" + name))
         elif ctype.startswith("video/") or base.endswith(VIDEO_EXTS):
             video_candidates.append((url, name))
-        elif (ctype.startswith("text/") or base.endswith(TEXT_EXTS)
-                or ctype == "application/pdf" or base.endswith(PDF_EXTS)
-                or "wordprocessingml" in ctype or base.endswith(DOCX_EXTS)
-                or ctype in ("application/json", "application/x-sh")
-                or ctype.endswith("+json")):
+        elif (
+            ctype.startswith("text/")
+            or base.endswith(TEXT_EXTS)
+            or ctype == "application/pdf"
+            or base.endswith(PDF_EXTS)
+            or "wordprocessingml" in ctype
+            or base.endswith(DOCX_EXTS)
+            or ctype in ("application/json", "application/x-sh")
+            or ctype.endswith("+json")
+        ):
             doc_candidates.append((url, name, ctype))
         else:
             unviewable.append(name + " (" + (ctype or "unknown type") + ")")
@@ -4818,8 +5164,7 @@ def collect_media(msg):
             # under the "video" key. Route those through the video path
             # (frame extraction): the .gif variant is usually far over the
             # 8MB image cap, while the mp4 is small.
-            if key == "video" and (etype == "gifv"
-                                   or u.lower().split("?")[0].endswith(".mp4")):
+            if key == "video" and (etype == "gifv" or u.lower().split("?")[0].endswith(".mp4")):
                 video_candidates.append((u, "embed:" + etype))
             else:
                 candidates.append((u, "embed:" + etype))
@@ -4845,21 +5190,20 @@ def collect_media(msg):
             for fp in frames:
                 if len(media) >= MAX_MEDIA_PER_MESSAGE:
                     break
-                media.append({"path": fp, "content_type": "image/png",
-                              "source": "video-frame:" + name})
+                media.append(
+                    {"path": fp, "content_type": "image/png", "source": "video-frame:" + name}
+                )
         else:
             unviewable.append(name + " (video: could not extract frames)")
 
     for url, name, ctype in doc_candidates:
         if len(documents) >= MAX_DOCS_PER_MESSAGE:
             break
-        dest = os.path.join(MEDIA_DIR, "%s_%d.doc" % (msg["id"],
-                                                      len(documents)))
+        dest = os.path.join(MEDIA_DIR, "%s_%d.doc" % (msg["id"], len(documents)))
         try:
             got_ctype = download("document", url, dest)
         except Exception as e:
-            print("Document download failed (%s): %s" % (name, e),
-                  flush=True)
+            print("Document download failed (%s): %s" % (name, e), flush=True)
             continue
         if not got_ctype:
             unviewable.append(name + " (document: download failed or too large)")
@@ -4872,8 +5216,7 @@ def collect_media(msg):
         # file stays until the hourly sweep. The worker never opens it.
         text = extract_document_text(dest, got_ctype, name)
         if text:
-            documents.append({"name": name, "content_type": got_ctype,
-                              "text": text})
+            documents.append({"name": name, "content_type": got_ctype, "text": text})
         else:
             unviewable.append(name + " (document: could not extract text)")
 
@@ -4943,9 +5286,8 @@ def record_history(state, channel_id, messages):
         # when it differs from the username: what someone typing "@Name"
         # by hand is most likely to use.
         if m.get("webhook_id"):
-            entry["webhook"] = True   # not a person (proactive.py)
-        display = ((m.get("member") or {}).get("nick")
-                   or author.get("global_name"))
+            entry["webhook"] = True  # not a person (proactive.py)
+        display = (m.get("member") or {}).get("nick") or author.get("global_name")
         if display and display != entry["author"]:
             entry["display"] = display
         hist.append(entry)
@@ -5002,8 +5344,7 @@ def prune_gateway_seen(state):
     such as DMs under dm_policy: open)."""
     now = time.time()
     for cid in list(state.get("gw_seen", {})):
-        ids = [i for i in state["gw_seen"][cid]
-               if now - _snowflake_ts(i) < GW_SEEN_MAX_AGE_SECS]
+        ids = [i for i in state["gw_seen"][cid] if now - _snowflake_ts(i) < GW_SEEN_MAX_AGE_SECS]
         if ids:
             state["gw_seen"][cid] = ids
         else:
@@ -5078,9 +5419,10 @@ def classify_message(state, msg, channel_name, guild_id=None):
         return None  # the bot's own messages: never triggers or fragments
     watch_scan(msg, guild_id)  # Discord watches (cheap; never raises)
     TM.count("messages_seen")
-    if is_bot_author(author) and settings().get(
-            "who.bots", scope_for(guild_id, msg.get("channel_id"))) \
-            == "ignore":
+    if (
+        is_bot_author(author)
+        and settings().get("who.bots", scope_for(guild_id, msg.get("channel_id"))) == "ignore"
+    ):
         if addresses_bot(msg):
             note_refused(msg, channel_name, "who.bots: ignore")
         return None
@@ -5090,8 +5432,6 @@ def classify_message(state, msg, channel_name, guild_id=None):
     if refusal:
         note_refused(msg, channel_name, refusal)
     return kind
-
-
 
 
 # Discord does not let bots list DM channels: GET /users/@me/channels always
@@ -5174,8 +5514,7 @@ def check_dm_channel(dm_id, dm_name, state):
     if not last_seen:
         newest = max(messages, key=lambda m: int(m["id"]))
         state["last_seen"][dm_id] = newest["id"]
-        print(f"Tracking DM with {dm_name} from message {newest['id']}.",
-              flush=True)
+        print(f"Tracking DM with {dm_name} from message {newest['id']}.", flush=True)
         return []
     new = [m for m in messages if int(m["id"]) > int(last_seen)]
     gw_done = set(state.get("gw_seen", {}).get(dm_id, ()))
@@ -5185,9 +5524,11 @@ def check_dm_channel(dm_id, dm_name, state):
 
     out = []
     for m in sorted(new, key=lambda m: int(m["id"])):
-        if m.get("author", {}).get("id") == BOT_USER_ID \
-                or m["id"] in gw_done \
-                or m.get("type", 0) not in CONVERSATION_TYPES:
+        if (
+            m.get("author", {}).get("id") == BOT_USER_ID
+            or m["id"] in gw_done
+            or m.get("type", 0) not in CONVERSATION_TYPES
+        ):
             continue
         TM.count("messages_seen")
         if not dm_sender_allowed(m.get("author")):
@@ -5205,8 +5546,11 @@ def note_dm_refused(msg):
     unrecorded."""
     author = _who(msg)
     if dm_swept_author(author.get("id")) and not is_bot_author(author):
-        note_refused(msg, "DM with " + (author.get("username") or "?"),
-                     dm_refusal(author) or "who.replies is off for DMs")
+        note_refused(
+            msg,
+            "DM with " + (author.get("username") or "?"),
+            dm_refusal(author) or "who.replies is off for DMs",
+        )
 
 
 def bot_run_length(history, msg):
@@ -5239,14 +5583,16 @@ def conversation_participants(history, msg, reply_ctx):
         people[pid] = p
 
     author = _who(msg)
-    add(author.get("id"), author.get("username"), is_bot_author(author),
-        (msg.get("member") or {}).get("nick") or author.get("global_name"))
+    add(
+        author.get("id"),
+        author.get("username"),
+        is_bot_author(author),
+        (msg.get("member") or {}).get("nick") or author.get("global_name"),
+    )
     for h in reversed(history):
-        add(h.get("author_id"), h.get("author"), h.get("bot"),
-            h.get("display"))
+        add(h.get("author_id"), h.get("author"), h.get("bot"), h.get("display"))
     if reply_ctx:  # only when not already known from history
-        add(reply_ctx.get("author_id"), reply_ctx.get("author"),
-            reply_ctx.get("is_bot"))
+        add(reply_ctx.get("author_id"), reply_ctx.get("author"), reply_ctx.get("is_bot"))
     add(BOT_ID, BOT_NAME, True)
     return list(people.values())
 
@@ -5267,14 +5613,15 @@ def link_mentions(text, channel_id, state):
     if not names or "@" not in text:
         return text
     pattern = re.compile(
-        r"(?<![\w<])@(" + "|".join(re.escape(n) for n in
-                                   sorted(names, key=len, reverse=True))
-        + r")(?![\w])", re.IGNORECASE)
+        r"(?<![\w<])@("
+        + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
+        + r")(?![\w])",
+        re.IGNORECASE,
+    )
     return pattern.sub(lambda m: f"<@{names[m.group(1).lower()]}>", text)
 
 
-def settings_card(scope, here, author_id, from_bot, channel_id,
-                  exchange=0):
+def settings_card(scope, here, author_id, from_bot, channel_id, exchange=0):
     """The per-message settings card for the worker (item "settings"):
     where it is, who is speaking, who can read the reply, and the style
     and privacy settings that steer it. In an owner's DM, memory is
@@ -5284,20 +5631,20 @@ def settings_card(scope, here, author_id, from_bot, channel_id,
     card = {"where": "dm" if dm else "server"}
     if not dm:
         info = CHANNELS.get(channel_id) or {}
-        card["server"] = (GUILDS.get(scope.guild_id) or {}).get("name") \
-            or info.get("guild_name") or scope.guild_id
+        card["server"] = (
+            (GUILDS.get(scope.guild_id) or {}).get("name")
+            or info.get("guild_name")
+            or scope.guild_id
+        )
         card["channel"] = info.get("name") or channel_id
-    card["speaker"] = "owner" if owner else ("bot" if from_bot
-                                             else "member")
+    card["speaker"] = "owner" if owner else ("bot" if from_bot else "member")
     card["audience"] = "private" if dm else "public"
-    card["memory"] = "everything" if (dm and owner) \
-        else here["privacy.memory"]
+    card["memory"] = "everything" if (dm and owner) else here["privacy.memory"]
     card["replies"] = here["who.replies"]
     card["length"] = here["style.length"]
     card["notes"] = here["style.notes"]
     if from_bot:
-        card["bot_exchange"] = {"count": exchange + 1,
-                                "limit": here["who.bot_exchange_limit"]}
+        card["bot_exchange"] = {"count": exchange + 1, "limit": here["who.bot_exchange_limit"]}
     return card
 
 
@@ -5312,12 +5659,18 @@ def queued_item_meta(state, qid, index):
     meta = (state.get("item_meta") or {}).get(qid)
     if isinstance(meta, dict):
         return meta
-    q = next((q for q in load_queue() if isinstance(q, dict)
-              and str(q.get("message_id")) == qid), {})
-    return {"author_id": q.get("author_id"), "author": q.get("author"),
-            "channel_id": q.get("channel_id"), "kind": q.get("kind"),
-            "dm": q.get("kind") == "dm", "bot": bool(q.get("from_bot")),
-            "guild_id": q.get("guild_id")}
+    q = next(
+        (q for q in load_queue() if isinstance(q, dict) and str(q.get("message_id")) == qid), {}
+    )
+    return {
+        "author_id": q.get("author_id"),
+        "author": q.get("author"),
+        "channel_id": q.get("channel_id"),
+        "kind": q.get("kind"),
+        "dm": q.get("kind") == "dm",
+        "bot": bool(q.get("from_bot")),
+        "guild_id": q.get("guild_id"),
+    }
 
 
 def started_item_id(now=None):
@@ -5336,8 +5689,9 @@ def note_item_meta(state, mid, **meta):
     _keep_last(m, 300)
 
 
-def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
-                    guild_id=None, follow_up=False):
+def enqueue_message(
+    msg, cname, state, queue, dm=False, fragments=None, guild_id=None, follow_up=False
+):
     """Run one message (plus any burst fragments coalesced with it) through
     the quarantine/rate-limit/media pipeline and append a SINGLE item to
     the queue. follow_up: staged from a conversational follow-up window
@@ -5356,9 +5710,14 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
     # 0. Hard gates, re-checked here because every path (poll, gateway,
     #    restart flush, sweep) funnels through this function.
     if predates_join(state, msg, guild_id):
-        ledger_record_many(burst_ids, "skipped", "predates bot join",
-                           channel_id=msg.get("channel_id"),
-                           author=author_name, author_id=author_id)
+        ledger_record_many(
+            burst_ids,
+            "skipped",
+            "predates bot join",
+            channel_id=msg.get("channel_id"),
+            author=author_name,
+            author_id=author_id,
+        )
         return False
     chan_hist = state.get("history", {}).get(msg["channel_id"], [])
     from_bot = is_bot_author(msg.get("author"))
@@ -5370,26 +5729,41 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
     exchange = own_replies_in_run(chan_hist, msg) if from_bot else 0
     limit = here["who.bot_exchange_limit"]
     if from_bot and limit is not None and exchange >= limit:
-        ledger_record_many(burst_ids, "skipped",
-                           f"bot exchange limit ({limit}) reached",
-                           channel_id=msg.get("channel_id"),
-                           author=author_name, author_id=author_id,
-                           detail={"limit": limit})
-        print(f"Not answering bot {author_name} in {cname}: the bot "
-              f"exchange limit ({limit}) is reached.", flush=True)
+        ledger_record_many(
+            burst_ids,
+            "skipped",
+            f"bot exchange limit ({limit}) reached",
+            channel_id=msg.get("channel_id"),
+            author=author_name,
+            author_id=author_id,
+            detail={"limit": limit},
+        )
+        print(
+            f"Not answering bot {author_name} in {cname}: the bot "
+            f"exchange limit ({limit}) is reached.",
+            flush=True,
+        )
         return False
     suspicious = here["privacy.suspicious"]
 
     def hold_suspicious(matched):
         if suspicious == "ignore":
-            ledger_record_many(burst_ids, "skipped",
-                               f"suspicious, ignored: {matched}",
-                               channel_id=msg.get("channel_id"),
-                               author=author_name, author_id=author_id)
-            print(f"Ignored a suspicious message from {author_name} in "
-                  f"{cname} (privacy.suspicious: ignore).", flush=True)
+            ledger_record_many(
+                burst_ids,
+                "skipped",
+                f"suspicious, ignored: {matched}",
+                channel_id=msg.get("channel_id"),
+                author=author_name,
+                author_id=author_id,
+            )
+            print(
+                f"Ignored a suspicious message from {author_name} in "
+                f"{cname} (privacy.suspicious: ignore).",
+                flush=True,
+            )
         else:
             quarantine(msg, cname, matched, fragments)
+
     # The worker sees the whole burst as one message: fragments joined in
     # order under the trigger's text.
     parts = [msg.get("content", "")]
@@ -5409,10 +5783,15 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
     #    drops it and the author's later messages are judged on their own.
     capped = rate_block(state, author_id, msg["channel_id"], scope)
     if capped:
-        ledger_record_many(burst_ids, "skipped", "daily cap reached",
-                           channel_id=msg.get("channel_id"),
-                           author=author_name, author_id=author_id,
-                           detail=capped)
+        ledger_record_many(
+            burst_ids,
+            "skipped",
+            "daily cap reached",
+            channel_id=msg.get("channel_id"),
+            author=author_name,
+            author_id=author_id,
+            detail=capped,
+        )
         return False
     rate_record(state, author_id, scope)
 
@@ -5433,11 +5812,9 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
     #     skipped: everyday phrasing in it ("you are now set up") would
     #     quarantine every reply to it.
     if suspicious != "answer":
-        extra_texts = [(f"document {d.get('name')}", d.get("text") or "")
-                       for d in documents]
+        extra_texts = [(f"document {d.get('name')}", d.get("text") or "") for d in documents]
         if reply_ctx and not reply_ctx.get("is_bot"):
-            extra_texts.append(("replied-to message",
-                                reply_ctx.get("content") or ""))
+            extra_texts.append(("replied-to message", reply_ctx.get("content") or ""))
         for where, text in extra_texts:
             matched = is_suspicious(text)
             if matched:
@@ -5445,8 +5822,7 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
                 return False
 
     # 4. Recent history, without the burst itself.
-    history = [h for h in chan_hist
-               if h["id"] not in burst_ids][-HISTORY_ATTACHED:]
+    history = [h for h in chan_hist if h["id"] not in burst_ids][-HISTORY_ATTACHED:]
 
     # 5. Generation permission (media.*). may_generate
     #    is permission, not a decision: the worker judges whether
@@ -5454,21 +5830,28 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
     #    approval below (keyed by message id: the worker's outbox item
     #    does not carry the flag).
     def author_matches(who):
-        return people_match(who, author_id, lambda: (
-            set((msg.get("member") or {}).get("roles") or [])
-            if "roles" in (msg.get("member") or {})
-            else member_roles(guild_id, author_id)))
+        return people_match(
+            who,
+            author_id,
+            lambda: (
+                set((msg.get("member") or {}).get("roles") or [])
+                if "roles" in (msg.get("member") or {})
+                else member_roles(guild_id, author_id)
+            ),
+        )
+
     may_generate = media_permission(state, scope, here, author_matches)
     if may_generate:
         # Bound to the channel too: the file may only go back where the
         # request came from (an image made in a DM never posts publicly).
         state.setdefault("gen_approved", {})[msg["id"]] = {
-            "ts": time.time(), "channel_id": msg["channel_id"]}
+            "ts": time.time(),
+            "channel_id": msg["channel_id"],
+        }
 
     # 6. Owner commands: stamped from the verified author id only; the
     #    worker decides whether the message asks the bot to do something.
-    owner_command = author_id in OWNER_USER_IDS \
-        and bool(here["abilities.owner_commands"])
+    owner_command = author_id in OWNER_USER_IDS and bool(here["abilities.owner_commands"])
     # The worker replies under the LAST fragment, but the ledger and the
     # sweep track the trigger: remember which trigger each fragment
     # belongs to so a reply (or a silent pass) settles the whole burst.
@@ -5492,74 +5875,98 @@ def enqueue_message(msg, cname, state, queue, dm=False, fragments=None,
         "owner_command": owner_command,
         "burst": len(fragments) > 0,
         "burst_fragments": [
-            {"message_id": f["id"], "content": f.get("content", ""),
-             "timestamp": f.get("timestamp")} for f in fragments
+            {
+                "message_id": f["id"],
+                "content": f.get("content", ""),
+                "timestamp": f.get("timestamp"),
+            }
+            for f in fragments
         ],
         "reply_to": reply_ctx,
         # Another agent addressed the bot. bot_turns counts consecutive
         # bot messages (this one included) since a human last spoke.
         "from_bot": from_bot,
         "bot_turns": bot_turns,
-        "participants": conversation_participants(chan_hist, msg,
-                                                  reply_ctx),
+        "participants": conversation_participants(chan_hist, msg, reply_ctx),
         # When the monitor queued it: the typing cap and the latency log
         # measure from here.
         "queued_at": note_queued(state, msg["id"]),
         # Triggered only by the conversational follow-up window.
-        "follow_up": follow_up and not any(
-            is_mention(m) or is_reply_to_bot(m) for m in [msg] + fragments),
-        "settings": settings_card(scope, here, author_id, from_bot,
-                                  msg["channel_id"], exchange),
+        "follow_up": follow_up
+        and not any(is_mention(m) or is_reply_to_bot(m) for m in [msg] + fragments),
+        "settings": settings_card(scope, here, author_id, from_bot, msg["channel_id"], exchange),
     }
     # External-app capabilities are stamped from verified
     # original owner DMs only. A reply/forward/attachment cannot grant them.
     item["external_apps"] = {"eligible": False, "level": "off"}
     if here["abilities.external_apps"] != "off":
         from muse_discord.external_apps.binding import card as external_app_card
+
         item["external_apps"] = external_app_card(
-            msg, fragments, dm=dm, owner=str(author_id) in OWNER_USER_IDS,
-            from_bot=from_bot, level=here["abilities.external_apps"])
+            msg,
+            fragments,
+            dm=dm,
+            owner=str(author_id) in OWNER_USER_IDS,
+            from_bot=from_bot,
+            level=here["abilities.external_apps"],
+        )
     # Reminders and watches: the author's own list, and whether they may
     # set one here (abilities.reminders).
-    item["watches"] = watch_card(author_id, guild_id, dm, from_bot, here,
-                                 author_matches)
+    item["watches"] = watch_card(author_id, guild_id, dm, from_bot, here, author_matches)
     queue.append(item)
     burst_note = f" (+{len(fragments)} fragment(s))" if fragments else ""
     # An owner's own DM: every outbox item that answers it, settles it
     # or posts in its channel must carry its nonce (owner_dm_gate).
     # (The wake hook's test too: settings.speaker "owner" in a DM.)
     owner_dm = bool(dm and str(author_id) in OWNER_USER_IDS)
-    note_item_meta(state, msg["id"], author_id=author_id,
-                   channel_id=msg["channel_id"], bot=from_bot, dm=dm,
-                   kind=item["kind"], owner_dm=owner_dm,
-                   owner_command=owner_command,
-                   guild_id=guild_id, author=author_name,
-                   # Settings requests: never from a forwarded message;
-                   # attachments or a reply to someone else's message
-                   # always need the owner's Apply.
-                   forwarded=any(is_forwarded(m) for m in [msg] + fragments),
-                   has_inputs=bool(media or documents) or bool(
-                       reply_ctx and not reply_ctx.get("is_bot")))
+    note_item_meta(
+        state,
+        msg["id"],
+        author_id=author_id,
+        channel_id=msg["channel_id"],
+        bot=from_bot,
+        dm=dm,
+        kind=item["kind"],
+        owner_dm=owner_dm,
+        owner_command=owner_command,
+        guild_id=guild_id,
+        author=author_name,
+        # Settings requests: never from a forwarded message;
+        # attachments or a reply to someone else's message
+        # always need the owner's Apply.
+        forwarded=any(is_forwarded(m) for m in [msg] + fragments),
+        has_inputs=bool(media or documents) or bool(reply_ctx and not reply_ctx.get("is_bot")),
+    )
     if owner_dm:
         # The capability for this owner DM (written for the wake hook
         # before the item reaches the queue file).
-        owner_dm_mint_nonce(state, msg["id"], msg["channel_id"],
-                      [f["id"] for f in fragments])
+        owner_dm_mint_nonce(state, msg["id"], msg["channel_id"], [f["id"] for f in fragments])
     if owner_command:
         # bin/discord-api.py's capability for this owner's command.
-        note_owner_item(state, msg["id"], dm=owner_dm,
-                        channel_id=msg["channel_id"], content=content,
-                        guild_id=guild_id)
+        note_owner_item(
+            state,
+            msg["id"],
+            dm=owner_dm,
+            channel_id=msg["channel_id"],
+            content=content,
+            guild_id=guild_id,
+        )
     # The capability to answer it at all, for the wake that holds it.
     reply_nonce_mint(state, msg["id"])
-    print(f"Queued {item['kind']}{' (follow-up)' if item['follow_up'] else ''}"
-          f" from {msg['author'].get('username')} in "
-          f"{cname}{burst_note}: {content[:80]}", flush=True)
+    print(
+        f"Queued {item['kind']}{' (follow-up)' if item['follow_up'] else ''}"
+        f" from {msg['author'].get('username')} in "
+        f"{cname}{burst_note}: {content[:80]}",
+        flush=True,
+    )
     # (Typing comes from the typing thread, via typing_refresh.)
-    ledger_record_many(burst_ids, "queued",
-                       channel_id=msg.get("channel_id"),
-                       author=msg.get("author", {}).get("username"),
-                       author_id=author_id)
+    ledger_record_many(
+        burst_ids,
+        "queued",
+        channel_id=msg.get("channel_id"),
+        author=msg.get("author", {}).get("username"),
+        author_id=author_id,
+    )
     return True
 
 
@@ -5594,22 +6001,25 @@ def _settle(state, item, status, reason="", replied=False, detail=None):
     # and that item's own messages (its burst fragments) only: a
     # reply_to under some other message is not this item's to settle
     # (it may be another item's, still open).
-    trigger = item.get("item") or (aliases.get(reply_to, reply_to)
-                                   if reply_to else None)
+    trigger = item.get("item") or (aliases.get(reply_to, reply_to) if reply_to else None)
     if not trigger:
         return
-    trigger = trigger_of(state, trigger)   # an "item" set to a fragment
+    trigger = trigger_of(state, trigger)  # an "item" set to a fragment
     ids = [trigger] + [f for f, t in aliases.items() if t == trigger]
-    if reply_to and reply_to not in ids \
-            and trigger_of(state, reply_to) == trigger:
+    if reply_to and reply_to not in ids and trigger_of(state, reply_to) == trigger:
         ids.append(reply_to)
     for mid in ids:
         if replied and mid not in state["replied_to"]:
             state["replied_to"].append(mid)
-    ledger_record_many(ids, status, reason,
-                       channel_id=item.get("channel_id"),
-                       author=item.get("author"),
-                       author_id=item.get("author_id"), detail=detail)
+    ledger_record_many(
+        ids,
+        status,
+        reason,
+        channel_id=item.get("channel_id"),
+        author=item.get("author"),
+        author_id=item.get("author_id"),
+        detail=detail,
+    )
 
 
 def _answered_id(state, item):
@@ -5695,8 +6105,10 @@ def _reject_outbox(rejects):
     """Set malformed outbox items aside for the owner's review."""
     kept = _read_json(OUTBOX_REJECTED_FILE, list) or []
     now = datetime.now(timezone.utc).isoformat()
-    kept += [{"rejected_at": now, "reason": reason,
-              "item": _scrub_nonces(item)} for item, reason in rejects]
+    kept += [
+        {"rejected_at": now, "reason": reason, "item": _scrub_nonces(item)}
+        for item, reason in rejects
+    ]
     atomic_write(OUTBOX_REJECTED_FILE, kept[-100:])
 
 
@@ -5718,14 +6130,15 @@ def _log_latency(state, qid, picked, sent):
     if queued:
         ingested = min(ingested or queued, queued)
         t0 = min(t0, ingested)
-        print(f"Latency {qid}: ingest {ingested - t0:.1f}s, hold "
-              f"{queued - ingested:.1f}s, worker {picked - queued:.1f}s, "
-              f"send {sent - picked:.1f}s, total {sent - t0:.1f}s",
-              flush=True)
+        print(
+            f"Latency {qid}: ingest {ingested - t0:.1f}s, hold "
+            f"{queued - ingested:.1f}s, worker {picked - queued:.1f}s, "
+            f"send {sent - picked:.1f}s, total {sent - t0:.1f}s",
+            flush=True,
+        )
     else:
         t0 = min(t0, picked)
-        print(f"Latency {qid}: send {sent - picked:.1f}s, total "
-              f"{sent - t0:.1f}s", flush=True)
+        print(f"Latency {qid}: send {sent - picked:.1f}s, total {sent - t0:.1f}s", flush=True)
     TM.latency(sent - t0)
 
 
@@ -5753,19 +6166,18 @@ def _retry_later(item, retry, exc, **keep):
     if now - first >= SEND_RETRY_SECS:
         return False
     n = retry.get("n", 0) + 1
-    item["_retry"] = dict(keep, first=first, n=n,
-                          next=now + min(30, 2 ** n))
-    print(f"Send failed (attempt {n}; retrying, same nonce): {exc}",
-          flush=True)
+    item["_retry"] = dict(keep, first=first, n=n, next=now + min(30, 2**n))
+    print(f"Send failed (attempt {n}; retrying, same nonce): {exc}", flush=True)
     return True
+
+
 _OUTBOX_CURRENT = {"key": None}
 _OUTBOX_POISON = {}
 
 
 def _outbox_key(item):
     try:
-        return hashlib.sha256(json.dumps(item, sort_keys=True,
-                                         default=str).encode()).hexdigest()
+        return hashlib.sha256(json.dumps(item, sort_keys=True, default=str).encode()).hexdigest()
     except Exception:
         return None
 
@@ -5801,8 +6213,7 @@ def _set_aside_poison(key, exc):
                 atomic_write(path, keep)
     _OUTBOX_POISON.pop(key, None)
     if gone:
-        why = f"processing it failed {OUTBOX_POISON_TRIES} times " \
-              f"({exc.__class__.__name__})"
+        why = f"processing it failed {OUTBOX_POISON_TRIES} times ({exc.__class__.__name__})"
         print(f"Set aside an outbox item: {why}.", flush=True)
         _reject_outbox([(redact_nonces(i), why) for i in gone[:1]])
 
@@ -5810,8 +6221,11 @@ def _set_aside_poison(key, exc):
 def _refuse(rejects, item, why, note=""):
     """Log a refused outbox item and set it aside (nonces blanked)."""
     where = item.get("channel_name") if isinstance(item, dict) else None
-    print(f"Refused outbox item for {where or '?'}: {why}{note} (set aside "
-          f"in {os.path.basename(OUTBOX_REJECTED_FILE)})", flush=True)
+    print(
+        f"Refused outbox item for {where or '?'}: {why}{note} (set aside "
+        f"in {os.path.basename(OUTBOX_REJECTED_FILE)})",
+        flush=True,
+    )
     rejects.append((redact_nonces(item), why))
 
 
@@ -5826,8 +6240,10 @@ def bind_started(state, item, settled, remaining, rejects):
     path below, else None."""
     fire = watch_bind(item)
     if isinstance(fire, dict) and fire.get("gone"):
-        print(f"Outbox item for reminder {fire['gone']}: it was "
-              f"settled already; nothing sent.", flush=True)
+        print(
+            f"Outbox item for reminder {fire['gone']}: it was settled already; nothing sent.",
+            flush=True,
+        )
         # (Its ledger entry already says how it ended.)
         settled.append({"item": fire["gone"]})
         return None, True
@@ -5838,13 +6254,12 @@ def bind_started(state, item, settled, remaining, rejects):
         return fire, False
     try:
         pro = PRO.outbox_item(state, item)
-    except Exception as e:   # never blocks the replies
+    except Exception as e:  # never blocks the replies
         print(f"Proactive outbox error: {e}", flush=True)
         pro = None
         if could_name_slot(item):
             # Never left to the ordinary path: set aside.
-            _refuse(rejects, item,
-                    "proactive: its slot could not be checked")
+            _refuse(rejects, item, "proactive: its slot could not be checked")
             return None, True
     if pro is None:
         return None, False
@@ -5864,9 +6279,10 @@ def could_name_slot(item):
         return True
     names = {str(item[f]) for f in ("item", "reply_to") if item.get(f)}
     try:
-        return any(isinstance(q, dict) and q.get("kind") == PRO_KIND
-                   and str(q.get("message_id")) in names
-                   for q in load_queue())
+        return any(
+            isinstance(q, dict) and q.get("kind") == PRO_KIND and str(q.get("message_id")) in names
+            for q in load_queue()
+        )
     except Exception:
         return True
 
@@ -5875,12 +6291,13 @@ def hold_released_ok(state, item):
     """A held reply an owner chose to send (Send anyway): its hold id,
     item and channel are the ones the monitor recorded for it."""
     hid = item.get("_hold")
-    rec = (state.get("hold_released") or {}).get(hid) \
-        if isinstance(hid, str) else None
-    return isinstance(rec, dict) \
-        and rec.get("channel_id") == str(item.get("channel_id")) \
-        and rec.get("qid") is not None \
+    rec = (state.get("hold_released") or {}).get(hid) if isinstance(hid, str) else None
+    return (
+        isinstance(rec, dict)
+        and rec.get("channel_id") == str(item.get("channel_id"))
+        and rec.get("qid") is not None
         and str(rec["qid"]) == str(_answered_id(state, item))
+    )
 
 
 # An outdated worker prompt (from before reply nonces) writes outbox
@@ -5892,9 +6309,11 @@ MISSING_REPLY_NONCE = "no reply_nonce (an outdated worker prompt?)"
 STALE_PROMPT_FILE = os.path.join(BASE_DIR, "prompt_outdated.json")
 STALE_PROMPT_HITS = 3
 STALE_PROMPT_WINDOW = 3600
-STALE_PROMPT_DM = ("My instructions for writing replies are out of date, "
-                   "so I can't send replies. Ask your Muse to update "
-                   "muse-discord; that refreshes them.")
+STALE_PROMPT_DM = (
+    "My instructions for writing replies are out of date, "
+    "so I can't send replies. Ask your Muse to update "
+    "muse-discord; that refreshes them."
+)
 
 
 def note_reply_nonce(state, refusal):
@@ -5902,8 +6321,7 @@ def note_reply_nonce(state, refusal):
     reply_nonce (see STALE_PROMPT_HITS); a passing item clears them."""
     now = time.time()
     if refusal is None:
-        if state.pop("stale_prompt_hits", None) is not None \
-                or os.path.exists(STALE_PROMPT_FILE):
+        if state.pop("stale_prompt_hits", None) is not None or os.path.exists(STALE_PROMPT_FILE):
             try:
                 os.remove(STALE_PROMPT_FILE)
             except OSError:
@@ -5911,19 +6329,23 @@ def note_reply_nonce(state, refusal):
         return
     if MISSING_REPLY_NONCE not in refusal:
         return
-    hits = [t for t in state.get("stale_prompt_hits") or []
-            if isinstance(t, (int, float)) and now - t < STALE_PROMPT_WINDOW]
+    hits = [
+        t
+        for t in state.get("stale_prompt_hits") or []
+        if isinstance(t, (int, float)) and now - t < STALE_PROMPT_WINDOW
+    ]
     hits.append(now)
     state["stale_prompt_hits"] = hits[-STALE_PROMPT_HITS:]
     if len(hits) < STALE_PROMPT_HITS:
         return
     if not os.path.exists(STALE_PROMPT_FILE):
-        print("WORKER PROMPT OUT OF DATE: outbox items carry no "
-              "reply_nonce; re-render the worker prompt (docs/UPDATING.md).",
-              flush=True)
+        print(
+            "WORKER PROMPT OUT OF DATE: outbox items carry no "
+            "reply_nonce; re-render the worker prompt (docs/UPDATING.md).",
+            flush=True,
+        )
         try:
-            atomic_write(STALE_PROMPT_FILE, {"since": now,
-                                             "refused": len(hits)})
+            atomic_write(STALE_PROMPT_FILE, {"since": now, "refused": len(hits)})
         except OSError:
             pass
     day = time.strftime("%Y-%m-%d")
@@ -5945,7 +6367,7 @@ def bound_elsewhere(state, item):
         return True
     try:
         return bool(PRO.names_slot(item))
-    except Exception as e:   # then the reply_nonce check binds it
+    except Exception as e:  # then the reply_nonce check binds it
         print(f"Proactive: could not check for a slot ({e}).", flush=True)
         return False
 
@@ -5968,8 +6390,7 @@ def own_channel_problem(state, item, index):
     t = trigger_of(state, qid, index["frags"])
     cid = index["channels"].get(t)
     if not cid:
-        return (f"{t} is not an open queue item (answered already, or "
-                f"never queued)")
+        return f"{t} is not an open queue item (answered already, or never queued)"
     if str(item.get("channel_id")) != cid:
         return f"channel_id is not the channel of {t}"
     # It replies (and reacts: reactions go on reply_to) under its own
@@ -5986,12 +6407,17 @@ def own_channel_problem(state, item, index):
         if t not in (_ITEM_NONCES_WRITTEN["body"] or {}):
             # Never written for the hook: no wake could have had it.
             return f"{t}: its reply_nonce was never written (see the log)"
-        return (f"{t}: {MISSING_REPLY_NONCE} (copy the item's "
-                f"{REPLY_NONCE_FIELD} from the wake payload)")
+        return (
+            f"{t}: {MISSING_REPLY_NONCE} (copy the item's "
+            f"{REPLY_NONCE_FIELD} from the wake payload)"
+        )
     if not isinstance(got, str) or not hmac.compare_digest(
-            str(want).encode(), got.encode("utf-8", "replace")):
-        return (f"{t}: bad reply_nonce (missing or wrong: copy the item's "
-                f"{REPLY_NONCE_FIELD} from the wake payload)")
+        str(want).encode(), got.encode("utf-8", "replace")
+    ):
+        return (
+            f"{t}: bad reply_nonce (missing or wrong: copy the item's "
+            f"{REPLY_NONCE_FIELD} from the wake payload)"
+        )
     return None
 
 
@@ -6007,17 +6433,23 @@ def _reply_attachments(state, item, retry):
     gen_id = _gen_item_id(state, item)
     approval = _gen_approval(state, gen_id)
     if approval and approval.get("channel_id") != item.get("channel_id"):
-        print(f"Note: generation approval for item {gen_id} belongs to "
-              f"channel {approval.get('channel_id')}, not "
-              f"{item.get('channel_id')}; no attachments", flush=True)
+        print(
+            f"Note: generation approval for item {gen_id} belongs to "
+            f"channel {approval.get('channel_id')}, not "
+            f"{item.get('channel_id')}; no attachments",
+            flush=True,
+        )
         approval = None
     attachments, gen_files = [], []
     if approval and "attachments" in retry:
         # A retry: the files the first attempt resolved. Re-checked,
         # because the outbox (and so _retry) is worker-writable.
         for pair in retry.get("attachments") or []:
-            if isinstance(pair, list) and len(pair) == 2 \
-                    and len(_validate_gen_paths(pair, gen_id)) == 2:
+            if (
+                isinstance(pair, list)
+                and len(pair) == 2
+                and len(_validate_gen_paths(pair, gen_id)) == 2
+            ):
                 attachments.append((pair[0], os.path.basename(pair[0])))
                 gen_files.append(pair)
     elif approval:
@@ -6027,24 +6459,26 @@ def _reply_attachments(state, item, retry):
             # the local filename, so the worker can't name the file.
             found = _discover_generated(state, gen_id)
             if found:
-                print(f"Attaching discovered generated file: {found}",
-                      flush=True)
+                print(f"Attaching discovered generated file: {found}", flush=True)
                 candidates.append(found)
             else:
-                print(f"Note: approved generation for {gen_id} but no "
-                      f"file in generated/{gen_id}/", flush=True)
+                print(
+                    f"Note: approved generation for {gen_id} but no file in generated/{gen_id}/",
+                    flush=True,
+                )
         for rp in candidates:
             send_path, fname = fit_for_discord(rp)
             if send_path:
                 attachments.append((send_path, fname))
                 gen_files.append([send_path, rp])
             else:
-                print(f"Attachment too large even compressed: {rp}",
-                      flush=True)
+                print(f"Attachment too large even compressed: {rp}", flush=True)
     elif item.get("attachments"):
-        print(f"Note: reply to {item.get('reply_to')} listed attachments "
-              f"without a live generation approval for its item; dropped",
-              flush=True)
+        print(
+            f"Note: reply to {item.get('reply_to')} listed attachments "
+            f"without a live generation approval for its item; dropped",
+            flush=True,
+        )
     return gen_id, approval, attachments, gen_files
 
 
@@ -6061,8 +6495,7 @@ def process_outbox(state):
     leave the queue here, so the worker never has to rewrite it."""
     # (An unreadable outbox is not idle: _outbox_load sets it aside.)
     idle = _read_json(OUTBOX_FILE, list) == []
-    if idle and not os.path.exists(OUTBOX_PROCESSING_FILE) \
-            and not state.get("released"):
+    if idle and not os.path.exists(OUTBOX_PROCESSING_FILE) and not state.get("released"):
         return
     picked = time.time()
     with shared_lock():
@@ -6070,8 +6503,7 @@ def process_outbox(state):
         if fresh is None:
             return  # mid-write; the next pass gets it
         # Held replies an owner chose to send ride along (see hold_reply).
-        outbox = (_outbox_load(OUTBOX_PROCESSING_FILE) or []) + fresh \
-            + state.pop("released", [])
+        outbox = (_outbox_load(OUTBOX_PROCESSING_FILE) or []) + fresh + state.pop("released", [])
         atomic_write(OUTBOX_PROCESSING_FILE, outbox)
         atomic_write(OUTBOX_FILE, [])
 
@@ -6089,8 +6521,7 @@ def process_outbox(state):
         # Items the monitor started (reminder and watch fires, heartbeat
         # slots): bound to their own record before anything else looks
         # at them, whatever the item says (bind_started).
-        fire, handled = bind_started(state, item, settled, remaining,
-                                     rejects)
+        fire, handled = bind_started(state, item, settled, remaining, rejects)
         if handled:
             continue
         # Owner DMs first, before dedup, holds or anything that settles:
@@ -6111,10 +6542,10 @@ def process_outbox(state):
         qid = _answered_id(state, item)
         typing_keys = ["item:" + qid] if qid else []
         # Dedup: never touch the same message twice (overlapping workers)
-        if (reply_to and reply_to in state["replied_to"]) \
-                or (item.get("item") and item["item"] in state["replied_to"]):
-            print(f"Skipping duplicate reply to message "
-                  f"{reply_to or item.get('item')}", flush=True)
+        if (reply_to and reply_to in state["replied_to"]) or (
+            item.get("item") and item["item"] in state["replied_to"]
+        ):
+            print(f"Skipping duplicate reply to message {reply_to or item.get('item')}", flush=True)
             _settle(state, item, "replied", "duplicate suppressed")
             settled.append(item)
             continue
@@ -6122,7 +6553,7 @@ def process_outbox(state):
         # this item answers (proactive.py); the reply goes out as usual.
         try:
             bad = PRO.opt_action(state, item, index)
-        except Exception as e:   # not recorded: the item stays open
+        except Exception as e:  # not recorded: the item stays open
             bad = f"proactive: could not record it ({e})"
         if bad:
             _refuse(rejects, item, bad)
@@ -6142,13 +6573,15 @@ def process_outbox(state):
         # @everyone neutralization and link_mentions both lengthen text
         # normalize_parts already trimmed, and a part over the limit
         # would fail (400) on every retry.
-        parts = [link_mentions(p, item.get("channel_id"),
-                               state)[:DISCORD_MAX_CHARS]
-                 for p in normalize_parts(item)]
+        parts = [
+            link_mentions(p, item.get("channel_id"), state)[:DISCORD_MAX_CHARS]
+            for p in normalize_parts(item)
+        ]
         # Worker-drafted emoji reactions: applied to the reply_to
         # message. A react-only item may carry no text.
-        reactions = [e for e in (item.get("reactions") or [])
-                     if isinstance(e, str) and e.strip()][:5]
+        reactions = [e for e in (item.get("reactions") or []) if isinstance(e, str) and e.strip()][
+            :5
+        ]
         if sched:
             # Nothing was scheduled: the monitor says so itself, in place
             # of the worker's confirmation.
@@ -6157,18 +6590,19 @@ def process_outbox(state):
             # The worker decided no reply is warranted (a conversation
             # that has run its course). Recording it keeps the sweep
             # from waking the worker again for the same message.
-            _settle(state, item, "skipped", "no reply (worker's call)",
-                    replied=True)
+            _settle(state, item, "skipped", "no reply (worker's call)", replied=True)
             if not sched:
                 save_facts(state, item, memory_of)
             typing_clear(typing_keys)
             settled.append(item)
             continue
-        if not _is_snowflake(item.get("channel_id")) or (
-                reply_to and not _is_snowflake(reply_to)):
-            print(f"Dropping outbox item with a malformed channel_id or "
-                  f"reply_to: {item.get('channel_id')!r} "
-                  f"{reply_to!r}", flush=True)
+        if not _is_snowflake(item.get("channel_id")) or (reply_to and not _is_snowflake(reply_to)):
+            print(
+                f"Dropping outbox item with a malformed channel_id or "
+                f"reply_to: {item.get('channel_id')!r} "
+                f"{reply_to!r}",
+                flush=True,
+            )
             continue
         retry = item.get("_retry") or {}
         if retry.get("next", 0) > time.time():
@@ -6179,8 +6613,7 @@ def process_outbox(state):
             typing_clear(typing_keys)
             settled.append(item)
             continue
-        gen_id, approval, attachments, gen_files = _reply_attachments(
-            state, item, retry)
+        gen_id, approval, attachments, gen_files = _reply_attachments(state, item, retry)
         # The reply is about to land, which ends the indicator: stop
         # typing for this item now, or a ping right after the send would
         # show typing again for ~10s.
@@ -6190,8 +6623,7 @@ def process_outbox(state):
             if fire is not None:
                 # Under the requester's message (or @mentioning them),
                 # pinging them and nobody else.
-                reply_to, parts, mentions = watch_fire_send(
-                    state, fire, parts)
+                reply_to, parts, mentions = watch_fire_send(state, fire, parts)
             if parts:
                 # standalone: post as a plain message, not a Discord
                 # reply, so it notifies nobody and does not count as
@@ -6199,48 +6631,58 @@ def process_outbox(state):
                 # doesn't ask for an answer).
                 # A fire's nonce is keyed on the fire: two fires answered
                 # alike under one request are two messages, not a retry.
-                send_fragmented(item["channel_id"], parts,
-                                None if item.get("standalone") else reply_to,
-                                attachments, mentions=mentions,
-                                nonce_key=fire and f"fire:{fire['id']}")
-                print(f"Sent reply to {item.get('author')} in {item.get('channel_name')} "
-                      f"({len(parts)} part(s)): {parts[0][:60]}", flush=True)
+                send_fragmented(
+                    item["channel_id"],
+                    parts,
+                    None if item.get("standalone") else reply_to,
+                    attachments,
+                    mentions=mentions,
+                    nonce_key=fire and f"fire:{fire['id']}",
+                )
+                print(
+                    f"Sent reply to {item.get('author')} in {item.get('channel_name')} "
+                    f"({len(parts)} part(s)): {parts[0][:60]}",
+                    flush=True,
+                )
             for emoji in reactions:
                 if reply_to and add_reaction(item["channel_id"], reply_to, emoji):
-                    print(f"Added reaction {emoji} for {item.get('author')} "
-                          f"in #{item.get('channel_name')}", flush=True)
+                    print(
+                        f"Added reaction {emoji} for {item.get('author')} "
+                        f"in #{item.get('channel_name')}",
+                        flush=True,
+                    )
             if approval:
                 state.get("gen_approved", {}).pop(gen_id, None)
             if parts and gen_files:
                 # A generation really ran and its file went out: count
                 # it for media.per_day here, at send time, never at
                 # queue time.
-                state.setdefault("gen_sent", []).extend(
-                    rp for _, rp in gen_files)
+                state.setdefault("gen_sent", []).extend(rp for _, rp in gen_files)
                 sent_scope = scope_of_channel(item["channel_id"])
                 note_media_sent(state, sent_scope)
             if sched and sched[1]:
                 # A reminder or watch refused for a cap or a setting:
                 # ledgered like other refusals (Why no reply?).
-                _settle(state, item, "skipped", sched[1], replied=True,
-                        detail=sched[2])
+                _settle(state, item, "skipped", sched[1], replied=True, detail=sched[2])
             else:
                 _settle(state, item, "replied", replied=True)
                 if not sched:
                     save_facts(state, item, memory_of)
             meta = state.get("item_meta", {}).get(qid) if qid else None
-            if parts and meta and not meta.get("bot") \
-                    and not meta.get("dm") \
-                    and meta.get("channel_id") == item["channel_id"]:
+            if (
+                parts
+                and meta
+                and not meta.get("bot")
+                and not meta.get("dm")
+                and meta.get("channel_id") == item["channel_id"]
+            ):
                 # A reply to a human actually went out: (re)open their
                 # conversational follow-up window here.
-                open_follow_up(state, item["channel_id"],
-                               meta.get("author_id"))
+                open_follow_up(state, item["channel_id"], meta.get("author_id"))
             settled.append(item)
             typing_clear([], sent_in=item["channel_id"] if parts else None)
             if qid:
-                _log_latency(state, qid, retry.get("picked", picked),
-                             time.time())
+                _log_latency(state, qid, retry.get("picked", picked), time.time())
         except Exception as e:
             code = getattr(e, "code", None)
             if isinstance(e, SecretBlocked):
@@ -6252,18 +6694,25 @@ def process_outbox(state):
             if code == 403:
                 # Permanent permission failure (the bot cannot post in
                 # that channel): drop it, don't retry forever.
-                print(f"Dropping outbox item for #{item.get('channel_name')}: "
-                      f"403 Missing Access ({e})", flush=True)
+                print(
+                    f"Dropping outbox item for #{item.get('channel_name')}: "
+                    f"403 Missing Access ({e})",
+                    flush=True,
+                )
                 _settle(state, item, "skipped", "403 missing access")
                 settled.append(item)
                 continue
-            if _retry_later(item, retry, e, attachments=gen_files,
-                            picked=retry.get("picked", picked)):
+            if _retry_later(
+                item, retry, e, attachments=gen_files, picked=retry.get("picked", picked)
+            ):
                 remaining.append(item)
                 continue
-            print(f"Giving up on reply to {item.get('author')} in "
-                  f"{item.get('channel_name')} after "
-                  f"{SEND_RETRY_SECS}s of send errors: {e}", flush=True)
+            print(
+                f"Giving up on reply to {item.get('author')} in "
+                f"{item.get('channel_name')} after "
+                f"{SEND_RETRY_SECS}s of send errors: {e}",
+                flush=True,
+            )
             _settle(state, item, "skipped", f"send failed: {e}"[:200])
             settled.append(item)
 
@@ -6297,7 +6746,8 @@ def process_outbox(state):
     def answered(q):
         return q.get("message_id") in done_ids or any(
             isinstance(f, dict) and f.get("message_id") in done_frags
-            for f in q.get("burst_fragments") or [])
+            for f in q.get("burst_fragments") or []
+        )
 
     if rejects:
         _reject_outbox(rejects)
@@ -6341,10 +6791,10 @@ WEB_RESULTS_FILE = os.path.join(BASE_DIR, "web_watch_results.json")
 _WEB_DUE_WRITTEN = {"body": None, "path": None}
 _WATCH_STORE = {"store": None}
 PERM_VIEW_CHANNEL = 1 << 10
-_GUILD_PERMS = {}          # guild id -> {"roles": {id: perms}, "owner_id"}
-_CHANNEL_OVERWRITES = {}   # channel id -> its overwrites (discovery)
-_WATCH_MEMBERS = {}        # (guild, user) -> (role ids or None, fetched at)
-_WATCH_MATCHES = []        # [(watch id, what matched)] since the last tick
+_GUILD_PERMS = {}  # guild id -> {"roles": {id: perms}, "owner_id"}
+_CHANNEL_OVERWRITES = {}  # channel id -> its overwrites (discovery)
+_WATCH_MEMBERS = {}  # (guild, user) -> (role ids or None, fetched at)
+_WATCH_MATCHES = []  # [(watch id, what matched)] since the last tick
 WATCH_TICK_SECS = 2.0
 WATCH_UPKEEP_SECS = 15.0
 _WATCH_TICK = {"next": 0.0, "upkeep": 0.0}
@@ -6371,14 +6821,13 @@ def watch_note_guild(gid, gobj):
     for r in roles:
         try:
             perms[str(r.get("id"))] = int(r.get("permissions") or 0)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             perms[str(r.get("id"))] = 0
-    _GUILD_PERMS[gid] = {"roles": perms,
-                         "owner_id": str(gobj.get("owner_id") or "")}
+    _GUILD_PERMS[gid] = {"roles": perms, "owner_id": str(gobj.get("owner_id") or "")}
 
 
-WATCH_MEMBER_TTL_SECS = 120   # (no member-update events without the
-WATCH_MEMBER_FAIL_SECS = 60   # privileged intent: a short cache instead)
+WATCH_MEMBER_TTL_SECS = 120  # (no member-update events without the
+WATCH_MEMBER_FAIL_SECS = 60  # privileged intent: a short cache instead)
 
 
 def watch_member_roles(gid, uid):
@@ -6406,8 +6855,7 @@ def watch_member_roles(gid, uid):
         roles = None
     _WATCH_MEMBERS[key] = (roles, time.time())
     if len(_WATCH_MEMBERS) > 2000:
-        for k in sorted(_WATCH_MEMBERS,
-                        key=lambda k: _WATCH_MEMBERS[k][1])[:500]:
+        for k in sorted(_WATCH_MEMBERS, key=lambda k: _WATCH_MEMBERS[k][1])[:500]:
             del _WATCH_MEMBERS[k]
     return roles
 
@@ -6431,8 +6879,7 @@ def watch_perm_event(ev):
     try:
         if t.startswith("CHANNEL_"):
             if d.get("id") and d.get("guild_id"):
-                _CHANNEL_OVERWRITES[str(d["id"])] = \
-                    d.get("permission_overwrites") or []
+                _CHANNEL_OVERWRITES[str(d["id"])] = d.get("permission_overwrites") or []
             return
         gid = d.get("id") if t == "GUILD_UPDATE" else d.get("guild_id")
         g = _GUILD_PERMS.get(str(gid))
@@ -6445,8 +6892,7 @@ def watch_perm_event(ev):
             g["roles"].pop(str(d.get("role_id")), None)
         else:
             role = d.get("role") or {}
-            g["roles"][str(role.get("id"))] = int(role.get("permissions")
-                                                   or 0)
+            g["roles"][str(role.get("id"))] = int(role.get("permissions") or 0)
     except (TypeError, ValueError, AttributeError) as e:
         print(f"Permission event {t} not applied: {e}", flush=True)
 
@@ -6470,9 +6916,11 @@ def user_channel_perms(gid, uid, cid):
         return 0
     try:
         from muse_discord.discord_permissions import channel_permissions
-        return channel_permissions(gid, g["roles"], g["owner_id"], str(uid), roles,
-                                   _CHANNEL_OVERWRITES[chan])
-    except (KeyError, TypeError, ValueError):
+
+        return channel_permissions(
+            gid, g["roles"], g["owner_id"], str(uid), roles, _CHANNEL_OVERWRITES[chan]
+        )
+    except KeyError, TypeError, ValueError:
         return None
 
 
@@ -6495,14 +6943,15 @@ def channel_public(gid, cid):
     for ow in ows or []:
         try:
             denies = int(ow.get("deny") or 0) & PERM_VIEW_CHANNEL
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return False
         if denies and ow.get("id") != gid:
             return False
     try:
         from muse_discord.discord_permissions import channel_permissions
+
         p = channel_permissions(gid, g["roles"], g["owner_id"], None, (), ows)
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return False
     return bool(p & PERM_VIEW_CHANNEL)
 
@@ -6532,13 +6981,17 @@ def watch_card(uid, guild_id, dm, from_bot, here, matches):
     """A queue item's `watches` field (muse_watches.card). Never raises."""
     try:
         owner = str(uid) in OWNER_USER_IDS
-        return W.card(watch_store().read(), uid, guild_id, dm,
-                      owner_dm=owner and dm and not from_bot,
-                      can_set=watch_can_set(uid, from_bot, here, matches),
-                      can_web=watch_can_web(uid, from_bot, dm))
+        return W.card(
+            watch_store().read(),
+            uid,
+            guild_id,
+            dm,
+            owner_dm=owner and dm and not from_bot,
+            can_set=watch_can_set(uid, from_bot, here, matches),
+            can_web=watch_can_web(uid, from_bot, dm),
+        )
     except Exception as e:
-        print(f"Reminders and watches: no list for an item ({e})",
-              flush=True)
+        print(f"Reminders and watches: no list for an item ({e})", flush=True)
         return {"can_set": False, "can_web": False, "items": []}
 
 
@@ -6555,8 +7008,10 @@ def watch_resolve(value, uid, gid, cid, dm):
     raises muse_watches.Refused. Only a server the bot is in and the
     requester is a member of, and a channel there they can read; from a
     server, only that server."""
+
     def no(why):
         raise W.Refused(W.LINES["place"].format(why=why))
+
     m = W.PLACE_RE.fullmatch(value)
     if value in ("here", "server"):
         if dm:
@@ -6569,8 +7024,7 @@ def watch_resolve(value, uid, gid, cid, dm):
     else:
         no("I don't know that place.")
     if not dm and tg != gid:
-        no("from a server I only watch that server; ask me in a DM for "
-           "another one.")
+        no("from a server I only watch that server; ask me in a DM for another one.")
     if tg not in GUILDS:
         no("I'm not in that server.")
     if str(uid) not in OWNER_USER_IDS and owners_absent(tg):
@@ -6580,24 +7034,24 @@ def watch_resolve(value, uid, gid, cid, dm):
     try:
         roles = watch_member_roles(tg, uid)
     except Exception:
-        no("I couldn't check that server just now; try again in a "
-           "minute.")
+        no("I couldn't check that server just now; try again in a minute.")
     if roles is None:
         no("you're not in that server.")
     if tc and not user_can_view(tg, uid, tc):
         no("you can't read that channel.")
     gname = (GUILDS.get(tg) or {}).get("name") or tg
     if tc:
-        return ({"guild_id": tg, "channel_id": tc},
-                f"#{(CHANNELS.get(tc) or {}).get('name') or tc} in {gname}")
+        return (
+            {"guild_id": tg, "channel_id": tc},
+            f"#{(CHANNELS.get(tc) or {}).get('name') or tc} in {gname}",
+        )
     return {"guild_id": tg, "channel_id": None}, f"all of {gname}"
 
 
 def _watch_outcome(rec):
     if rec.get("ok"):
         return None
-    return ("refused", rec.get("line") or W.LINES["unknown"],
-            rec.get("reason"), rec.get("detail"))
+    return ("refused", rec.get("line") or W.LINES["unknown"], rec.get("reason"), rec.get("detail"))
 
 
 def watch_schedule(state, item, index):
@@ -6609,13 +7063,15 @@ def watch_schedule(state, item, index):
         return _watch_schedule(state, item, index)
     except Exception as e:
         qid = str(item.get("item") or "")
-        print(f"Reminders and watches for item {qid}: refused, an error "
-              f"deciding it ({e.__class__.__name__}: {e})", flush=True)
+        print(
+            f"Reminders and watches for item {qid}: refused, an error "
+            f"deciding it ({e.__class__.__name__}: {e})",
+            flush=True,
+        )
         try:
             with watch_store().edit() as data:
                 if qid and qid not in data["done"]:
-                    W.remember_done(data, qid, {"ok": False,
-                                                "line": W.LINES["unknown"]})
+                    W.remember_done(data, qid, {"ok": False, "line": W.LINES["unknown"]})
         except Exception:
             pass
         return ("refused", W.LINES["unknown"], None, None)
@@ -6635,82 +7091,104 @@ def _watch_schedule(state, item, index):
     if prev is not None:
         return _watch_outcome(prev)
     meta = queued_item_meta(state, qid, index)
-    if not isinstance(meta, dict) or qid not in index["channels"] \
-            or meta.get("kind") not in ("mention", "dm"):
-        return ("reject", "schedule: item must be an open queue item from "
-                          "a message (not a reminder)")
+    if (
+        not isinstance(meta, dict)
+        or qid not in index["channels"]
+        or meta.get("kind") not in ("mention", "dm")
+    ):
+        return (
+            "reject",
+            "schedule: item must be an open queue item from a message (not a reminder)",
+        )
     cid = str(meta.get("channel_id") or "")
     if str(item.get("channel_id")) != cid:
-        return ("reject", "schedule: channel_id must be the item's own "
-                          "channel (reminders go back where they were "
-                          "asked)")
+        return (
+            "reject",
+            "schedule: channel_id must be the item's own "
+            "channel (reminders go back where they were "
+            "asked)",
+        )
 
     uid = str(meta.get("author_id") or "")
     dm = bool(meta.get("dm"))
-    gid = None if dm else (meta.get("guild_id")
-                           or (CHANNELS.get(cid) or {}).get("guild_id"))
+    gid = None if dm else (meta.get("guild_id") or (CHANNELS.get(cid) or {}).get("guild_id"))
     changes = item["schedule"]["changes"]
-    fresh = None   # decided on this pass (not read back)
+    fresh = None  # decided on this pass (not read back)
     try:
         if meta.get("bot"):
             raise W.Refused(W.LINES["bot"])
         here = settings().resolve(scope_for(gid, cid, dm))
+
         def matches(who):
             return people_match(who, uid, lambda: member_roles(gid, uid))
+
         can = watch_can_set(uid, False, here, matches)
         # (owner_dm_gate checked the owner DM's nonce; without the
         # right, decide refuses a web watch in plain words.)
-        can_web = can and watch_can_web(uid, False, dm) \
-            and _meta_owner_dm(meta)
-        if can_web and meta.get("has_inputs") and any(
-                c.get("op") == "add" and c.get("check") == "web"
-                for c in changes):
+        can_web = can and watch_can_web(uid, False, dm) and _meta_owner_dm(meta)
+        if (
+            can_web
+            and meta.get("has_inputs")
+            and any(c.get("op") == "add" and c.get("check") == "web" for c in changes)
+        ):
             # Someone else's words (a document, a quoted message) could
             # have put it there.
-            raise W.Refused(W.LINES["web-inputs"], W.REASON_NOT_ALLOWED,
-                            {"kind": "watch-web"})
+            raise W.Refused(W.LINES["web-inputs"], W.REASON_NOT_ALLOWED, {"kind": "watch-web"})
         resolved = {}
         if can:
             for c in changes:
-                if c.get("op") == "add" and c.get("kind") == "watch" \
-                        and "match" in c \
-                        and c["match"]["in"] not in resolved:
-                    resolved[c["match"]["in"]] = watch_resolve(
-                        c["match"]["in"], uid, gid, cid, dm)
-        req = W.Request(uid, meta.get("author") or _USER_NAMES.get(uid)
-                        or uid, uid in OWNER_USER_IDS, gid, cid, dm, qid,
-                        _snowflake_ts(qid), can, watch_where(gid, cid, dm),
-                        resolved.__getitem__, can_web=can_web)
+                if (
+                    c.get("op") == "add"
+                    and c.get("kind") == "watch"
+                    and "match" in c
+                    and c["match"]["in"] not in resolved
+                ):
+                    resolved[c["match"]["in"]] = watch_resolve(c["match"]["in"], uid, gid, cid, dm)
+        req = W.Request(
+            uid,
+            meta.get("author") or _USER_NAMES.get(uid) or uid,
+            uid in OWNER_USER_IDS,
+            gid,
+            cid,
+            dm,
+            qid,
+            _snowflake_ts(qid),
+            can,
+            watch_where(gid, cid, dm),
+            resolved.__getitem__,
+            can_web=can_web,
+        )
         with store.edit() as data:
             prev = data["done"].get(qid)
             if prev is None:
                 try:
-                    prev = {"ok": True, "done": W.decide(data, req,
-                                                         changes)}
+                    prev = {"ok": True, "done": W.decide(data, req, changes)}
                 except W.Refused as r:
-                    prev = {"ok": False, "line": r.line,
-                            "reason": r.reason, "detail": r.detail}
+                    prev = {"ok": False, "line": r.line, "reason": r.reason, "detail": r.detail}
                 W.remember_done(data, qid, prev)
                 fresh = prev
         for op, value in (fresh or {}).get("done") or []:
             if op == "tz":
-                try:   # their quiet hours: only their own button moves them
+                try:  # their quiet hours: only their own button moves them
                     PRO.note_tz(uid, value)
                 except Exception as e:
-                    print(f"Proactive: time zone note error: {e}",
-                          flush=True)
+                    print(f"Proactive: time zone note error: {e}", flush=True)
     except W.Refused as r:
-        prev = {"ok": False, "line": r.line, "reason": r.reason,
-                "detail": r.detail}
+        prev = {"ok": False, "line": r.line, "reason": r.reason, "detail": r.detail}
         with store.edit() as data:
             W.remember_done(data, qid, prev)
     if prev.get("ok"):
-        print(f"Reminders and watches for {uid} (item {qid}): "
-              f"{', '.join(f'{op} {i}' for op, i in prev.get('done') or [])}",
-              flush=True)
+        print(
+            f"Reminders and watches for {uid} (item {qid}): "
+            f"{', '.join(f'{op} {i}' for op, i in prev.get('done') or [])}",
+            flush=True,
+        )
     else:
-        print(f"Reminders and watches for {uid} (item {qid}): nothing "
-              f"changed ({prev.get('reason') or 'refused'})", flush=True)
+        print(
+            f"Reminders and watches for {uid} (item {qid}): nothing "
+            f"changed ({prev.get('reason') or 'refused'})",
+            flush=True,
+        )
     return _watch_outcome(prev)
 
 
@@ -6741,8 +7219,7 @@ def watch_fire_allowed(uid, name, cid, gid, dm):
     return None
 
 
-def watch_fire_item(state, fid, uid, name, cid, gid, dm, entries, now,
-                    kind="reminder"):
+def watch_fire_item(state, fid, uid, name, cid, gid, dm, entries, now, kind="reminder"):
     """The queue item of a fire (kind "reminder", or "watch-met" for a
     web watch): what is due or matched in `reminder`, with the place's
     recent history and settings card, so the worker writes it as a
@@ -6751,21 +7228,35 @@ def watch_fire_item(state, fid, uid, name, cid, gid, dm, entries, now,
     scope = scope_for(gid, cid, dm)
     card = settings_card(scope, settings().resolve(scope), uid, False, cid)
     card.pop("places", None)
-    cname = f"DM with {name}" if dm else channel_display(
-        CHANNELS.get(cid) or {"name": cid})
+    cname = f"DM with {name}" if dm else channel_display(CHANNELS.get(cid) or {"name": cid})
     return {
-        "message_id": fid, "channel_id": cid, "channel_name": cname,
-        "guild_id": gid, "kind": kind, "author": name,
-        "author_id": uid, "content": "", "timestamp": W.iso(now),
-        "media": [], "documents": [], "unviewable": [],
-        "history": hist[-HISTORY_ATTACHED:], "may_generate": False,
-        "owner_command": False, "burst": False, "burst_fragments": [],
-        "reply_to": None, "from_bot": False, "bot_turns": 0,
+        "message_id": fid,
+        "channel_id": cid,
+        "channel_name": cname,
+        "guild_id": gid,
+        "kind": kind,
+        "author": name,
+        "author_id": uid,
+        "content": "",
+        "timestamp": W.iso(now),
+        "media": [],
+        "documents": [],
+        "unviewable": [],
+        "history": hist[-HISTORY_ATTACHED:],
+        "may_generate": False,
+        "owner_command": False,
+        "burst": False,
+        "burst_fragments": [],
+        "reply_to": None,
+        "from_bot": False,
+        "bot_turns": 0,
         "participants": conversation_participants(
-            hist, {"author": {"id": uid, "username": name}}, None),
-        "queued_at": now, "follow_up": False, "settings": card,
-        "reminder": {"items": entries,
-                     "late": any(e.get("late") for e in entries)},
+            hist, {"author": {"id": uid, "username": name}}, None
+        ),
+        "queued_at": now,
+        "follow_up": False,
+        "settings": card,
+        "reminder": {"items": entries, "late": any(e.get("late") for e in entries)},
     }
 
 
@@ -6776,25 +7267,36 @@ def watch_enqueue(state, q):
     fid, uid = q["message_id"], str(q["author_id"])
     dm = q.get("guild_id") is None
     owner_dm = dm and uid in OWNER_USER_IDS
-    note_item_meta(state, fid, author_id=uid, channel_id=q["channel_id"],
-                   bot=False, dm=dm, kind=q.get("kind"), owner_dm=owner_dm,
-                   guild_id=q.get("guild_id"), author=q.get("author"))
+    note_item_meta(
+        state,
+        fid,
+        author_id=uid,
+        channel_id=q["channel_id"],
+        bot=False,
+        dm=dm,
+        kind=q.get("kind"),
+        owner_dm=owner_dm,
+        guild_id=q.get("guild_id"),
+        author=q.get("author"),
+    )
     note_queued(state, fid)
     if owner_dm and fid not in (state.get("nl_nonces") or {}):
         owner_dm_mint_nonce(state, fid, q["channel_id"])
     reply_nonce_mint(state, fid)
     queue_edit(add=[q])
     items = (q.get("reminder") or {}).get("items") or []
-    print(f"Queued a reminder for {q.get('author')} in "
-          f"{q.get('channel_name')} ({len(items)} item(s)"
-          f"{', late' if (q.get('reminder') or {}).get('late') else ''}).",
-          flush=True)
+    print(
+        f"Queued a reminder for {q.get('author')} in "
+        f"{q.get('channel_name')} ({len(items)} item(s)"
+        f"{', late' if (q.get('reminder') or {}).get('late') else ''}).",
+        flush=True,
+    )
 
 
-WATCH_FIRES_MAX = 500           # fires waiting for an answer, at most
-WATCH_HELD_MAX = 500            # held ones, at most (the oldest go)
-WATCH_FIRES_PER_SERVER_TICK = 5   # after downtime: spread over ticks
-WATCH_REFUSED_GRACE = 24 * 3600   # a place refusing a fire: retried this long
+WATCH_FIRES_MAX = 500  # fires waiting for an answer, at most
+WATCH_HELD_MAX = 500  # held ones, at most (the oldest go)
+WATCH_FIRES_PER_SERVER_TICK = 5  # after downtime: spread over ticks
+WATCH_REFUSED_GRACE = 24 * 3600  # a place refusing a fire: retried this long
 
 
 def watch_tick(state, now=None):
@@ -6818,45 +7320,42 @@ def watch_tick(state, now=None):
     data = store.read()
     cands = list(_WATCH_MATCHES)
     del _WATCH_MATCHES[:]
-    matches = [(wid, m) for wid, m, ctx in cands
-               if _watch_match_ok(data, wid, ctx)]
+    matches = [(wid, m) for wid, m, ctx in cands if _watch_match_ok(data, wid, ctx)]
     verdicts = {}
     for key, name in _watch_places_due(data, matches, now).items():
         verdicts[key] = watch_fire_allowed(key[0], name, *key[1:])
     queued = []
-    held_due = any(isinstance(h, dict) and h.get("next", 0) <= now
-                   for h in (data.get("held") or {}).values())
-    if matches or W.due_reminders(data, now) \
-            or W.expired_watches(data, now) or held_due:
+    held_due = any(
+        isinstance(h, dict) and h.get("next", 0) <= now for h in (data.get("held") or {}).values()
+    )
+    if matches or W.due_reminders(data, now) or W.expired_watches(data, now) or held_due:
         with store.edit() as data:
             counts = {}
-            queued += _watch_release_held(state, data, now, verdicts,
-                                          counts)
+            queued += _watch_release_held(state, data, now, verdicts, counts)
             entries = []
-            for i, r in sorted(W.due_reminders(data, now),
-                               key=lambda ir: ir[1].get("due", 0)):
+            for i, r in sorted(W.due_reminders(data, now), key=lambda ir: ir[1].get("due", 0)):
                 del data["items"][i]
-                entries.append((r["requester"], r["channel_id"],
-                                (r, W.fire_entry(i, r, now))))
+                entries.append((r["requester"], r["channel_id"], (r, W.fire_entry(i, r, now))))
             for wid, matched in matches:
                 r = data["items"].get(wid)
-                if not r or r.get("until", 0) <= now \
-                        or now - r.get("last_fired", 0) < W.DEBOUNCE_SECS:
+                if (
+                    not r
+                    or r.get("until", 0) <= now
+                    or now - r.get("last_fired", 0) < W.DEBOUNCE_SECS
+                ):
                     continue
                 r["last_fired"] = now
                 r["fired"] = r.get("fired", 0) + 1
-                entries.append((r["requester"], r["channel_id"],
-                                (dict(r), W.fire_entry(wid, r, now,
-                                                       matched))))
+                entries.append(
+                    (r["requester"], r["channel_id"], (dict(r), W.fire_entry(wid, r, now, matched)))
+                )
                 if not r.get("every"):
                     del data["items"][wid]
             for wid in W.expired_watches(data, now):
                 del data["items"][wid]
                 print(f"Watch {wid} ended (its time ran out).", flush=True)
-            queued += _watch_make_fires(state, data, entries, now,
-                                        verdicts, counts)
-    if os.path.exists(WEB_RESULTS_FILE) \
-            or W.web_work(data, now, _web_owners()):
+            queued += _watch_make_fires(state, data, entries, now, verdicts, counts)
+    if os.path.exists(WEB_RESULTS_FILE) or W.web_work(data, now, _web_owners()):
         with store.edit() as data:
             queued += _web_tick(state, data, now, verdicts)
     watch_write_due(store.read(), now)
@@ -6868,8 +7367,7 @@ def watch_tick(state, now=None):
 
 
 def _watch_place(r):
-    return (r["requester"], r["channel_id"], r.get("guild_id"),
-            bool(r.get("dm")))
+    return (r["requester"], r["channel_id"], r.get("guild_id"), bool(r.get("dm")))
 
 
 def _watch_places_due(data, matches, now):
@@ -6884,8 +7382,7 @@ def _watch_places_due(data, matches, now):
             recs.append(h["es"][0][0])
     # Web watches that may fire this tick: reports waiting (read, not
     # taken: the tool writes the file atomically), and expired checks.
-    ids = {r.get("id") for r in _read_json(WEB_RESULTS_FILE, list) or []
-           if isinstance(r, dict)}
+    ids = {r.get("id") for r in _read_json(WEB_RESULTS_FILE, list) or [] if isinstance(r, dict)}
     for i, r in data["items"].items():
         chk = r.get("check") if isinstance(r, dict) else None
         if i in ids or (chk and chk.get("expires", 0) <= now):
@@ -6909,23 +7406,20 @@ def _watch_match_ok(data, wid, ctx):
     try:
         if not user_can_view(gid, r["requester"], cid):
             return False
-        return bool(r.get("dm")) or r.get("channel_id") in (cid, parent) \
-            or channel_public(gid, cid)
+        return bool(r.get("dm")) or r.get("channel_id") in (cid, parent) or channel_public(gid, cid)
     except Exception as e:
         print(f"Watch check error: {e}", flush=True)
         return False
 
 
-def _watch_make_fires(state, data, entries, now, verdicts, counts,
-                      kind="reminder"):
+def _watch_make_fires(state, data, entries, now, verdicts, counts, kind="reminder"):
     """Fires for entries [(requester, place, (record, fire entry))], one
     per person and place, recorded in data["fires"] (under the store's
     lock); returns their queue items (queued by the caller after the
     store is written, so a fire is never queued without its record)."""
     out = []
     for (uid, cid), es in W.group(entries).items():
-        q = _watch_fire_group(state, data, uid, cid, es, now, kind,
-                              verdicts, counts)
+        q = _watch_fire_group(state, data, uid, cid, es, now, kind, verdicts, counts)
         if q:
             out.append(q)
     return out
@@ -6944,22 +7438,35 @@ def _watch_release_held(state, data, now, verdicts, counts):
         grace = WATCH_REFUSED_GRACE if h.get("why") else W.HELD_KEEP_SECS
         if now - h.get("at", now) > grace:
             why = h.get("why") or "a reply cap"
-            print(f"Reminder {fid} could not go out for too long "
-                  f"({why}); dropped.", flush=True)
-            ledger_record(fid, "skipped", f"reminder dropped: {why}",
-                          channel_id=h.get("cid"), author_id=h.get("uid"))
+            print(f"Reminder {fid} could not go out for too long ({why}); dropped.", flush=True)
+            ledger_record(
+                fid,
+                "skipped",
+                f"reminder dropped: {why}",
+                channel_id=h.get("cid"),
+                author_id=h.get("uid"),
+            )
             continue
         es = [(r, dict(e, late=True)) for r, e in h.get("es") or []]
-        q = _watch_fire_group(state, data, h["uid"], h["cid"], es, now,
-                              h.get("kind") or "reminder", verdicts, counts,
-                              fid=fid, held=h)
+        q = _watch_fire_group(
+            state,
+            data,
+            h["uid"],
+            h["cid"],
+            es,
+            now,
+            h.get("kind") or "reminder",
+            verdicts,
+            counts,
+            fid=fid,
+            held=h,
+        )
         if q:
             out.append(q)
     return out
 
 
-def _watch_hold(data, fid, uid, cid, es, kind, now, next_at, held=None,
-                why=None):
+def _watch_hold(data, fid, uid, cid, es, kind, now, next_at, held=None, why=None):
     """Keep a fire for later (data["held"]). Into one already held for
     the same person, place and kind it folds: the same watch again
     counts as `more` on its entry ("3 more mentions"), never a second
@@ -6967,8 +7474,13 @@ def _watch_hold(data, fid, uid, cid, es, kind, now, next_at, held=None,
     person's own reminders and watches). Returns the held record's id."""
     held_all = data.setdefault("held", {})
     for hid, h in held_all.items():
-        if hid != fid and isinstance(h, dict) and h.get("uid") == uid \
-                and h.get("cid") == cid and h.get("kind") == kind:
+        if (
+            hid != fid
+            and isinstance(h, dict)
+            and h.get("uid") == uid
+            and h.get("cid") == cid
+            and h.get("kind") == kind
+        ):
             have = {e.get("id"): e for _, e in h["es"]}
             for r, e in es:
                 old = have.get(e.get("id"))
@@ -6980,24 +7492,31 @@ def _watch_hold(data, fid, uid, cid, es, kind, now, next_at, held=None,
                     h["es"].append([r, e])
             return hid
     rec = dict(held or {})
-    rec.update({"at": (held or {}).get("at", now), "next": next_at,
-                "kind": kind, "uid": uid, "cid": cid,
-                "es": [[r, e] for r, e in es],
-                "tries": (held or {}).get("tries", 0) + 1})
+    rec.update(
+        {
+            "at": (held or {}).get("at", now),
+            "next": next_at,
+            "kind": kind,
+            "uid": uid,
+            "cid": cid,
+            "es": [[r, e] for r, e in es],
+            "tries": (held or {}).get("tries", 0) + 1,
+        }
+    )
     rec.pop("why", None)
     if why:
         rec["why"] = why
     held_all[fid] = rec
     if len(held_all) > WATCH_HELD_MAX:
         for old in sorted(held_all, key=lambda k: held_all[k].get("at", 0))[
-                :len(held_all) - WATCH_HELD_MAX]:
+            : len(held_all) - WATCH_HELD_MAX
+        ]:
             print(f"Reminder {old} dropped: too many held.", flush=True)
             del held_all[old]
     return fid
 
 
-def _watch_fire_group(state, data, uid, cid, es, now, kind, verdicts,
-                      counts, fid=None, held=None):
+def _watch_fire_group(state, data, uid, cid, es, now, kind, verdicts, counts, fid=None, held=None):
     """One fire for es [(record, fire entry)] of one person in one
     place, or None when it is held for later instead:
     - the place was not checked this tick (verdicts): the next tick;
@@ -7018,52 +7537,65 @@ def _watch_fire_group(state, data, uid, cid, es, now, kind, verdicts,
     fid = fid or started_item_id(now)
     key = (uid, cid, gid, dm)
     if key not in verdicts:
-        _watch_hold(data, fid, uid, cid, es, kind, now, now, held,
-                    (held or {}).get("why"))
+        _watch_hold(data, fid, uid, cid, es, kind, now, now, held, (held or {}).get("why"))
         return None
     why = verdicts[key]
     if why:
         tries = (held or {}).get("tries", 0)
-        hid = _watch_hold(data, fid, uid, cid, es, kind, now,
-                          now + min(3600, 30 * 2 ** tries), held, why)
+        hid = _watch_hold(
+            data, fid, uid, cid, es, kind, now, now + min(3600, 30 * 2**tries), held, why
+        )
         if held is None and hid == fid:
             print(f"Reminder for {name} in {cid} held ({why}).", flush=True)
-            ledger_record(fid, "skipped", f"reminder held: {why}",
-                          channel_id=cid, author=name, author_id=uid,
-                          detail={"why": why})
+            ledger_record(
+                fid,
+                "skipped",
+                f"reminder held: {why}",
+                channel_id=cid,
+                author=name,
+                author_id=uid,
+                detail={"why": why},
+            )
         return None
-    if counts.get(gid, 0) >= WATCH_FIRES_PER_SERVER_TICK \
-            or len(data["fires"]) >= WATCH_FIRES_MAX:
-        _watch_hold(data, fid, uid, cid, es, kind, now,
-                    now + WATCH_TICK_SECS, held)
+    if counts.get(gid, 0) >= WATCH_FIRES_PER_SERVER_TICK or len(data["fires"]) >= WATCH_FIRES_MAX:
+        _watch_hold(data, fid, uid, cid, es, kind, now, now + WATCH_TICK_SECS, held)
         return None
     scope = scope_for(gid, cid, dm)
     capped = rate_block(state, uid, cid, scope)
     if capped:
-        hid = _watch_hold(data, fid, uid, cid, es, kind, now,
-                          now + W.HELD_RETRY_SECS, held)
+        hid = _watch_hold(data, fid, uid, cid, es, kind, now, now + W.HELD_RETRY_SECS, held)
         if held is None and hid == fid:
-            print(f"Reminder for {name} in {cid} held: a reply cap is "
-                  f"reached ({capped['key']}).", flush=True)
-            ledger_record(fid, "skipped", "reminder held: daily cap reached",
-                          channel_id=cid, author=name, author_id=uid,
-                          detail=capped)
+            print(
+                f"Reminder for {name} in {cid} held: a reply cap is reached ({capped['key']}).",
+                flush=True,
+            )
+            ledger_record(
+                fid,
+                "skipped",
+                "reminder held: daily cap reached",
+                channel_id=cid,
+                author=name,
+                author_id=uid,
+                detail=capped,
+            )
         return None
     rate_record(state, uid, scope)
     counts[gid] = counts.get(gid, 0) + 1
     if held is not None:
-        ledger_record(fid, "queued", channel_id=cid, author=name,
-                      author_id=uid)   # no longer held
-    ents = [dict(e, asked=msg_link(gid, cid, r["message_id"]))
-            for r, e in es]
-    q = watch_fire_item(state, fid, uid, name, cid, gid, dm, ents, now,
-                        kind=kind)
+        ledger_record(fid, "queued", channel_id=cid, author=name, author_id=uid)  # no longer held
+    ents = [dict(e, asked=msg_link(gid, cid, r["message_id"])) for r, e in es]
+    q = watch_fire_item(state, fid, uid, name, cid, gid, dm, ents, now, kind=kind)
     data["fires"][fid] = {
-        "id": fid, "at": now, "requester": uid, "channel_id": cid,
-        "guild_id": gid, "dm": dm,
+        "id": fid,
+        "at": now,
+        "requester": uid,
+        "channel_id": cid,
+        "guild_id": gid,
+        "dm": dm,
         "originals": sorted({r["message_id"] for r, _ in es}, key=int),
         # (Its history is the place's, re-read if it is queued again.)
-        "item": dict(q, history=[])}
+        "item": dict(q, history=[]),
+    }
     W.note_fired(data, fid, now)
     return q
 
@@ -7077,8 +7609,7 @@ def _web_take_results():
     except FileNotFoundError:
         return []
     except (OSError, ValueError) as e:
-        print(f"web_watch_results.json unreadable ({e}); dropped",
-              flush=True)
+        print(f"web_watch_results.json unreadable ({e}); dropped", flush=True)
         reps = []
     try:
         os.remove(WEB_RESULTS_FILE)
@@ -7103,8 +7634,7 @@ def _web_tick(state, data, now, verdicts):
     for rep in _web_take_results():
         res, i, rec = W.web_apply(data, rep, now, owners)
         if res is None:
-            print(f"Refused a web watch report for {i or '?'}: {rec}.",
-                  flush=True)
+            print(f"Refused a web watch report for {i or '?'}: {rec}.", flush=True)
             continue
         print(f"Web watch {i}: {res}.", flush=True)
         if res in ("met", "gave-up", "refused"):
@@ -7117,26 +7647,33 @@ def _web_tick(state, data, now, verdicts):
                 m["summary"] = summary
             e = W.fire_entry(i, rec, now, m)
             if withheld:
-                print(f"Web watch {i}: its summary looked like prompt "
-                      f"injection; withheld.", flush=True)
+                print(
+                    f"Web watch {i}: its summary looked like prompt injection; withheld.",
+                    flush=True,
+                )
                 e["summary_withheld"] = True
             out.append((rec["requester"], rec["channel_id"], (rec, e)))
     for i, rec in W.web_issue(data, now, owners=owners):
-        why = (f"no answer {W.WEB_MAX_FAILS} times"
-               if rec.get("fails", 0) >= W.WEB_MAX_FAILS
-               else "its requester is not an owner")
+        why = (
+            f"no answer {W.WEB_MAX_FAILS} times"
+            if rec.get("fails", 0) >= W.WEB_MAX_FAILS
+            else "its requester is not an owner"
+        )
         print(f"Web watch {i}: {why}; ended.", flush=True)
-        out.append((rec["requester"], rec["channel_id"],
-                    (rec, W.fire_entry(i, rec, now, {"result": "gave-up"}))))
-    return _watch_make_fires(state, data, out, now, verdicts, {},
-                             kind="watch-met")
+        out.append(
+            (
+                rec["requester"],
+                rec["channel_id"],
+                (rec, W.fire_entry(i, rec, now, {"result": "gave-up"})),
+            )
+        )
+    return _watch_make_fires(state, data, out, now, verdicts, {}, kind="watch-met")
 
 
 def watch_write_due(data, now=None):
     """web_watches_due.json: the live checks (muse_watches.web_due), for
     hooks/watch-due.sh; written (mode 600) only when it changes."""
-    _publish(WEB_DUE_FILE, W.web_due(data, now), _WEB_DUE_WRITTEN,
-             create=False)
+    _publish(WEB_DUE_FILE, W.web_due(data, now), _WEB_DUE_WRITTEN, create=False)
 
 
 def watch_fire_upkeep(state, now=None):
@@ -7148,9 +7685,8 @@ def watch_fire_upkeep(state, now=None):
     if not data["fires"]:
         return
     try:
-        queued = {str(q.get("message_id")) for q in load_queue()
-                  if isinstance(q, dict)}
-    except (OSError, ValueError):
+        queued = {str(q.get("message_id")) for q in load_queue() if isinstance(q, dict)}
+    except OSError, ValueError:
         return
     entries = _ledger_load()["entries"]
     drop, lost, stale = [], [], set()
@@ -7165,15 +7701,19 @@ def watch_fire_upkeep(state, now=None):
             # every later answer is refused and it is woken for forever).
             drop.append(fid)
             stale.add(fid)
-            print(f"Reminder {fid} was never answered; dropped.",
-                  flush=True)
-            ledger_record(fid, "skipped", "reminder never answered",
-                          channel_id=f.get("channel_id"),
-                          author_id=f.get("requester"))
+            print(f"Reminder {fid} was never answered; dropped.", flush=True)
+            ledger_record(
+                fid,
+                "skipped",
+                "reminder never answered",
+                channel_id=f.get("channel_id"),
+                author_id=f.get("requester"),
+            )
         elif fid not in queued and isinstance(f.get("item"), dict):
             q = dict(f["item"])
-            q["history"] = ((state.get("history") or {}).get(
-                q.get("channel_id")) or [])[-HISTORY_ATTACHED:]
+            q["history"] = ((state.get("history") or {}).get(q.get("channel_id")) or [])[
+                -HISTORY_ATTACHED:
+            ]
             lost.append(q)
     if drop:
         with watch_store().edit() as d:
@@ -7186,8 +7726,7 @@ def watch_fire_upkeep(state, now=None):
             nonces.pop(fid, None)
         owner_dm_write_nonces(state)
     for q in lost:
-        print(f"Reminder {q['message_id']} was not in the queue; queued "
-              f"again.", flush=True)
+        print(f"Reminder {q['message_id']} was not in the queue; queued again.", flush=True)
         watch_enqueue(state, q)
 
 
@@ -7213,7 +7752,7 @@ def _watch_scan(msg, guild_id):
         return
     items = watch_store().read()["items"]
     if items and owners_absent(guild_id):
-        return   # a server none of the owners is in: nothing from it
+        return  # a server none of the owners is in: nothing from it
     text = msg.get("content") or ""
     if not items or not text:
         return
@@ -7228,23 +7767,34 @@ def _watch_scan(msg, guild_id):
     now = time.time()
     pending = {c[0] for c in _WATCH_MATCHES}
     for wid, r in items.items():
-        if not isinstance(r, dict) or r.get("kind") != "watch" \
-                or wid in pending or aid == r.get("requester") \
-                or r.get("until", 0) <= now \
-                or ts + 2 < r.get("created", now) \
-                or now - r.get("last_fired", 0) < W.DEBOUNCE_SECS \
-                or not W.watch_covers(r, guild_id, cid, parent):
+        if (
+            not isinstance(r, dict)
+            or r.get("kind") != "watch"
+            or wid in pending
+            or aid == r.get("requester")
+            or r.get("until", 0) <= now
+            or ts + 2 < r.get("created", now)
+            or now - r.get("last_fired", 0) < W.DEBOUNCE_SECS
+            or not W.watch_covers(r, guild_id, cid, parent)
+        ):
             continue
         hit = W.match_text(r.get("words") or [], text)
         if not hit:
             continue
         if len(_WATCH_MATCHES) >= 1000:
-            return   # a flood: the rest of this tick's matches wait
-        _WATCH_MATCHES.append((wid, {
-            "words": hit, "link": msg_link(guild_id, cid, msg.get("id")),
-            "channel": "#" + str(info.get("name") or cid),
-            "author": author.get("username") or "someone"},
-            {"gid": guild_id, "cid": cid, "parent": parent}))
+            return  # a flood: the rest of this tick's matches wait
+        _WATCH_MATCHES.append(
+            (
+                wid,
+                {
+                    "words": hit,
+                    "link": msg_link(guild_id, cid, msg.get("id")),
+                    "channel": "#" + str(info.get("name") or cid),
+                    "author": author.get("username") or "someone",
+                },
+                {"gid": guild_id, "cid": cid, "parent": parent},
+            )
+        )
 
 
 # -- answering a fire -------------------------------------------------------
@@ -7257,10 +7807,14 @@ def watch_bind(item):
     data = watch_store().read()
     if not data["fires"] and not data["fired"]:
         return None
-    fid = next((str(item[f]) for f in ("item", "reply_to")
-                if item.get(f) and (str(item[f]) in data["fires"]
-                                    or str(item[f]) in data["fired"])),
-               None)
+    fid = next(
+        (
+            str(item[f])
+            for f in ("item", "reply_to")
+            if item.get(f) and (str(item[f]) in data["fires"] or str(item[f]) in data["fired"])
+        ),
+        None,
+    )
     if fid is None:
         return None
     f = data["fires"].get(fid)
@@ -7275,8 +7829,7 @@ def watch_bind(item):
     if str(item.get("channel_id")) != f["channel_id"]:
         return f"reminder {fid}: channel_id must be the reminder's channel"
     item["item"] = fid
-    for k in ("reply_to", "reactions", "attachments", "standalone",
-              "remember"):
+    for k in ("reply_to", "reactions", "attachments", "standalone", "remember"):
         item.pop(k, None)
     if not item.get("silent") and not normalize_parts(item):
         return f"reminder {fid}: the reply needs text"
@@ -7297,21 +7850,25 @@ def watch_fire_target(state, fire):
             m = api_get(f"/channels/{cid}/messages/{oid}")
         except Exception as e:
             if getattr(e, "code", None) in (403, 404):
-                continue   # deleted (or unreadable): not that one
-            raise          # transient: the send is retried
+                continue  # deleted (or unreadable): not that one
+            raise  # transient: the send is retried
         if isinstance(m, dict) and str(m.get("id")) == str(oid):
             target = str(oid)
             break
     if target is None:
-        mine = [h for h in (state.get("history") or {}).get(cid) or []
-                if str(h.get("author_id")) == uid]
+        mine = [
+            h for h in (state.get("history") or {}).get(cid) or [] if str(h.get("author_id")) == uid
+        ]
         if not mine:
             try:
                 got = api_get(f"/channels/{cid}/messages?limit=50") or []
             except Exception:
                 got = []
-            mine = [{"id": m["id"]} for m in got if isinstance(m, dict)
-                    and str((m.get("author") or {}).get("id")) == uid]
+            mine = [
+                {"id": m["id"]}
+                for m in got
+                if isinstance(m, dict) and str((m.get("author") or {}).get("id")) == uid
+            ]
         if mine:
             target = str(max(mine, key=lambda h: int(h["id"]))["id"])
     with watch_store().edit() as d:
@@ -7329,8 +7886,7 @@ def watch_fire_send(state, fire, parts):
     target = watch_fire_target(state, fire)
     if not target and parts:
         parts = [f"<@{uid}> {parts[0]}"[:DISCORD_MAX_CHARS]] + parts[1:]
-    return target, parts, {"parse": [], "users": [uid],
-                           "replied_user": True}
+    return target, parts, {"parse": [], "users": [uid], "replied_user": True}
 
 
 PIDFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor.pid")
@@ -7367,11 +7923,9 @@ def _acquire_singleton():
         except OSError:
             alive = False
         if alive:
-            print(f"Another monitor (pid {oldpid}) is already running; "
-                  f"exiting.", flush=True)
+            print(f"Another monitor (pid {oldpid}) is already running; exiting.", flush=True)
             sys.exit(0)
-        print(f"Replacing stale monitor pidfile (pid {oldpid} gone).",
-              flush=True)
+        print(f"Replacing stale monitor pidfile (pid {oldpid} gone).", flush=True)
     os.ftruncate(fd, 0)
     os.lseek(fd, 0, os.SEEK_SET)
     os.write(fd, str(mypid).encode())
@@ -7400,20 +7954,25 @@ def _acquire_singleton():
 # GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT, plus
 # GUILD_MESSAGE_TYPING | DIRECT_MESSAGE_TYPING for the early burst flush
 # (burst_quiet). The typing intents are not privileged.
-GATEWAY_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15) \
-    | (1 << 11) | (1 << 14)
+GATEWAY_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15) | (1 << 11) | (1 << 14)
+
+
 async def _gateway_run(token, inbox, status):
     from muse_discord.discord_connection import run
+
     await run(token, inbox, status, SettingsCtx, guard_outgoing, GATEWAY_INTENTS)
 
 
 def _gateway_thread_main(token, inbox, status):
     import asyncio
+
     try:
         asyncio.run(_gateway_run(token, inbox, status))
     except Exception as e:
-        print(f"GATEWAY DISABLED (thread died: {e}): realtime ingest is "
-              f"off; REST polling continues.", flush=True)
+        print(
+            f"GATEWAY DISABLED (thread died: {e}): realtime ingest is off; REST polling continues.",
+            flush=True,
+        )
         status["dead"] = True
 
 
@@ -7441,8 +8000,7 @@ def drain_gateway(state, inbox, channels):
             watch_perm_event(m["_perm_event"])
             continue
         if "_typing" in m:
-            note_activity(m["_typing"].get("channel_id"),
-                          m["_typing"].get("user_id"))
+            note_activity(m["_typing"].get("channel_id"), m["_typing"].get("user_id"))
             continue
         if "_record" in m:
             apply_record(state, m["_record"])
@@ -7475,18 +8033,19 @@ def drain_gateway(state, inbox, channels):
                 if not ch or not ch.get("id"):
                     continue
                 g = ch.get("guild_id") or gid
-                info = {"name": ch.get("name") or "?",
-                        "guild_id": g,
-                        "guild_name": (GUILDS.get(g) or {}).get("name") or g,
-                        "can_send": None,
-                        "thread": ch.get("type") in _THREAD_TYPES,
-                        "parent_id": ch.get("parent_id"),
-                        "private": ch.get("type") == 12}
+                info = {
+                    "name": ch.get("name") or "?",
+                    "guild_id": g,
+                    "guild_name": (GUILDS.get(g) or {}).get("name") or g,
+                    "can_send": None,
+                    "thread": ch.get("type") in _THREAD_TYPES,
+                    "parent_id": ch.get("parent_id"),
+                    "private": ch.get("type") == 12,
+                }
                 if not info["thread"] and ch.get("parent_id"):
                     CHANNEL_CATEGORY[cid] = ch["parent_id"]
                 if not info["thread"]:  # watches: who can read it
-                    _CHANNEL_OVERWRITES[cid] = \
-                        ch.get("permission_overwrites") or []
+                    _CHANNEL_OVERWRITES[cid] = ch.get("permission_overwrites") or []
                 channels[cid] = info
             cname = channel_display(info)
             record_history(state, cid, [m])
@@ -7503,8 +8062,7 @@ def drain_gateway(state, inbox, channels):
             author = _who(m)
             own = author.get("id") == BOT_ID
             if not own:
-                TM.count("messages_seen",
-                         int(m.get("type", 0) in CONVERSATION_TYPES))
+                TM.count("messages_seen", int(m.get("type", 0) in CONVERSATION_TYPES))
                 if not dm_sender_allowed(author):
                     note_dm_refused(m)
                     continue
@@ -7516,7 +8074,6 @@ def drain_gateway(state, inbox, channels):
                 continue  # folded into a burst already being coalesced
             dms.append((m, "DM with " + (author.get("username") or cid)))
     return mentions, dms
-
 
 
 # ---------------------------------------------------------------------------
@@ -7559,8 +8116,9 @@ def sweep_mentions(state, queue, channels, dms=True):
     outbox_targets |= {aliases[t] for t in outbox_targets if t in aliases}
     # The owners' DM channels are swept too: a DM lost in a gateway gap
     # is as lost as a mention.
-    dm_channels = [(dm_id, {"dm": True, "name": name})
-                   for dm_id, name in DM_CHANNELS.items()] if dms else []
+    dm_channels = (
+        [(dm_id, {"dm": True, "name": name}) for dm_id, name in DM_CHANNELS.items()] if dms else []
+    )
     now = time.time()
     changed = False
     for cid, info in list(channels.items()) + dm_channels:
@@ -7584,9 +8142,11 @@ def sweep_mentions(state, queue, channels, dms=True):
                 continue  # a system notice (a pin, a new thread)
             if dm:
                 # Owner DM channels: every owner message is a trigger.
-                if is_bot_author(author) \
-                        or not dm_swept_author(author.get("id")) \
-                        or not dm_sender_allowed(author):
+                if (
+                    is_bot_author(author)
+                    or not dm_swept_author(author.get("id"))
+                    or not dm_sender_allowed(author)
+                ):
                     continue
             # Direct address only: follow-ups are never requeued.
             elif trigger_kind(m, info.get("guild_id")) != "mention":
@@ -7598,56 +8158,80 @@ def sweep_mentions(state, queue, channels, dms=True):
                 continue
             if mid in replied:
                 if entries.get(mid, {}).get("status") != "replied":
-                    ledger_record(mid, "replied", "sweep sync", cid,
-                                  author.get("username"),
-                                  author_id=author.get("id"))
+                    ledger_record(
+                        mid,
+                        "replied",
+                        "sweep sync",
+                        cid,
+                        author.get("username"),
+                        author_id=author.get("id"),
+                    )
                 continue
             ids = {mid, aliases.get(mid, mid)}
-            if any(ids & s for s in (replied, quar_ids, q_ids,
-                                     outbox_targets, pending_ids)):
+            if any(ids & s for s in (replied, quar_ids, q_ids, outbox_targets, pending_ids)):
                 continue  # accounted for and in flight
             ent = entries.get(mid)
-            if any(entries.get(i, {}).get("status") in LEDGER_TERMINAL
-                   for i in ids):
+            if any(entries.get(i, {}).get("status") in LEDGER_TERMINAL for i in ids):
                 continue
             if info.get("can_send") is False:
-                ledger_record(mid, "skipped",
-                              "no send permission in channel", cid,
-                              author.get("username"),
-                              author_id=author.get("id"))
+                ledger_record(
+                    mid,
+                    "skipped",
+                    "no send permission in channel",
+                    cid,
+                    author.get("username"),
+                    author_id=author.get("id"),
+                )
                 continue
             recs = (ent or {}).get("recoveries", 0)
             if recs >= SWEEP_MAX_RECOVERIES:
                 if ent and ent.get("status") != "skipped":
-                    ledger_record(mid, "skipped", "recovery cap reached",
-                                  cid, author.get("username"),
-                                  author_id=author.get("id"))
-                    print(f"Sweep: giving up on unrecoverable mention "
-                          f"{mid} from {author.get('username')} in "
-                          f"{cname} (recorded in mention ledger).",
-                          flush=True)
+                    ledger_record(
+                        mid,
+                        "skipped",
+                        "recovery cap reached",
+                        cid,
+                        author.get("username"),
+                        author_id=author.get("id"),
+                    )
+                    print(
+                        f"Sweep: giving up on unrecoverable mention "
+                        f"{mid} from {author.get('username')} in "
+                        f"{cname} (recorded in mention ledger).",
+                        flush=True,
+                    )
                 continue
-            ok = enqueue_message(m, cname, state, queue, dm=dm,
-                                 fragments=[],
-                                 guild_id=info.get("guild_id"))
+            ok = enqueue_message(
+                m, cname, state, queue, dm=dm, fragments=[], guild_id=info.get("guild_id")
+            )
             if ok:
                 changed = True
                 q_ids.add(mid)
-                ledger_record(mid, "queued",
-                              f"sweep recovery #{recs + 1}", cid,
-                              author.get("username"),
-                              recoveries=recs + 1,
-                              author_id=author.get("id"))
-                print(f"Sweep recovered lost mention {mid} from "
-                      f"{author.get('username')} in {cname}.", flush=True)
+                ledger_record(
+                    mid,
+                    "queued",
+                    f"sweep recovery #{recs + 1}",
+                    cid,
+                    author.get("username"),
+                    recoveries=recs + 1,
+                    author_id=author.get("id"),
+                )
+                print(
+                    f"Sweep recovered lost mention {mid} from {author.get('username')} in {cname}.",
+                    flush=True,
+                )
             elif not _ledger_terminal(mid):
                 # (A gate inside enqueue, e.g. quarantine or the join
                 # watermark, may already have recorded a terminal state.)
-                ledger_record(mid, "enqueue_failed",
-                              "sweep enqueue failed", cid,
-                              author.get("username"),
-                              recoveries=recs + 1,
-                              author_id=author.get("id"))
+                ledger_record(
+                    mid,
+                    "enqueue_failed",
+                    "sweep enqueue failed",
+                    cid,
+                    author.get("username"),
+                    recoveries=recs + 1,
+                    author_id=author.get("id"),
+                )
     return changed
 
 
@@ -7662,13 +8246,15 @@ def _note_no_send(msg, cname):
     cid = msg.get("channel_id")
     if cid not in _no_send_logged:
         _no_send_logged.add(cid)
-        print(f"Skipping replies in {cname}: the bot cannot send "
-              f"messages there.", flush=True)
-    ledger_record(msg["id"], "skipped", "no send permission in channel",
-                  channel_id=cid,
-                  author=_who(msg).get("username"),
-                  author_id=_who(msg).get("id"))
-
+        print(f"Skipping replies in {cname}: the bot cannot send messages there.", flush=True)
+    ledger_record(
+        msg["id"],
+        "skipped",
+        "no send permission in channel",
+        channel_id=cid,
+        author=_who(msg).get("username"),
+        author_id=_who(msg).get("id"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -7727,8 +8313,7 @@ class PollRotation:
 
     def next_due(self):
         """When the next target is due on the pacing schedule."""
-        return self.started + (POLL_INTERVAL * self.spread * self.pos
-                               / max(1, len(self.targets)))
+        return self.started + (POLL_INTERVAL * self.spread * self.pos / max(1, len(self.targets)))
 
     def due(self, now):
         return not self.done() and now >= self.next_due()
@@ -7753,14 +8338,15 @@ class PollRotation:
             # DMs: every message not from the bot is addressed to the
             # bot. Resolving the channels is a step; each DM channel is
             # polled as the next ones.
-            self.targets[self.pos:self.pos] = [
-                ("dm", dm_id, dm_name)
-                for dm_id, dm_name in list_dm_channels()]
+            self.targets[self.pos : self.pos] = [
+                ("dm", dm_id, dm_name) for dm_id, dm_name in list_dm_channels()
+            ]
             return True
         if target[0] == "dm":
             _, dm_id, dm_name = target
-            dms_out.extend((m, "DM with " + dm_name)
-                           for m in check_dm_channel(dm_id, dm_name, state))
+            dms_out.extend(
+                (m, "DM with " + dm_name) for m in check_dm_channel(dm_id, dm_name, state)
+            )
             return True
         cid = target[1]
         info = CHANNELS.get(cid)
@@ -7780,6 +8366,7 @@ class SweepPass:
     """One reconciliation sweep pass (sweep_mentions), done in slices: a
     step sweeps one channel (or the owners' DM channels), each against
     the durable records as they are at that moment."""
+
     name = "Sweep"
 
     def __init__(self, channel_ids):
@@ -7812,8 +8399,7 @@ class SweepPass:
             if cid is None:
                 changed |= sweep_mentions(state, queue, {})
             elif cid in CHANNELS:  # (else unmonitored since it began)
-                changed |= sweep_mentions(state, queue,
-                                          {cid: CHANNELS[cid]}, dms=False)
+                changed |= sweep_mentions(state, queue, {cid: CHANNELS[cid]}, dms=False)
             else:
                 continue
             n += 1
@@ -7866,8 +8452,7 @@ def thread_refresh_iter(state):
         for c in chans:
             if c.get("parent_id"):
                 CHANNEL_CATEGORY[c["id"]] = c["parent_id"]
-        new_threads = yield from discover_threads_iter(
-            gid, gname, names_by_id, CHANNELS)
+        new_threads = yield from discover_threads_iter(gid, gname, names_by_id, CHANNELS)
         for tid, info in new_threads.items():
             seed_channel_seen(tid, channel_display(info), state)
             CHANNELS[tid] = info
@@ -7895,17 +8480,12 @@ def discovery_iter(state):
         if cid not in before and cid not in fresh:
             fresh[cid] = info
     if set(fresh) != set(CHANNELS):
-        added = [channel_display(n) for i, n in fresh.items()
-                 if i not in CHANNELS]
-        removed = [channel_display(n)
-                   for i, n in CHANNELS.items()
-                   if i not in fresh]
+        added = [channel_display(n) for i, n in fresh.items() if i not in CHANNELS]
+        removed = [channel_display(n) for i, n in CHANNELS.items() if i not in fresh]
         if added:
-            print(f"Now monitoring {', '.join(added)}.",
-                  flush=True)
+            print(f"Now monitoring {', '.join(added)}.", flush=True)
         if removed:
-            print(f"Lost access to {', '.join(removed)}; "
-                  f"unmonitoring.", flush=True)
+            print(f"Lost access to {', '.join(removed)}; unmonitoring.", flush=True)
         CHANNELS = fresh
     publish_directory()
     sync_guilds(state, fresh_guilds, fresh)
@@ -7956,16 +8536,23 @@ def main():
     except Exception as e:
         if getattr(e, "code", None) == 401:
             token_rejected_exit("401 from /users/@me")
-        print(f"Bot identity pending: /users/@me failed at boot ({e}); "
-              f"retrying in-loop.", flush=True)
+        print(
+            f"Bot identity pending: /users/@me failed at boot ({e}); retrying in-loop.", flush=True
+        )
     CHANNELS, GUILDS = discover_channels()
     publish_directory()
-    print(f"muse-discord monitor starting. Polling {len(CHANNELS)} "
-          f"channels + DMs every {POLL_INTERVAL}s.", flush=True)
+    print(
+        f"muse-discord monitor starting. Polling {len(CHANNELS)} "
+        f"channels + DMs every {POLL_INTERVAL}s.",
+        flush=True,
+    )
     if not CHANNELS:
-        print("WARNING: no readable channels found (check the bot's "
-              "guild membership and channel permissions); discovery "
-              "keeps retrying on the refresh cadence.", flush=True)
+        print(
+            "WARNING: no readable channels found (check the bot's "
+            "guild membership and channel permissions); discovery "
+            "keeps retrying on the refresh cadence.",
+            flush=True,
+        )
     state = load_state()
     # Join watermarks for every guild, plus the owner summary for any
     # guild joined while the monitor was down.
@@ -7986,29 +8573,29 @@ def main():
     token = TOKEN
     _gateway_inbox = pyqueue.Queue()
     _ix_inbox = pyqueue.Queue()  # interactions, see below
-    _gateway_status = {"wake": threading.Event(),
-                       "interactions": _ix_inbox}
+    _gateway_status = {"wake": threading.Event(), "interactions": _ix_inbox}
     gw_thread = threading.Thread(
         target=_gateway_thread_main,
         args=(token, _gateway_inbox, _gateway_status),
-        daemon=True, name="discord-gateway")
+        daemon=True,
+        name="discord-gateway",
+    )
     gw_thread.start()
     print("Gateway thread started (realtime ingest).", flush=True)
     # Typing indicator on its own clock (see typing_refresh).
-    threading.Thread(target=_typing_thread_main, daemon=True,
-                     name="typing").start()
+    threading.Thread(target=_typing_thread_main, daemon=True, name="typing").start()
     # Interactions (button clicks) on their own thread, fed straight by
     # the gateway thread: the 3s acknowledgement deadline never waits on
     # the main loop. What they change in state comes back through the
     # gateway inbox ("_record", applied by drain_gateway).
-    _holds_live.update({hid: h.get("at", 0) for hid, h in
-                        (state.get("holds") or {}).items()})
-    _update_announced["version"] = \
-        (state.get("update_notice") or {}).get("version")
+    _holds_live.update({hid: h.get("at", 0) for hid, h in (state.get("holds") or {}).items()})
+    _update_announced["version"] = (state.get("update_notice") or {}).get("version")
     threading.Thread(
         target=_interaction_thread_main,
         args=(_ix_inbox, lambda rec: _gateway_inbox.put({"_record": rec})),
-        daemon=True, name="interactions").start()
+        daemon=True,
+        name="interactions",
+    ).start()
 
     # A restart must not drop bursts staged before it: their messages are
     # already marked seen, so flush them immediately instead of waiting out
@@ -8021,35 +8608,36 @@ def main():
     save_state(state)
 
     cycle = 0
-    rotation = None          # the poll rotation in progress
+    rotation = None  # the poll rotation in progress
     rotation_started = None  # when the latest rotation began
-    backoff_seen = False     # REST backed off since the last cycle ended
-    jobs = []                # background REST jobs (SweepPass, GenJob)
-    poll_turn_next = True    # poll and jobs alternate when both are due
-    outbox_pass_at = 0.0     # when process_outbox last ran
+    backoff_seen = False  # REST backed off since the last cycle ended
+    jobs = []  # background REST jobs (SweepPass, GenJob)
+    poll_turn_next = True  # poll and jobs alternate when both are due
+    outbox_pass_at = 0.0  # when process_outbox last ran
     while True:
         # Each phase below has its own try/except: one failing phase (a
         # poison message, a corrupt file) must not skip the
         # sweep, discovery, cleanup, and state saves of every cycle.
         if _token_rejected or _gateway_status.get("token_rejected"):
             save_state(state)
-            token_rejected_exit(_token_rejected
-                                or "gateway closed with code 4004")
+            token_rejected_exit(_token_rejected or "gateway closed with code 4004")
         touch_heartbeat()
         if BOT_USER_ID is None and _gateway_status.get("user"):
             _adopt_identity(_gateway_status["user"], " (from gateway READY)")
         now = time.time()
         backing = rest_backing_off()
         backoff_seen = backoff_seen or backing
-        if rotation is None and not backing and (
-                rotation_started is None
-                or now - rotation_started >= POLL_INTERVAL):
+        if (
+            rotation is None
+            and not backing
+            and (rotation_started is None or now - rotation_started >= POLL_INTERVAL)
+        ):
             # The first rotation is the startup catch-up: it reads what
             # arrived while the monitor was down, as fast as the slices
             # allow instead of paced.
             rotation = PollRotation(
-                poll_targets(), now,
-                spread=0.0 if rotation_started is None else POLL_SPREAD)
+                poll_targets(), now, spread=0.0 if rotation_started is None else POLL_SPREAD
+            )
             rotation_started = now
         cycle_done = False
         dm_items = []
@@ -8062,11 +8650,12 @@ def main():
             # events ride the same inbox. Waits for the bot's identity,
             # like the poll.
             if BOT_USER_ID is not None:
-                gw_mentions, gw_dms = drain_gateway(
-                    state, _gateway_inbox, CHANNELS)
+                gw_mentions, gw_dms = drain_gateway(state, _gateway_inbox, CHANNELS)
                 if gw_mentions or gw_dms:
-                    print(f"Gateway delivered {len(gw_mentions)} "
-                          f"mention(s), {len(gw_dms)} DM(s).", flush=True)
+                    print(
+                        f"Gateway delivered {len(gw_mentions)} mention(s), {len(gw_dms)} DM(s).",
+                        flush=True,
+                    )
                 for msg, cname in gw_dms:
                     stage_trigger(state, msg, cname, None, "dm", dm=True)
         except Exception as e:
@@ -8103,8 +8692,7 @@ def main():
         # One REST slice per tick (see "Sliced REST work"): the poll's,
         # or the background job's, alternating when both are due.
         rest_spent = 0.0
-        poll_ready = rotation is not None and rotation.due(now) \
-            and not backing
+        poll_ready = rotation is not None and rotation.due(now) and not backing
         jobs_ready = bool(jobs) and not backing
         poll_turn = poll_ready and (poll_turn_next or not jobs_ready)
         if poll_ready and jobs_ready:
@@ -8175,8 +8763,7 @@ def main():
                 _rl_note_clean_cycle()
                 if BOT_USER_ID is None:
                     try:
-                        _adopt_identity(api_get("/users/@me"),
-                                        " (recovered in-loop)")
+                        _adopt_identity(api_get("/users/@me"), " (recovered in-loop)")
                     except Exception as e:
                         if getattr(e, "code", None) == 401:
                             token_rejected_exit("401 from /users/@me")
@@ -8188,24 +8775,24 @@ def main():
             # One of each kind at a time; they run in this order.
             if cycle_done:
                 kinds = {j.name for j in jobs}
-                if cycle % SWEEP_EVERY_CYCLES == 0 \
-                        and BOT_USER_ID is not None \
-                        and "Sweep" not in kinds:
+                if (
+                    cycle % SWEEP_EVERY_CYCLES == 0
+                    and BOT_USER_ID is not None
+                    and "Sweep" not in kinds
+                ):
                     jobs.append(SweepPass(list(CHANNELS)))
                 # Periodically re-discover readable channels so
                 # permission changes take effect without a restart.
-                if (cycle % CHANNEL_REFRESH_CYCLES == 0
-                        or _FORCE_DISCOVERY) and not recovery_cycle:
+                if (cycle % CHANNEL_REFRESH_CYCLES == 0 or _FORCE_DISCOVERY) and not recovery_cycle:
                     _FORCE_DISCOVERY = False
                     if "Channel refresh" not in kinds:
-                        jobs.append(GenJob("Channel refresh",
-                                           discovery_iter(state)))
-                elif (cycle % THREAD_REFRESH_CYCLES == 0
-                        and not recovery_cycle
-                        and not kinds & {"Thread refresh",
-                                         "Channel refresh"}):
-                    jobs.append(GenJob("Thread refresh",
-                                       thread_refresh_iter(state)))
+                        jobs.append(GenJob("Channel refresh", discovery_iter(state)))
+                elif (
+                    cycle % THREAD_REFRESH_CYCLES == 0
+                    and not recovery_cycle
+                    and not kinds & {"Thread refresh", "Channel refresh"}
+                ):
+                    jobs.append(GenJob("Thread refresh", thread_refresh_iter(state)))
         except Exception as e:
             print(f"Job scheduling error: {e}", flush=True)
 
@@ -8214,8 +8801,9 @@ def main():
             try:
                 # On the poll's turn, only what is left of its budget.
                 if not poll_turn or rest_spent < REST_SLICE_SECS:
-                    job.run_slice(state, time.time() + REST_SLICE_SECS
-                                  - rest_spent, queue is not None)
+                    job.run_slice(
+                        state, time.time() + REST_SLICE_SECS - rest_spent, queue is not None
+                    )
                 if job.done():
                     jobs.pop(0)
             except Exception as e:
@@ -8249,11 +8837,9 @@ def main():
         elif jobs or (rotation is not None and rotation.due(now)):
             wait_for = 0.0  # REST work is due: the next slice right away
         elif rotation is not None:
-            wait_for = min(2.0, max(POLL_TICK_SECS,
-                                    rotation.next_due() - now))
+            wait_for = min(2.0, max(POLL_TICK_SECS, rotation.next_due() - now))
         elif rotation_started is not None:
-            wait_for = min(2.0, max(
-                0.0, POLL_INTERVAL - (now - rotation_started)))
+            wait_for = min(2.0, max(0.0, POLL_INTERVAL - (now - rotation_started)))
         else:
             wait_for = 2.0
         burst_wait = pending_wait(state, now)
@@ -8263,16 +8849,15 @@ def main():
         # A reply the worker writes goes out within ~0.25s, even when it
         # lands mid-wait: the wait is cut into 0.25s steps that stat the
         # outbox.
-        until = now + (0.0 if outbox_waiting(outbox_pass_at)
-                       else wait_for)
+        until = now + (0.0 if outbox_waiting(outbox_pass_at) else wait_for)
         while True:
             left = until - time.time()
-            if left <= 0 or _gateway_status["wake"].wait(
-                    timeout=min(0.25, left)):
+            if left <= 0 or _gateway_status["wake"].wait(timeout=min(0.25, left)):
                 break
             if outbox_waiting(outbox_pass_at):
                 break
         _gateway_status["wake"].clear()
+
 
 if __name__ == "__main__":
     try:

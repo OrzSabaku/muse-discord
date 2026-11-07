@@ -1,7 +1,9 @@
 """setup_common.py -- shared by bin/connect-discord.py and bin/doctor.py.
 
-The few Discord facts setup depends on, one shared discord.py REST helper, and the token lookup. Not a command.
+Discord facts for setup, a shared REST helper, and token lookup.
+Not a command.
 """
+
 import os
 import sys
 import urllib.parse
@@ -38,8 +40,9 @@ TIMEOUT = 20
 # What the bot asks for in a server: View Channel, Send Messages, Send
 # Messages in Threads, Read Message History, Attach Files, Embed Links,
 # Add Reactions, Pin Messages. No administrator, no moderation.
-PERMISSIONS = (1 << 10) | (1 << 11) | (1 << 38) | (1 << 16) | (1 << 15) \
-    | (1 << 14) | (1 << 6) | (1 << 51)
+PERMISSIONS = (
+    (1 << 10) | (1 << 11) | (1 << 38) | (1 << 16) | (1 << 15) | (1 << 14) | (1 << 6) | (1 << 51)
+)
 assert PERMISSIONS == 2252074691710016
 VIEW_CHANNEL = 1 << 10
 SEND_MESSAGES = 1 << 11
@@ -51,8 +54,10 @@ MESSAGE_CONTENT = 1 << 18
 MESSAGE_CONTENT_LIMITED = 1 << 19
 EDITABLE_FLAGS = (1 << 13) | (1 << 15) | MESSAGE_CONTENT_LIMITED
 
-COMMUNITY_LINE = ("Want to meet other Muse owners and their Muses? Join "
-                  "the Muse Agent server: https://discord.gg/2wwcHbq47N")
+COMMUNITY_LINE = (
+    "Want to meet other Muse owners and their Muses? Join "
+    "the Muse Agent server: https://discord.gg/2wwcHbq47N"
+)
 
 
 class ApiError(Exception):
@@ -60,8 +65,9 @@ class ApiError(Exception):
     could not be reached), code Discord's JSON error code, if any."""
 
     def __init__(self, status, code=None, message=""):
-        super().__init__(f"HTTP {status}: {message}" if status
-                         else f"cannot reach Discord: {message}")
+        super().__init__(
+            f"HTTP {status}: {message}" if status else f"cannot reach Discord: {message}"
+        )
         self.status = status
         self.code = code
         self.message = message
@@ -72,10 +78,8 @@ def api_base():
     if not base:
         return API
     u = urllib.parse.urlparse(base)
-    if u.scheme != "http" or u.hostname not in ("127.0.0.1", "localhost",
-                                                "::1"):
-        sys.exit(f"{API_ENV} must be a loopback http URL; ignoring it is "
-                 f"not safe, so stopping.")
+    if u.scheme != "http" or u.hostname not in ("127.0.0.1", "localhost", "::1"):
+        sys.exit(f"{API_ENV} must be a loopback http URL; ignoring it is not safe, so stopping.")
     return base.rstrip("/")
 
 
@@ -84,6 +88,7 @@ def call(method, path, token, body=None):
     empty body). Raises ApiError. Never puts the token in an error."""
     ensure_src_on_path()
     from muse_discord.discord_rest import transport, DiscordError
+
     try:
         value = transport(token, api_base()).request(method, path, body, timeout=TIMEOUT)
         return value if value != "" else None
@@ -96,12 +101,15 @@ def call(method, path, token, body=None):
 def invite_url(app_id):
     """The link that adds the bot to a server (integration_type=0: a
     server install, never a user install)."""
-    q = urllib.parse.urlencode({"client_id": app_id, "scope": "bot",
-                                "permissions": str(PERMISSIONS),
-                                "integration_type": "0"})
+    q = urllib.parse.urlencode(
+        {
+            "client_id": app_id,
+            "scope": "bot",
+            "permissions": str(PERMISSIONS),
+            "integration_type": "0",
+        }
+    )
     return f"https://discord.com/oauth2/authorize?{q}"
-
-
 
 
 def ensure_src_on_path():
@@ -112,6 +120,7 @@ def ensure_src_on_path():
 def settings_module():
     ensure_src_on_path()
     from muse_discord import muse_settings
+
     return muse_settings
 
 

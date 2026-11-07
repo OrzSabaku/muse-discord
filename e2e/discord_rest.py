@@ -18,6 +18,7 @@ A 429 is waited out (Retry-After) and retried; a 5xx or a network error
 is retried a few times with growing gaps. Anything else raises
 DiscordError. Error messages never contain the token.
 """
+
 import json
 import os
 import time
@@ -64,16 +65,21 @@ def _multipart(payload, files):
         out.append(body)
         out.append(b"\r\n")
 
-    part(['Content-Disposition: form-data; name="payload_json"',
-          "Content-Type: application/json"],
-         json.dumps(payload).encode())
+    part(
+        ['Content-Disposition: form-data; name="payload_json"', "Content-Type: application/json"],
+        json.dumps(payload).encode(),
+    )
     for i, path in enumerate(files):
         name = os.path.basename(path)
         with open(path, "rb") as f:
             data = f.read()
-        part([f'Content-Disposition: form-data; name="files[{i}]"; '
-              f'filename="{name}"',
-              "Content-Type: application/octet-stream"], data)
+        part(
+            [
+                f'Content-Disposition: form-data; name="files[{i}]"; filename="{name}"',
+                "Content-Type: application/octet-stream",
+            ],
+            data,
+        )
     out.append(f"--{boundary}--\r\n".encode())
     return b"".join(out), f"multipart/form-data; boundary={boundary}"
 
@@ -136,14 +142,16 @@ class Bot:
                 raise DiscordError(
                     f"{method} {path} -> HTTP {status}: {detail}",
                     status=status,
-                    transient=status >= 500 or status == 429) from None
+                    transient=status >= 500 or status == 429,
+                ) from None
             except (urllib.error.URLError, OSError) as e:
                 if n5xx < MAX_5XX_RETRIES:
                     n5xx += 1
                     self._sleep(2 * n5xx)
                     continue
-                raise DiscordError(f"{method} {path} -> network error: "
-                                   f"{e}", transient=True) from None
+                raise DiscordError(
+                    f"{method} {path} -> network error: {e}", transient=True
+                ) from None
 
     # --- API ---
 
@@ -157,14 +165,12 @@ class Bot:
         <@id> user mentions ping: a reply does not ping (or list in
         `mentions`) the replied-to author, so a reply to the SUT
         exercises its reply path, not its mention path."""
-        body = {"content": content,
-                "allowed_mentions": {"parse": ["users"],
-                                     "replied_user": False}}
+        body = {"content": content, "allowed_mentions": {"parse": ["users"], "replied_user": False}}
         if reply_to:
-            body["message_reference"] = {"message_id": str(reply_to),
-                                         "fail_if_not_exists": False}
-        return self.request("POST", f"/channels/{channel_id}/messages",
-                            body=body, files=list(files or []))
+            body["message_reference"] = {"message_id": str(reply_to), "fail_if_not_exists": False}
+        return self.request(
+            "POST", f"/channels/{channel_id}/messages", body=body, files=list(files or [])
+        )
 
     def typing(self, channel_id):
         """Show "typing..." in the channel, as a person does before they
@@ -177,9 +183,7 @@ class Bot:
         cursor = str(after or 0)
         out = {}
         while True:
-            page = self.request(
-                "GET",
-                f"/channels/{channel_id}/messages?after={cursor}&limit=100")
+            page = self.request("GET", f"/channels/{channel_id}/messages?after={cursor}&limit=100")
             if not page:
                 break
             for m in page:
@@ -193,8 +197,7 @@ class Bot:
         """Delete a message (a bot may always delete its own). One that
         is already gone is fine."""
         try:
-            return self.request(
-                "DELETE", f"/channels/{channel_id}/messages/{message_id}")
+            return self.request("DELETE", f"/channels/{channel_id}/messages/{message_id}")
         except DiscordError as e:
             if e.status == 404:
                 return None
@@ -206,13 +209,16 @@ class Bot:
         Create Public Threads in the channel (and Send Messages in
         Threads to post in it): a 403 means the bot's role lacks it."""
         return self.request(
-            "POST", f"/channels/{channel_id}/messages/{message_id}/threads",
-            body={"name": str(name)[:100], "auto_archive_duration": 60})
+            "POST",
+            f"/channels/{channel_id}/messages/{message_id}/threads",
+            body={"name": str(name)[:100], "auto_archive_duration": 60},
+        )
 
     def create_channel(self, guild_id, name):
         """Create a text channel; returns the channel object."""
-        return self.request("POST", f"/guilds/{guild_id}/channels",
-                            body={"name": name[:100], "type": 0})
+        return self.request(
+            "POST", f"/guilds/{guild_id}/channels", body={"name": name[:100], "type": 0}
+        )
 
     def delete_channel(self, channel_id):
         """Delete a channel. A channel that is already gone is fine."""
@@ -234,11 +240,11 @@ def _retry_after(err, raw):
     secs = None
     try:
         secs = float(json.loads(raw or b"{}").get("retry_after"))
-    except (ValueError, TypeError, AttributeError):
+    except ValueError, TypeError, AttributeError:
         pass
     if secs is None:
         try:
             secs = float(err.headers.get("Retry-After"))
-        except (TypeError, ValueError, AttributeError):
+        except TypeError, ValueError, AttributeError:
             secs = 2.0
     return min(max(secs, 0.1), 60.0) + 0.1

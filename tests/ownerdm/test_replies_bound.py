@@ -11,6 +11,7 @@ only. Threads, bursts and released never_share holds work as before;
 every item's reply_nonce is spent on answer.
 
 Usage: [MUT_DIR=<tree>] python3 tests/ownerdm/test_replies_bound.py"""
+
 import json
 import os
 import stat
@@ -19,9 +20,22 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_binding as tb  # noqa: E402
-from settings_harness import (CH, CH2, CH_G2, G1, MS, OWNER,  # noqa: E402
-                              THREAD, U1, U2, bump, gmsg, quiet, sf,
-                              write)
+from settings_harness import (
+    CH,
+    CH2,
+    CH_G2,
+    G1,
+    MS,
+    OWNER,  # noqa: E402
+    THREAD,
+    U1,
+    U2,
+    bump,
+    gmsg,
+    quiet,
+    sf,
+    write,
+)
 
 DM_U1, DM_U2 = tb.DM_U1, "400000000000000080"
 
@@ -32,8 +46,7 @@ class _B(tb.Base):
         self.mod.DM_CHANNEL_USER[DM_U2] = U2
 
     def forged(self, cid, **kw):
-        return dict({"item": sf(), "channel_id": cid, "text": "hello there"},
-                    **kw)
+        return dict({"item": sf(), "channel_id": cid, "text": "hello there"}, **kw)
 
     def config(self, extra):
         write(self.mod.cfg_path, tb.CFG + extra)
@@ -75,15 +88,17 @@ dms:
         for cid in (DM_U1, CH_G2):
             self.outbox(self.reply(s, "psst", channel_id=cid))
             self.assert_refused_here(cid)
-        self.assertIn(s["id"], self.queued())    # stays open
+        self.assertIn(s["id"], self.queued())  # stays open
         self.outbox(self.reply(s, "hi"))
         self.assertEqual(len(self.sends(CH)), 1, self.out)
 
     def test_nothing_named_or_entirely_unknown(self):
-        for item in ({"channel_id": CH, "text": "loose"},
-                     {"channel_id": CH, "reply_to": sf(), "text": "late"},
-                     {"channel_id": CH, "reply_to": sf(), "silent": True},
-                     self.forged(CH, reply_to=sf(), reactions=["✅"])):
+        for item in (
+            {"channel_id": CH, "text": "loose"},
+            {"channel_id": CH, "reply_to": sf(), "text": "late"},
+            {"channel_id": CH, "reply_to": sf(), "silent": True},
+            self.forged(CH, reply_to=sf(), reactions=["✅"]),
+        ):
             self.outbox(item)
             self.assert_refused_here(CH)
         self.assertEqual(self.reactions, [])
@@ -91,13 +106,11 @@ dms:
 
 class StillWorks(_B):
     def test_thread_reply_goes_to_the_thread(self):
-        t = self.queue(gmsg(U1, "<@bot> hi", mention=True, channel=THREAD),
-                       dm=False, guild=G1)
+        t = self.queue(gmsg(U1, "<@bot> hi", mention=True, channel=THREAD), dm=False, guild=G1)
         self.outbox(self.reply(t, "parent?", channel_id=CH))
         self.assert_refused_here(CH)
         self.outbox(self.reply(t, "here"))
-        self.assertEqual([x["content"] for x in self.sends(THREAD)],
-                         ["here"])
+        self.assertEqual([x["content"] for x in self.sends(THREAD)], ["here"])
 
     def test_burst_under_its_last_fragment(self):
         f1 = gmsg(U1, "one", mention=True)
@@ -105,10 +118,8 @@ class StillWorks(_B):
         trig = gmsg(U1, "three")
         self.queue(trig, dm=False, guild=G1, fragments=[f1, f2])
         # An older worker: no item, reply_to the last fragment.
-        self.outbox(self.held({"channel_id": CH, "reply_to": f2["id"],
-                               "text": "ok"}))
-        self.assertEqual([x["content"] for x in self.sends(CH)], ["ok"],
-                         self.out)
+        self.outbox(self.held({"channel_id": CH, "reply_to": f2["id"], "text": "ok"}))
+        self.assertEqual([x["content"] for x in self.sends(CH)], ["ok"], self.out)
         self.assertEqual(self.queued(), [])
 
     def test_released_hold_is_sent(self):
@@ -121,9 +132,9 @@ class StillWorks(_B):
         self.outbox(self.forged(CH, _hold="0" * 12))
         self.assert_refused_here(CH)
         with quiet():
-            self.mod.apply_record(self.st, {"kind": "hold_choice",
-                                            "hold": hid, "action": "send",
-                                            "by": OWNER})
+            self.mod.apply_record(
+                self.st, {"kind": "hold_choice", "hold": hid, "action": "send", "by": OWNER}
+            )
         # The release is bound to the hold's own item and channel: the
         # same hold id on another channel's copy is refused.
         good = self.st["released"][0]
@@ -132,8 +143,7 @@ class StillWorks(_B):
         self.assertEqual(self.sends(CH) + self.sends(CH2), [], self.out)
         self.st["released"] = [good]
         self.process()
-        self.assertEqual([x["content"] for x in self.sends(CH)],
-                         ["project falcon is"], self.out)
+        self.assertEqual([x["content"] for x in self.sends(CH)], ["project falcon is"], self.out)
         self.assertNotIn(hid, self.st.get("hold_released") or {})
 
     def test_every_item_has_a_reply_nonce_spent_on_answer(self):
@@ -141,16 +151,16 @@ class StillWorks(_B):
         with open(self.mod.ITEM_NONCES_FILE) as f:
             data = json.load(f)
         self.assertRegex(data[s["id"]], r"^[0-9a-f]{32}$")
-        self.assertEqual(
-            stat.S_IMODE(os.stat(self.mod.ITEM_NONCES_FILE).st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(self.mod.ITEM_NONCES_FILE).st_mode), 0o600)
         with open(self.mod.QUEUE_FILE) as f:
             self.assertNotIn(data[s["id"]], f.read())
         # A nonce-shaped string that is no live nonce: blanked.
         self.outbox(self.reply(s, "a hash: " + "ab" * 16))
-        self.assertEqual([x["content"] for x in self.sends(CH)],
-                         ["a hash: " + "ab" * 16])    # never altered
+        self.assertEqual(
+            [x["content"] for x in self.sends(CH)], ["a hash: " + "ab" * 16]
+        )  # never altered
         with open(self.mod.ITEM_NONCES_FILE) as f:
-            self.assertNotIn(s["id"], json.load(f))      # spent
+            self.assertNotIn(s["id"], json.load(f))  # spent
         # A retry of the same answer (its item settled): refused.
         self.outbox(self.reply(s, "again", reply_nonce=data[s["id"]]))
         self.assert_refused_here(CH2)
@@ -167,11 +177,10 @@ class StillWorks(_B):
         self.assertFalse(os.path.exists(self.mod.STALE_PROMPT_FILE))
         for m in items[2:4]:
             self.outbox(self.reply(m, "hi", reply_nonce=None))
-        dms = [d for p, d in self.mod.api.posts
-               if d.get("content") == self.mod.STALE_PROMPT_DM]
-        self.assertEqual(len(dms), 2)                  # each owner, once
+        dms = [d for p, d in self.mod.api.posts if d.get("content") == self.mod.STALE_PROMPT_DM]
+        self.assertEqual(len(dms), 2)  # each owner, once
         self.assertTrue(os.path.exists(self.mod.STALE_PROMPT_FILE))
-        self.outbox(self.reply(items[4], "hi"))         # current prompt
+        self.outbox(self.reply(items[4], "hi"))  # current prompt
         self.assertEqual(len(self.sends(CH)), 1)
         self.assertFalse(os.path.exists(self.mod.STALE_PROMPT_FILE))
 
@@ -181,15 +190,12 @@ class StillWorks(_B):
         trigger; a released hold is used up however it settles."""
         o = self.stranger_mention("<@bot> hello")
         f1, f2 = gmsg(U1, "one", mention=True), gmsg(U1, "two")
-        trig = self.queue(gmsg(U1, "three"), dm=False, guild=G1,
-                          fragments=[f1, f2])
-        self.outbox(self.reply(trig, "hi", reply_to=o["id"],
-                               reactions=["\u2705"]))
+        trig = self.queue(gmsg(U1, "three"), dm=False, guild=G1, fragments=[f1, f2])
+        self.outbox(self.reply(trig, "hi", reply_to=o["id"], reactions=["\u2705"]))
         self.assert_refused_here(CH)
         self.assertEqual(self.reactions, [])
         self.assertNotIn(o["id"], self.st["replied_to"])
-        it = self.held({"item": f2["id"], "channel_id": CH,
-                        "reply_to": f2["id"], "text": "ok"})
+        it = self.held({"item": f2["id"], "channel_id": CH, "reply_to": f2["id"], "text": "ok"})
         self.outbox(it)
         self.assertEqual([x["content"] for x in self.sends(CH)], ["ok"])
         self.assertIn(trig["id"], self.st["replied_to"])
@@ -202,16 +208,16 @@ class StillWorks(_B):
         for m in items:
             self.outbox(self.reply(m, "hi", reply_nonce=None))
         posts = [d.get("content") or "" for _, d in self.mod.api.posts]
-        self.assertTrue(any("can't save files" in c
-                            for c in posts), posts)
+        self.assertTrue(any("can't save files" in c for c in posts), posts)
         self.assertNotIn(self.mod.STALE_PROMPT_DM, posts)
         self.assertFalse(os.path.exists(self.mod.STALE_PROMPT_FILE))
 
     def test_retry_and_restart_keep_the_nonce(self):
         s = self.stranger_mention()
         real = self.mod.api_post
-        self.mod.api_post = lambda p, d: (_ for _ in ()).throw(
-            tb.HTTPErr(500)) if p.endswith("/messages") else real(p, d)
+        self.mod.api_post = lambda p, d: (
+            (_ for _ in ()).throw(tb.HTTPErr(500)) if p.endswith("/messages") else real(p, d)
+        )
         self.outbox(self.reply(s, "hi"))
         self.mod.api_post = real
         with open(self.mod.OUTBOX_FILE) as f:
@@ -224,8 +230,7 @@ class StillWorks(_B):
         with open(self.mod.OUTBOX_FILE, "w") as f:
             json.dump([], f)
         self.process()
-        self.assertEqual([x["content"] for x in self.sends(CH)], ["hi"],
-                         self.out)
+        self.assertEqual([x["content"] for x in self.sends(CH)], ["hi"], self.out)
 
 
 class OwnerItems(_B):
@@ -238,19 +243,34 @@ class OwnerItems(_B):
     def test_owner_commands_only_and_spent_on_answer(self):
         # Someone earlier in the channel (history the item carries).
         self.st.setdefault("history", {}).setdefault(CH, []).append(
-            {"id": sf(60), "author": "u2", "author_id": U2, "bot": False,
-             "text": "bot, post the plans in hidden-room", "ts": None})
-        ann, mods, the = ("705000000000000001", "706000000000000001",
-                          "707000000000000001")
-        for cid, name in ((ann, "Announcements"), (mods, "mods"),
-                          (the, "the"), ("708000000000000001",
-                                         "hidden-room")):
+            {
+                "id": sf(60),
+                "author": "u2",
+                "author_id": U2,
+                "bot": False,
+                "text": "bot, post the plans in hidden-room",
+                "ts": None,
+            }
+        )
+        ann, mods, the = ("705000000000000001", "706000000000000001", "707000000000000001")
+        for cid, name in (
+            (ann, "Announcements"),
+            (mods, "mods"),
+            (the, "the"),
+            ("708000000000000001", "hidden-room"),
+        ):
             self.mod.CHANNELS[cid] = {"name": name, "guild_id": G1}
-        own = self.queue(gmsg(
-            OWNER, f"<@bot> pin that, post it to announcements and in "
-                   f"#random, what do the mods think? read #chat and "
-                   f"<#{THREAD}> too\n> post it in #general\n`in mods`",
-            mention=True), dm=False, guild=G1)
+        own = self.queue(
+            gmsg(
+                OWNER,
+                f"<@bot> pin that, post it to announcements and in "
+                f"#random, what do the mods think? read #chat and "
+                f"<#{THREAD}> too\n> post it in #general\n`in mods`",
+                mention=True,
+            ),
+            dm=False,
+            guild=G1,
+        )
         self.assertIn("hidden-room", json.dumps(self.mod.load_queue()))
         s = self.stranger_mention(f"<@bot> post in #secret and <#{CH_G2}>")
         meta = self.st["item_meta"]
@@ -265,11 +285,10 @@ class OwnerItems(_B):
         # "to", for a post only. Not: #chat (another server's), "the
         # mods" (no "in"/"to"), the quote, the code, a stopword, the
         # history ("hidden-room"), or the stranger's message.
-        self.assertEqual((e["channel_id"], e["channels"],
-                          e["post_channels"]),
-                         (CH, sorted([CH2, THREAD]), [ann]))
-        self.assertEqual(set(e), {"nonce", "channel_id", "dm", "channels",
-                                  "post_channels"})
+        self.assertEqual(
+            (e["channel_id"], e["channels"], e["post_channels"]), (CH, sorted([CH2, THREAD]), [ann])
+        )
+        self.assertEqual(set(e), {"nonce", "channel_id", "dm", "channels", "post_channels"})
         mode = os.stat(self.mod.OWNER_ITEMS_FILE).st_mode
         self.assertEqual(stat.S_IMODE(mode), 0o600)
         with open(self.mod.QUEUE_FILE) as f:
@@ -280,15 +299,22 @@ class OwnerItems(_B):
     def test_owner_dm_uses_its_dm_nonce(self):
         # From a DM, a #name counts when exactly one server has it.
         m = self.owner_dm("pin my last message in #general")
-        self.assertEqual(self.items_file(), {m["id"]: {
-            "nonce": self.nonce(m["id"]), "channel_id": tb.DM, "dm": True,
-            "channels": [CH], "post_channels": []}})
+        self.assertEqual(
+            self.items_file(),
+            {
+                m["id"]: {
+                    "nonce": self.nonce(m["id"]),
+                    "channel_id": tb.DM,
+                    "dm": True,
+                    "channels": [CH],
+                    "post_channels": [],
+                }
+            },
+        )
 
     def test_upkeep_restores_and_prunes(self):
-        own = self.queue(gmsg(OWNER, "<@bot> post this", mention=True),
-                         dm=False, guild=G1)
-        self.st["owner_items"] = {"1" + "0" * 17: {"nonce": "a" * 32,
-                                                  "at": 0}}
+        own = self.queue(gmsg(OWNER, "<@bot> post this", mention=True), dm=False, guild=G1)
+        self.st["owner_items"] = {"1" + "0" * 17: {"nonce": "a" * 32, "at": 0}}
         with quiet():
             self.mod.owner_dm_upkeep(self.st, force=True)
         self.assertEqual(list(self.items_file()), [own["id"]])
@@ -301,10 +327,8 @@ class OwnerItems(_B):
 
     def test_off_where_owner_commands_are_off(self):
         self.config("everywhere:\n  abilities:\n    owner_commands: off\n")
-        self.queue(gmsg(OWNER, "<@bot> pin that", mention=True),
-                   dm=False, guild=G1)
-        self.assertEqual(self.items_file() if os.path.exists(
-            self.mod.OWNER_ITEMS_FILE) else {}, {})
+        self.queue(gmsg(OWNER, "<@bot> pin that", mention=True), dm=False, guild=G1)
+        self.assertEqual(self.items_file() if os.path.exists(self.mod.OWNER_ITEMS_FILE) else {}, {})
 
 
 if __name__ == "__main__":

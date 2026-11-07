@@ -2,6 +2,7 @@
 explicit nulls and zeros, and out-of-range and garbage values. Each case
 runs in a fresh subprocess (monitor resolves its config at import).
 MUT_DIR = the package tree under test (default: this checkout)."""
+
 import json
 import os
 import subprocess
@@ -9,8 +10,9 @@ import sys
 import textwrap
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))), "_lib"))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 from common import MUT_DIR, scratch  # noqa: E402
 
 PROBE = r"""
@@ -37,10 +39,14 @@ def run(name, yaml_text):
     with open(path, "w") as f:
         f.write(textwrap.dedent(yaml_text))
     env = dict(os.environ, MUSE_DISCORD_CONFIG=path)
-    p = subprocess.run([sys.executable, "-c",
-                        PROBE % {"repo": MUT_DIR}],
-                       capture_output=True, text=True, env=env, cwd=d,
-                       timeout=60)
+    p = subprocess.run(
+        [sys.executable, "-c", PROBE % {"repo": MUT_DIR}],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=d,
+        timeout=60,
+    )
     if p.returncode != 0:
         raise AssertionError(f"case {name} crashed:\n{p.stdout}{p.stderr}")
     lines = p.stdout.splitlines()
@@ -56,27 +62,34 @@ class Config(unittest.TestCase):
 
     def test_defaults_and_nulls(self):
         """Missing keys and explicit nulls -> defaults."""
-        for name, text in (("empty", "{}\n"), ("nulls", """engine:
+        for name, text in (
+            ("empty", "{}\n"),
+            (
+                "nulls",
+                """engine:
   rest_poll_seconds: null
   sweep:
     every_cycles: null
     grace_seconds: null
   coalesce_seconds: null
   max_reply_chars: null
-""")):
+""",
+            ),
+        ):
             d, w, _ = run(name, text)
             self.check(f"{name} COALESCE_SECS", d["COALESCE_SECS"], 5.0)
             self.check(f"{name} MAX_REPLY_CHARS", d["MAX_REPLY_CHARS"], 1800)
             self.check(f"{name} POLL_INTERVAL", d["POLL_INTERVAL"], 30)
-            self.check(f"{name} SWEEP_EVERY_CYCLES",
-                       d["SWEEP_EVERY_CYCLES"], 6)
+            self.check(f"{name} SWEEP_EVERY_CYCLES", d["SWEEP_EVERY_CYCLES"], 6)
             self.check(f"{name} DAILY_REPLY_CAP", d["DAILY_REPLY_CAP"], None)
             self.check(f"{name} warnings", w, [])
 
     def test_zeros_out_of_range_and_garbage(self):
         """Explicit zeros: honored where meaningful (caps), clamped where
         not (no hot loops)."""
-        d, w, _ = run("zeros", """engine:
+        d, w, _ = run(
+            "zeros",
+            """engine:
   rest_poll_seconds: 0
   discovery_refresh_minutes: 0
   sweep:
@@ -93,7 +106,8 @@ everywhere:
   limits:
     per_day: 0
     per_person_per_day: 0
-""")
+""",
+        )
         self.check("COALESCE_SECS", d["COALESCE_SECS"], 0.0)
         self.check("MAX_REPLY_CHARS", d["MAX_REPLY_CHARS"], 1)
         self.check("POLL_INTERVAL", d["POLL_INTERVAL"], 10)
@@ -104,14 +118,17 @@ everywhere:
         self.check("DAILY_REPLY_CAP", d["DAILY_REPLY_CAP"], 0)
         self.check("PER_USER_DAILY_CAP", d["PER_USER_DAILY_CAP"], 0)
         # Out of range above (Discord's 2000-character limit) / garbage.
-        d, w, _ = run("range", """engine:
+        d, w, _ = run(
+            "range",
+            """engine:
   rest_poll_seconds: 45
   discovery_refresh_minutes: 3
   sweep:
     every_cycles: abc
   coalesce_seconds: -3
   max_reply_chars: 5000
-""")
+""",
+        )
         self.check("MAX_REPLY_CHARS", d["MAX_REPLY_CHARS"], 2000)
         self.check("COALESCE_SECS", d["COALESCE_SECS"], 0.0)
         self.check("POLL_INTERVAL", d["POLL_INTERVAL"], 45)

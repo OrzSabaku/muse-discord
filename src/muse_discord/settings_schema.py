@@ -35,7 +35,7 @@ def _quiet_hours(value):
 def _timezone(value):
     try:
         ZoneInfo(value)
-    except (KeyError, ValueError):
+    except KeyError, ValueError:
         raise ValueError("expected an IANA time zone such as Europe/Paris") from None
     return value
 

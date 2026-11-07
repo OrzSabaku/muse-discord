@@ -6,6 +6,7 @@ Every Discord call goes to a local fake (MUSE_DISCORD_API_BASE); the
 scripts run from a scratch copy of the package, with HOME in scratch, so
 nothing touches the tree under test or the real token file.
 """
+
 import base64
 import http.server
 import importlib.util
@@ -26,8 +27,7 @@ from common import MUT_DIR, scratch  # noqa: E402
 BOT_ID = "1300000000000000001"
 OWNER_ID = "1100000000000000001"
 APP_ID = BOT_ID
-TOKEN = (base64.urlsafe_b64encode(BOT_ID.encode()).decode().rstrip("=")
-         + ".GaBcDe." + "x7" * 19)
+TOKEN = base64.urlsafe_b64encode(BOT_ID.encode()).decode().rstrip("=") + ".GaBcDe." + "x7" * 19
 MC_LIMITED = 1 << 19
 
 
@@ -38,8 +38,12 @@ class FakeDiscord:
 
     def __init__(self):
         self.requests = []
-        self.app = {"id": APP_ID, "flags": 0, "bot_public": False,
-                    "owner": {"id": OWNER_ID, "username": "zach"}}
+        self.app = {
+            "id": APP_ID,
+            "flags": 0,
+            "bot_public": False,
+            "owner": {"id": OWNER_ID, "username": "zach"},
+        }
         self.patch_status = 200
         fake = self
 
@@ -59,21 +63,18 @@ class FakeDiscord:
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(n) or b"null")
                 path = self.path.split("/api/v10", 1)[-1]
-                fake.requests.append((method, path, body,
-                                      self.headers.get("Authorization")))
+                fake.requests.append((method, path, body, self.headers.get("Authorization")))
                 if self.headers.get("Authorization") != f"Bot {TOKEN}":
-                    return self._send(401, {"code": 0,
-                                            "message": "401: Unauthorized"})
+                    return self._send(401, {"code": 0, "message": "401: Unauthorized"})
                 if (method, path) == ("GET", "/users/@me"):
-                    return self._send(200, {"id": BOT_ID, "username": "Pip",
-                                            "bot": True})
+                    return self._send(200, {"id": BOT_ID, "username": "Pip", "bot": True})
                 if (method, path) == ("GET", "/applications/@me"):
                     return self._send(200, fake.app)
                 if (method, path) == ("PATCH", "/applications/@me"):
                     if fake.patch_status != 200:
-                        return self._send(fake.patch_status,
-                                          {"code": 50013,
-                                           "message": "Missing Permissions"})
+                        return self._send(
+                            fake.patch_status, {"code": 50013, "message": "Missing Permissions"}
+                        )
                     fake.app["flags"] = body["flags"]
                     return self._send(200, fake.app)
                 return self._send(404, {"code": 10004, "message": "nope"})
@@ -88,8 +89,7 @@ class FakeDiscord:
                 self._handle("POST")
 
         self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
-        threading.Thread(target=self.server.serve_forever, args=(0.02,),
-                         daemon=True).start()
+        threading.Thread(target=self.server.serve_forever, args=(0.02,), daemon=True).start()
         self.base = f"http://127.0.0.1:{self.server.server_port}/api/v10"
 
     def close(self):
@@ -102,8 +102,7 @@ def make_pkg():
     root = scratch("muse-onb-")
     pkg = os.path.join(root, "pkg")
     os.makedirs(pkg)
-    for name in ("config.example.yaml",
-                 "prompts/worker-prompt.template.md"):
+    for name in ("config.example.yaml", "prompts/worker-prompt.template.md"):
         target = os.path.join(pkg, name)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copy2(os.path.join(MUT_DIR, name), target)
@@ -124,7 +123,12 @@ def run(pkg, home, script, args=(), stdin="", api=None):
         env["MUSE_DISCORD_API_BASE"] = api
     return subprocess.run(
         [sys.executable, os.path.join(pkg, "bin", script), *args],
-        input=stdin, capture_output=True, text=True, env=env, timeout=60)
+        input=stdin,
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
 
 
 def all_files(*roots):
@@ -136,7 +140,8 @@ def all_files(*roots):
 
 def load_ms(pkg):
     spec = importlib.util.spec_from_file_location(
-        f"ms_{id(pkg)}", os.path.join(pkg, "src/muse_discord/muse_settings.py"))
+        f"ms_{id(pkg)}", os.path.join(pkg, "src/muse_discord/muse_settings.py")
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -148,21 +153,24 @@ class ConnectDiscord(unittest.TestCase):
         self.addCleanup(self.fake.close)
         self.pkg, self.home = make_pkg()
         self.cfg = os.path.join(self.pkg, "config.yaml")
-        self.token_file = os.path.join(self.home, ".config", "muse-discord",
-                                       "bot_token")
+        self.token_file = os.path.join(self.home, ".config", "muse-discord", "bot_token")
 
     def connect(self, paste, *args):
         """Run it the docs/SETUP.md way: the paste in a file in the private
         incoming dir, named by --token-file."""
-        incoming = os.path.join(self.home, ".config", "muse-discord",
-                                "incoming")
+        incoming = os.path.join(self.home, ".config", "muse-discord", "incoming")
         os.makedirs(incoming, mode=0o700, exist_ok=True)
         drop = os.path.join(incoming, "token")
         with open(drop, "w") as f:
             f.write(paste + "\n")
-        r = run(self.pkg, self.home, "connect-discord.py",
-                ["--json", "--name", "Pip", "--token-file", drop, *args],
-                "", self.fake.base)
+        r = run(
+            self.pkg,
+            self.home,
+            "connect-discord.py",
+            ["--json", "--name", "Pip", "--token-file", drop, *args],
+            "",
+            self.fake.base,
+        )
         out = json.loads(r.stdout) if r.stdout.strip() else {}
         self.assertFalse(os.path.exists(drop), "the drop-off file stays")
         return r, out
@@ -193,8 +201,14 @@ class ConnectDiscord(unittest.TestCase):
             f.write(TOKEN)
         os.chmod(self.home, 0o755)
         os.chmod(drop, 0o644)
-        r = run(self.pkg, self.home, "connect-discord.py",
-                ["--json", "--token-file", drop], "", self.fake.base)
+        r = run(
+            self.pkg,
+            self.home,
+            "connect-discord.py",
+            ["--json", "--token-file", drop],
+            "",
+            self.fake.base,
+        )
         self.assertEqual(r.returncode, 2)
         self.assertEqual(json.loads(r.stdout)["problem"], "token_file")
         self.assertEqual(self.fake.requests, [])
@@ -210,8 +224,14 @@ class ConnectDiscord(unittest.TestCase):
 
     def test_stdin_token_works_without_existing_config(self):
         self.assertFalse(os.path.exists(self.cfg))
-        r = run(self.pkg, self.home, "connect-discord.py",
-                ["--json", "--name", "Pip"], TOKEN + "\n", self.fake.base)
+        r = run(
+            self.pkg,
+            self.home,
+            "connect-discord.py",
+            ["--json", "--name", "Pip"],
+            TOKEN + "\n",
+            self.fake.base,
+        )
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         out = json.loads(r.stdout)
         self.assertEqual(out["owner_id"], OWNER_ID)
@@ -233,8 +253,7 @@ class ConnectDiscord(unittest.TestCase):
         # The token: only in the token file, mode 600.
         with open(self.token_file) as f:
             self.assertEqual(f.read().strip(), TOKEN)
-        self.assertEqual(stat.S_IMODE(os.stat(self.token_file).st_mode),
-                         0o600)
+        self.assertEqual(stat.S_IMODE(os.stat(self.token_file).st_mode), 0o600)
         self.assertNotIn(TOKEN, r.stdout + r.stderr)
         for path in all_files(self.pkg, self.home):
             if path == self.token_file:
@@ -245,8 +264,7 @@ class ConnectDiscord(unittest.TestCase):
         ms = load_ms(self.pkg)
         st = ms.load(self.cfg)
         self.assertEqual(st.owners, [OWNER_ID])
-        self.assertEqual(st.token_sources(),
-                         [("file", "~/.config/muse-discord/bot_token")])
+        self.assertEqual(st.token_sources(), [("file", "~/.config/muse-discord/bot_token")])
         self.assertEqual(monitor_owners(self.cfg), {OWNER_ID})
         with open(os.path.join(self.pkg, "persona.md")) as f:
             self.assertIn("Your name is Pip.", f.read())
@@ -271,7 +289,7 @@ class ConnectDiscord(unittest.TestCase):
     def test_an_existing_config_is_never_lost(self):
         # Invalid (a typo): left untouched, nothing written at all, so
         # the running bot keeps its last good settings.
-        broken = ("""version: 1
+        broken = """version: 1
 owners: ["1100000000000000009"]
 all_servers:
   who:
@@ -279,7 +297,7 @@ all_servers:
 everywhere:
   style:
     lenght: brief
-""")
+"""
         with open(self.cfg, "w") as f:
             f.write(broken)
         r, out = self.connect(TOKEN)
@@ -289,14 +307,15 @@ everywhere:
             self.assertEqual(f.read(), broken)
         self.assertFalse(os.path.exists(self.token_file))
         # Valid, with another owner: backed up byte for byte, both kept.
-        mine = ('version: 1\nowners: ["1100000000000000009"]\n'
-                'everywhere:\n  style:\n    length: brief\n')
+        mine = (
+            'version: 1\nowners: ["1100000000000000009"]\n'
+            "everywhere:\n  style:\n    length: brief\n"
+        )
         with open(self.cfg, "w") as f:
             f.write(mine)
         r, _out = self.connect(TOKEN)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        baks = [f for f in os.listdir(self.pkg)
-                if f.startswith("config.yaml.bak-")]
+        baks = [f for f in os.listdir(self.pkg) if f.startswith("config.yaml.bak-")]
         self.assertEqual(len(baks), 1)
         with open(os.path.join(self.pkg, baks[0])) as f:
             self.assertEqual(f.read(), mine)
@@ -309,14 +328,16 @@ everywhere:
         r, _out = self.connect(TOKEN)
         with open(self.cfg) as f:
             self.assertEqual(f.read(), before)
-        self.assertEqual(len([f for f in os.listdir(self.pkg)
-                              if f.startswith("config.yaml.bak-")]), 1)
+        self.assertEqual(
+            len([f for f in os.listdir(self.pkg) if f.startswith("config.yaml.bak-")]), 1
+        )
 
 
 def monitor_owners(cfg):
     """Import monitor.py from the tree under test against cfg (the
     settings harness way) and return the owners it loaded."""
     from settings_harness import load_monitor  # noqa: E402
+
     with open(cfg) as f:
         mod = load_monitor(f.read())
     return set(mod.OWNER_USER_IDS)
@@ -325,18 +346,17 @@ def monitor_owners(cfg):
 class RenderWorkerPrompt(unittest.TestCase):
     def test_rendered_prompt_is_complete_and_e2e_uses_it(self):
         pkg, home = make_pkg()
-        r = run(pkg, home, "render-worker-prompt.py",
-                ["--media", "none", "--out", "-"])
+        r = run(pkg, home, "render-worker-prompt.py", ["--media", "none", "--out", "-"])
         self.assertEqual(r.returncode, 0, r.stderr)
         text = r.stdout
-        for leftover in ("<package dir>", "Installed during setup",
-                         "the installing Muse fills"):
+        for leftover in ("<package dir>", "Installed during setup", "the installing Muse fills"):
             self.assertNotIn(leftover, text)
         self.assertIn(f"python3 {pkg}/bin/outbox-append.py", text)
         self.assertNotIn("=== SEAM: PERSONA ===\nInstalled", text)
         # The e2e worker renders with the same code.
         sys.path.insert(0, os.path.join(MUT_DIR, "e2e"))
         import claude_worker
+
         with open(os.path.join(pkg, "prompts/worker-prompt.template.md")) as f:
             rendered, warnings = claude_worker.render_prompt(f.read(), pkg)
         self.assertEqual(warnings, [])
@@ -353,18 +373,17 @@ class Doctor(unittest.TestCase):
             f.write(TOKEN)
         os.chmod(tf, 0o600)
         with open(os.path.join(pkg, "config.yaml"), "w") as f:
-            f.write(f'version: 1\nowners: ["{OWNER_ID}"]\n'
-                    f'token_from: {tf}\n')
+            f.write(f'version: 1\nowners: ["{OWNER_ID}"]\ntoken_from: {tf}\n')
         with open(os.path.join(pkg, "monitor.pid"), "w") as f:
             f.write("999999999\n")  # no such process
 
         def problems():
-            r = run(pkg, home, "doctor.py", ["--json", "--quick"],
-                    api=fake.base)
+            r = run(pkg, home, "doctor.py", ["--json", "--quick"], api=fake.base)
             self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
             res = json.loads(r.stdout)
             self.assertFalse(res["ok"])
             return [x for x in res["results"] if x["status"] == "problem"]
+
         dead = problems()
         self.assertTrue(dead)
         # The monitor's mark of an outdated worker prompt: one problem
@@ -380,12 +399,12 @@ class OwnerlessServer(unittest.TestCase):
     nobody there until an owner chooses When it answers for it."""
 
     def test_quiet_where_no_owner_is(self):
-        from settings_harness import (G1, G2, CH_G2, OWNER, U1, gmsg,
-                                      load_monitor, quiet, state)
+        from settings_harness import G1, G2, CH_G2, OWNER, U1, gmsg, load_monitor, quiet, state
+
         base = f'version: 1\nowners: ["{OWNER}"]\n'
         mod = load_monitor(base)
         st = state(mod)
-        st["known_guilds"] = {G1: "Lounge"}       # G2 is new: a join
+        st["known_guilds"] = {G1: "Lounge"}  # G2 is new: a join
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
         # Quiet from the gateway's join event on, before discovery.
         with quiet():
@@ -395,8 +414,7 @@ class OwnerlessServer(unittest.TestCase):
             mod.sync_guilds(st, mod.GUILDS, mod.CHANNELS)
         kind, why = mod.trigger_verdict(stranger, G2)
         self.assertIsNone(kind)
-        self.assertEqual(mod.ledger_code("skipped", f"settings: {why}"),
-                         "ownerless")
+        self.assertEqual(mod.ledger_code("skipped", f"settings: {why}"), "ownerless")
         # Not a shared server for DMs (who.dms_from: shared-servers).
         mod.api.members[(G2, U1)] = []
         mod._SHARED_SERVER.clear()
@@ -411,11 +429,11 @@ class OwnerlessServer(unittest.TestCase):
         self.assertIsNone(again.trigger_kind(stranger, G2))
         # The owners are told of the join; answering in G1 is untouched.
         self.assertTrue(mod.api.dm_posts())
-        self.assertEqual(mod.trigger_kind(gmsg(U1, mention=True), G1),
-                         "mention")
+        self.assertEqual(mod.trigger_kind(gmsg(U1, mention=True), G1), "mention")
         # An owner chose When it answers for that server: it answers.
-        mod2 = load_monitor(base + f'servers:\n  "{G2}":\n    who:\n'
-                                   f'      replies: when-addressed\n')
+        mod2 = load_monitor(
+            base + f'servers:\n  "{G2}":\n    who:\n      replies: when-addressed\n'
+        )
         st2 = state(mod2)
         st2["known_guilds"] = {G1: "Lounge"}
         with quiet():
@@ -433,8 +451,8 @@ class OwnerlessServer(unittest.TestCase):
     def test_lost_state_keeps_the_gate(self):
         """With state.json gone, every server is checked again: one no
         owner is in stays quiet."""
-        from settings_harness import (G1, G2, CH_G2, OWNER, U1, gmsg,
-                                      load_monitor, quiet)
+        from settings_harness import G1, G2, CH_G2, OWNER, U1, gmsg, load_monitor, quiet
+
         mod = load_monitor(f'version: 1\nowners: ["{OWNER}"]\n')
         mod.api.members[(G1, OWNER)] = []
         st = mod.load_state()
@@ -442,8 +460,7 @@ class OwnerlessServer(unittest.TestCase):
             mod.sync_guilds(st, mod.GUILDS, mod.CHANNELS)
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
         self.assertIsNone(mod.trigger_kind(stranger, G2))
-        self.assertEqual(mod.trigger_kind(gmsg(U1, mention=True), G1),
-                         "mention")
+        self.assertEqual(mod.trigger_kind(gmsg(U1, mention=True), G1), "mention")
 
 
 class OwnerChecks(unittest.TestCase):
@@ -451,6 +468,7 @@ class OwnerChecks(unittest.TestCase):
         """Servers whose owner check keeps failing back off, so the
         others (the owner's own new server here) still get checked."""
         from settings_harness import HTTPErr, OWNER, load_monitor, quiet
+
         mod = load_monitor(f'version: 1\nowners: ["{OWNER}"]\n')
         bad = [str(610000000000000000 + i) for i in range(5)]
         good = "690000000000000001"
@@ -462,12 +480,13 @@ class OwnerChecks(unittest.TestCase):
             if any(f"/guilds/{g}/" in path for g in bad):
                 raise HTTPErr(500)
             return real_get(path)
+
         mod.api_get = get
         mod.api.members[(good, OWNER)] = []
         with quiet():
             for g in bad:
                 mod.note_guild_join_for_owners(st, g)
-            mod.check_owner_presence(st, guilds)   # the 5 bad ones
+            mod.check_owner_presence(st, guilds)  # the 5 bad ones
             mod.note_guild_join_for_owners(st, good)
             mod.check_owner_presence(st, guilds)
         self.assertIs(mod.OWNER_IN_GUILD[good], True)
@@ -479,32 +498,35 @@ class WatchdogHook(unittest.TestCase):
         """A watchdog run slower than the hook's wait still reaches the
         main chat, on the next hook run."""
         from common import HOOK_RUNTIME
+
         root = scratch("muse-wdh-")
         os.makedirs(os.path.join(root, "hooks"))
         os.makedirs(os.path.join(root, "bin"))
         hook = os.path.join(root, "hooks", "watchdog-hook.sh")
-        shutil.copy2(os.path.join(MUT_DIR, "hooks", "watchdog-hook.sh"),
-                     hook)
+        shutil.copy2(os.path.join(MUT_DIR, "hooks", "watchdog-hook.sh"), hook)
         go = os.path.join(root, "go")
         # The watchdog run ends only once the hook has stopped waiting.
         with open(os.path.join(root, "bin", "watchdog.sh"), "w") as f:
-            f.write(f"until [ -e {go} ]; do sleep 0.02; done\n"
-                    "echo 'ALERT: monitor DOWN: test'\n")
-        env = dict(os.environ, HATCH_HOOK_RUNTIME=HOOK_RUNTIME,
-                   MUSE_WATCHDOG_HOOK_WAIT="0")
-        first = subprocess.run(["bash", hook], env=env, capture_output=True,
-                               text=True, timeout=30).stdout
+            f.write(f"until [ -e {go} ]; do sleep 0.02; done\necho 'ALERT: monitor DOWN: test'\n")
+        env = dict(os.environ, HATCH_HOOK_RUNTIME=HOOK_RUNTIME, MUSE_WATCHDOG_HOOK_WAIT="0")
+        first = subprocess.run(
+            ["bash", hook], env=env, capture_output=True, text=True, timeout=30
+        ).stdout
         self.assertNotIn("ALERT", first)
         open(go, "w").close()
-        for _ in range(500):   # until that run has finished
-            if [f for f in os.listdir(root) if f.startswith(
-                    "watchdog-hook.out.") and not f.endswith(".tmp")]:
+        for _ in range(500):  # until that run has finished
+            if [
+                f
+                for f in os.listdir(root)
+                if f.startswith("watchdog-hook.out.") and not f.endswith(".tmp")
+            ]:
                 break
             time.sleep(0.02)
         with open(os.path.join(root, "bin", "watchdog.sh"), "w") as f:
             f.write("echo 'OK monitor alive'\n")
-        second = subprocess.run(["bash", hook], env=env, capture_output=True,
-                                text=True, timeout=30).stdout
+        second = subprocess.run(
+            ["bash", hook], env=env, capture_output=True, text=True, timeout=30
+        ).stdout
         self.assertIn("WAKE:", second)
         self.assertIn("ALERT: monitor DOWN: test", second)
 
@@ -517,8 +539,7 @@ class MediaDefault(unittest.TestCase):
             f.write('version: 1\nowners: ["1"]\n')
         ms = load_ms(pkg)
         st = ms.load(cfg)
-        self.assertIs(st.resolve(ms.Scope.everywhere())["media.enabled"],
-                      True)
+        self.assertIs(st.resolve(ms.Scope.everywhere())["media.enabled"], True)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ names one server both unquoted and quoted (the loader accepts and merges
 the two), so a restriction set in config.yaml silently goes.
 
 Usage: MUT_DIR=<tree> python3 tests/settingsengine/test_review_l.py"""
+
 import os
 import sys
 import unittest

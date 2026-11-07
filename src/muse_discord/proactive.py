@@ -57,6 +57,7 @@ is moved aside (proactive.json.bad-<time>), the owners are told, and no
 heartbeat runs while such a file is there: the opt-outs in it are never
 silently lost. Standard library only.
 """
+
 import glob
 import hmac
 import json
@@ -69,49 +70,56 @@ from datetime import datetime, timedelta, timezone
 
 VERSION = 1
 KIND = "proactive"
-FIELD = "proactive"                 # the slot's details on a queue item;
-                                    # an outbox item's opt-out / opt-in
-NONCE_FIELD = "owner_dm_nonce"      # the wake hook's one capability field
+FIELD = "proactive"  # the slot's details on a queue item;
+# an outbox item's opt-out / opt-in
+NONCE_FIELD = "owner_dm_nonce"  # the wake hook's one capability field
 OPT_VALUES = ("opt-out", "opt-in")
-SLOT_SECS = 15 * 60                 # a slot is spent or gone after this
-MAX_PER_SLOT = 1                    # unprompted messages per heartbeat
-ACTIVE_SECS = 30 * 60               # never into a conversation this fresh
+SLOT_SECS = 15 * 60  # a slot is spent or gone after this
+MAX_PER_SLOT = 1  # unprompted messages per heartbeat
+ACTIVE_SECS = 30 * 60  # never into a conversation this fresh
 TICK_SECS = 30
 # Heartbeat gaps (seconds) by proactive.frequency, drawn uniformly.
-INTERVALS = {"rarely": (12 * 3600, 24 * 3600),
-             "sometimes": (4 * 3600, 6 * 3600),
-             "often": (45 * 60, 75 * 60)}
-QUIET_SPREAD_SECS = 2 * 3600        # after quiet hours, a heartbeat lands
-                                    # within this of their end
+INTERVALS = {
+    "rarely": (12 * 3600, 24 * 3600),
+    "sometimes": (4 * 3600, 6 * 3600),
+    "often": (45 * 60, 75 * 60),
+}
+QUIET_SPREAD_SECS = 2 * 3600  # after quiet hours, a heartbeat lands
+# within this of their end
 TARGETS_MAX = 25
 DAY, WEEK = 86400, 7 * 86400
 SENT_KEEP_SECS = 8 * DAY
 SPENT_KEEP = 500
 PEOPLE_MAX = 3000
 FLUSH_SECS = 60
-REACT_CHECK_SECS = 6 * 3600         # reactions looked up at most this often
-SEND_RETRY_SECS = 90                # as the monitor's sends (nonce window)
-TEXT_KINDS = ("mention", "dm")      # queued messages that count as talking
-FORBIDDEN = ("reply_to", "reactions", "attachments", "settings",
-             "schedule", FIELD)     # never on a slot's outbox item
-ASK_KEY = "mdpro"                   # an ask's button: mdpro:yes:<token>
-ASK_SECS = DAY                      # a button works this long, once
-ASKS_PER_DAY = 3                    # buttons one person gets in a day
-ASKS_MAX = 300                      # ask records kept in all
-ASK_SEND_SECS = 10 * 60             # an ask not sent by then is dropped
+REACT_CHECK_SECS = 6 * 3600  # reactions looked up at most this often
+SEND_RETRY_SECS = 90  # as the monitor's sends (nonce window)
+TEXT_KINDS = ("mention", "dm")  # queued messages that count as talking
+FORBIDDEN = (
+    "reply_to",
+    "reactions",
+    "attachments",
+    "settings",
+    "schedule",
+    FIELD,
+)  # never on a slot's outbox item
+ASK_KEY = "mdpro"  # an ask's button: mdpro:yes:<token>
+ASK_SECS = DAY  # a button works this long, once
+ASKS_PER_DAY = 3  # buttons one person gets in a day
+ASKS_MAX = 300  # ask records kept in all
+ASK_SEND_SECS = 10 * 60  # an ask not sent by then is dropped
 
 
 def iso(ts):
     if not ts:
         return None
-    return datetime.fromtimestamp(ts, timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ")
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def snowflake_ts(mid):
     try:
         return ((int(mid) >> 22) + 1420070400000) / 1000.0
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0.0
 
 
@@ -121,6 +129,7 @@ def zone(name):
         return timezone.utc
     try:
         from zoneinfo import ZoneInfo
+
         return ZoneInfo(str(name))
     except Exception:
         return timezone.utc
@@ -156,8 +165,7 @@ def in_quiet(ts, hours, tz):
 def quiet_end(ts, hours, tz):
     """When the quiet hours ts is in end (epoch seconds)."""
     local = datetime.fromtimestamp(ts, tz)
-    end = local.replace(hour=hours[1][0], minute=hours[1][1], second=0,
-                        microsecond=0)
+    end = local.replace(hour=hours[1][0], minute=hours[1][1], second=0, microsecond=0)
     if end <= local:
         end += timedelta(days=1)
     return end.timestamp()
@@ -193,8 +201,8 @@ class Proactive:
         self._next_tick = 0.0
         self._flushed = 0.0
         self._nonce_written = None
-        self._alert = None       # an owner notice owed (a bad store)
-        self._readonly = False   # a bad store that could not be moved
+        self._alert = None  # an owner notice owed (a bad store)
+        self._readonly = False  # a bad store that could not be moved
         # The open asks, for the interaction thread (only the main loop
         # touches the store): {token: (user_id, at)}.
         self._lock = threading.Lock()
@@ -215,13 +223,18 @@ class Proactive:
                     d = json.load(f)
             except FileNotFoundError:
                 pass
-            except Exception as e:   # any damage (deep nesting too)
+            except Exception as e:  # any damage (deep nesting too)
                 d = self._set_aside(p, f"{type(e).__name__}: {e}"[:200])
             if d is not None and not isinstance(d, dict):
                 d = self._set_aside(p, "not a JSON object")
             d = d if isinstance(d, dict) else {}
-            for k, empty in (("spent", {}), ("sent", []), ("people", {}),
-                             ("opted_out", {}), ("asks", {})):
+            for k, empty in (
+                ("spent", {}),
+                ("sent", []),
+                ("people", {}),
+                ("opted_out", {}),
+                ("asks", {}),
+            ):
                 if not isinstance(d.get(k), type(empty)):
                     d[k] = empty
             if not self._slot_ok(d.get("slot")):
@@ -243,17 +256,21 @@ class Proactive:
             f"proactive.json could not be read ({why}), so it was kept as "
             f"{os.path.basename(bad)}. It holds who asked not to be "
             f"messaged first: until it is fixed and put back (or deleted), "
-            f"the bot reaches out to nobody.")
+            f"the bot reaches out to nobody."
+        )
         print(f"Proactive: {self._alert}", flush=True)
         return None
 
     @staticmethod
     def _slot_ok(s):
-        return isinstance(s, dict) and isinstance(s.get("id"), str) \
-            and isinstance(s.get("nonce"), str) \
-            and isinstance(s.get("targets"), dict) \
-            and isinstance(s.get("posts"), dict) \
+        return (
+            isinstance(s, dict)
+            and isinstance(s.get("id"), str)
+            and isinstance(s.get("nonce"), str)
+            and isinstance(s.get("targets"), dict)
+            and isinstance(s.get("posts"), dict)
             and isinstance(s.get("expires"), (int, float))
+        )
 
     def blocked(self):
         """A bad store is set aside (or could not be): fail closed."""
@@ -291,17 +308,18 @@ class Proactive:
     def quiet_now(self, now, uid=None):
         """Quiet hours now: in the person's own time zone (uid) when
         known, else in proactive.timezone."""
-        return in_quiet(now, parse_hours(self.every("proactive.quiet_hours")),
-                        zone(self.tz_of(uid)))
+        return in_quiet(
+            now, parse_hours(self.every("proactive.quiet_hours")), zone(self.tz_of(uid))
+        )
 
     def enabled_anywhere(self):
         st, MS = self.st(), self.m.MS
-        if st.get("proactive.enabled", MS.Scope.dm()) \
-                or st.get("proactive.enabled", MS.Scope("all_servers")):
+        if st.get("proactive.enabled", MS.Scope.dm()) or st.get(
+            "proactive.enabled", MS.Scope("all_servers")
+        ):
             return True
         for cid, info in self.m.CHANNELS.items():
-            if st.get("proactive.enabled",
-                      self.m.scope_for(info.get("guild_id"), cid)):
+            if st.get("proactive.enabled", self.m.scope_for(info.get("guild_id"), cid)):
                 return True
         return False
 
@@ -342,8 +360,11 @@ class Proactive:
         for key, scope in scopes.items():
             freq = self.st().get("proactive.frequency", scope)
             clock = clocks.get(key)
-            if not isinstance(clock, dict) or clock.get("freq") != freq \
-                    or not isinstance(clock.get("next"), (int, float)):
+            if (
+                not isinstance(clock, dict)
+                or clock.get("freq") != freq
+                or not isinstance(clock.get("next"), (int, float))
+            ):
                 clocks[key] = {"freq": freq, "next": self.schedule(now, freq)}
                 self._dirty = True
             elif now >= clock["next"]:
@@ -369,8 +390,7 @@ class Proactive:
         hours = parse_hours(self.every("proactive.quiet_hours"))
         tz = zone(self.every("proactive.timezone"))
         if in_quiet(t, hours, tz):
-            t = quiet_end(t, hours, tz) + self.rng.uniform(
-                0, min(lo, QUIET_SPREAD_SECS))
+            t = quiet_end(t, hours, tz) + self.rng.uniform(0, min(lo, QUIET_SPREAD_SECS))
         return t
 
     # -- what the monitor tells us ---------------------------------------------
@@ -378,8 +398,7 @@ class Proactive:
         """A queued message (note_item_meta): who talked to the bot,
         where, when; a DM means they started a DM conversation."""
         try:
-            if not isinstance(meta, dict) or meta.get("bot") \
-                    or meta.get("kind") not in TEXT_KINDS:
+            if not isinstance(meta, dict) or meta.get("bot") or meta.get("kind") not in TEXT_KINDS:
                 return
             uid = str(meta.get("author_id") or "")
             if not uid:
@@ -390,7 +409,7 @@ class Proactive:
             cid = str(meta.get("channel_id") or "")
             if ts >= p.get("last", 0):
                 p.update(last=ts, last_mid=str(mid), last_cid=cid)
-            seen = p.setdefault("seen", {})     # last message per place
+            seen = p.setdefault("seen", {})  # last message per place
             if cid and ts > seen.get(cid, 0):
                 seen[cid] = ts
                 for old in sorted(seen, key=seen.get)[:-10]:
@@ -400,8 +419,9 @@ class Proactive:
             if meta.get("author"):
                 p["name"] = str(meta["author"])[:100]
             if len(people) > PEOPLE_MAX:
-                for old in sorted(people, key=lambda u: people[u].get(
-                        "last", 0))[:len(people) - PEOPLE_MAX]:
+                for old in sorted(people, key=lambda u: people[u].get("last", 0))[
+                    : len(people) - PEOPLE_MAX
+                ]:
                     del people[old]
             self._dirty = True
         except Exception as e:
@@ -441,16 +461,14 @@ class Proactive:
 
     # -- eligibility ------------------------------------------------------------
     def sent_to(self, key, value, since):
-        return [e for e in self.data()["sent"]
-                if e.get(key) == value and e.get("at", 0) >= since]
+        return [e for e in self.data()["sent"] if e.get(key) == value and e.get("at", 0) >= since]
 
     def history(self, state, cid):
-        return ((state.get("history") or {}).get(cid) or [])
+        return (state.get("history") or {}).get(cid) or []
 
     def is_bot_msg(self, h):
         """This bot's own message."""
-        return str(h.get("author_id")) in (str(self.m.BOT_USER_ID),
-                                           str(self.m.BOT_ID))
+        return str(h.get("author_id")) in (str(self.m.BOT_USER_ID), str(self.m.BOT_ID))
 
     def human(self, h):
         """A person's message: not this bot, another bot or a webhook."""
@@ -464,14 +482,16 @@ class Proactive:
         if e.get("answered"):
             return True
         now = self.clock()
-        if not e.get("msgs") or self.m.rest_backing_off() \
-                or now - e.get("checked", 0) < REACT_CHECK_SECS:
+        if (
+            not e.get("msgs")
+            or self.m.rest_backing_off()
+            or now - e.get("checked", 0) < REACT_CHECK_SECS
+        ):
             return False
         e["checked"] = now
         self._dirty = True
-        try:   # its last part: one call
-            m = self.m.api_get(f"/channels/{e['channel_id']}/messages/"
-                               f"{e['msgs'][-1]}")
+        try:  # its last part: one call
+            m = self.m.api_get(f"/channels/{e['channel_id']}/messages/{e['msgs'][-1]}")
         except Exception:
             return False
         for r in (m or {}).get("reactions") or []:
@@ -503,13 +523,14 @@ class Proactive:
             # Answered: they wrote in that same DM since (a message of
             # theirs elsewhere is not an answer), or reacted to it.
             e = max(mine, key=lambda x: x["at"])
-            answered = (p.get("seen") or {}).get(cid, 0) > e["at"] or any(
-                self.human(h) and snowflake_ts(h.get("id")) > e["at"]
-                for h in hist) or self.reacted(e)
+            answered = (
+                (p.get("seen") or {}).get(cid, 0) > e["at"]
+                or any(self.human(h) and snowflake_ts(h.get("id")) > e["at"] for h in hist)
+                or self.reacted(e)
+            )
             if not answered:
                 return "no answer to the last unprompted message yet"
-        newest = max([snowflake_ts(h.get("id")) for h in hist]
-                     + [p.get("last", 0)])
+        newest = max([snowflake_ts(h.get("id")) for h in hist] + [p.get("last", 0)])
         if now - newest < ACTIVE_SECS:
             return "a conversation is going on"
         return None
@@ -561,8 +582,7 @@ class Proactive:
         return self.every("proactive.per_day")
 
     def sent_total(self, now):
-        return len([e for e in self.data()["sent"]
-                    if e.get("at", 0) >= now - DAY])
+        return len([e for e in self.data()["sent"] if e.get("at", 0) >= now - DAY])
 
     def owner_dm_channel(self, uid):
         """An owner's DM channel: known, else opened (the same call
@@ -578,8 +598,7 @@ class Proactive:
         try:
             c = self.m.api_post("/users/@me/channels", {"recipient_id": uid})
         except Exception as e:
-            print(f"Proactive: no DM channel for owner {uid} ({e}).",
-                  flush=True)
+            print(f"Proactive: no DM channel for owner {uid} ({e}).", flush=True)
             return None
         cid = str((c or {}).get("id") or "")
         if not self.m._is_snowflake(cid):
@@ -612,8 +631,7 @@ class Proactive:
             p = self.data()["people"].get(uid) or {}
             if p.get("dm") != t["channel_id"]:
                 return "never DMed the bot there"
-            if self.m.dm_refusal({"id": uid, "username": p.get("name")
-                                  or uid}) is not None:
+            if self.m.dm_refusal({"id": uid, "username": p.get("name") or uid}) is not None:
                 return "the DM settings no longer answer them"
         return self.person_problem(state, uid, t["channel_id"], now)
 
@@ -628,16 +646,12 @@ class Proactive:
                     continue
                 cid = self.owner_dm_channel(uid)
                 if cid:
-                    cands.append({"type": "owner", "user_id": uid,
-                                  "channel_id": cid})
+                    cands.append({"type": "owner", "user_id": uid, "channel_id": cid})
             for uid, p in sorted(d["people"].items()):
-                if p.get("dm") and uid not in m.OWNER_USER_IDS \
-                        and uid not in d["opted_out"]:
-                    cands.append({"type": "dm", "user_id": uid,
-                                  "channel_id": p["dm"]})
+                if p.get("dm") and uid not in m.OWNER_USER_IDS and uid not in d["opted_out"]:
+                    cands.append({"type": "dm", "user_id": uid, "channel_id": p["dm"]})
         for cid in sorted(m.CHANNELS):
-            cands.append({"type": "channel", "user_id": None,
-                          "channel_id": str(cid)})
+            cands.append({"type": "channel", "user_id": None, "channel_id": str(cid)})
         out = []
         for t in cands:
             try:
@@ -652,13 +666,14 @@ class Proactive:
         """One slot holds private targets (owner and DMs) or public ones
         (channels), never both, so nothing private shares a run with a
         public room: alternately, else whichever side has any."""
-        def shuffled(kind):   # past TARGETS_MAX, a different few each time
+
+        def shuffled(kind):  # past TARGETS_MAX, a different few each time
             ts = [t for t in targets if t["type"] == kind]
             return self.rng.sample(ts, len(ts))
+
         priv = [t for t in targets if t["type"] == "owner"] + shuffled("dm")
         pub = shuffled("channel")
-        first, then = (pub, priv) if self.data().get("side") == "private" \
-            else (priv, pub)
+        first, then = (pub, priv) if self.data().get("side") == "private" else (priv, pub)
         return (first or then)[:TARGETS_MAX]
 
     # -- the heartbeat ----------------------------------------------------------
@@ -676,87 +691,113 @@ class Proactive:
             info = m.CHANNELS.get(cid) or {}
             gid = info.get("guild_id")
             scope = m.scope_for(gid, cid)
-            card = m.settings_card(scope, self.st().resolve(scope), None,
-                                   False, cid)
+            card = m.settings_card(scope, self.st().resolve(scope), None, False, cid)
             card.pop("speaker", None)
             humans = [h for h in hist if not self.is_bot_msg(h)]
             out.update(
                 where=m.channel_display(info),
-                last_message_at=iso(snowflake_ts(hist[-1]["id"]))
-                if hist else None,
-                recent_messages=len([h for h in humans if now - snowflake_ts(
-                    h.get("id")) < DAY]),
-                recent_people=len({h.get("author_id") for h in humans
-                                   if now - snowflake_ts(h.get("id")) < DAY}))
+                last_message_at=iso(snowflake_ts(hist[-1]["id"])) if hist else None,
+                recent_messages=len([h for h in humans if now - snowflake_ts(h.get("id")) < DAY]),
+                recent_people=len(
+                    {h.get("author_id") for h in humans if now - snowflake_ts(h.get("id")) < DAY}
+                ),
+            )
         else:
             p = self.data()["people"].setdefault(uid, {})
-            name = m._USER_NAMES.get(uid) or p.get("name") \
-                or m.DM_CHANNELS.get(cid) or uid
+            name = m._USER_NAMES.get(uid) or p.get("name") or m.DM_CHANNELS.get(cid) or uid
             if name != uid and p.get("name") != name:
                 p["name"] = name
                 self._dirty = True
             scope = m.MS.Scope.dm()
-            card = m.settings_card(scope, self.st().resolve(scope), uid,
-                                   False, cid)
+            card = m.settings_card(scope, self.st().resolve(scope), uid, False, cid)
             card.pop("places", None)
-            last_them = max([p.get("last", 0)] + [
-                snowflake_ts(h.get("id")) for h in hist
-                if str(h.get("author_id")) == uid])
-            last_you = max([0] + [snowflake_ts(h.get("id")) for h in hist
-                                  if self.is_bot_msg(h)])
+            last_them = max(
+                [p.get("last", 0)]
+                + [snowflake_ts(h.get("id")) for h in hist if str(h.get("author_id")) == uid]
+            )
+            last_you = max([0] + [snowflake_ts(h.get("id")) for h in hist if self.is_bot_msg(h)])
             outcome = None
             if p.get("last_mid"):
                 e = m._ledger_load()["entries"].get(p["last_mid"]) or {}
                 outcome = e.get("code")
             tz = self.tz_of(uid)
-            out.update(user_id=uid, name=name, owner=t["type"] == "owner",
-                       local_time=datetime.fromtimestamp(now, zone(tz))
-                       .strftime("%A %H:%M"), timezone=tz,
-                       where=f"DM with {name}",
-                       last_from_them=iso(last_them),
-                       last_from_you=iso(last_you),
-                       ended_with=None if not (last_them or last_you)
-                       else ("you" if last_you > last_them else "them"),
-                       their_last_message=outcome)
+            out.update(
+                user_id=uid,
+                name=name,
+                owner=t["type"] == "owner",
+                local_time=datetime.fromtimestamp(now, zone(tz)).strftime("%A %H:%M"),
+                timezone=tz,
+                where=f"DM with {name}",
+                last_from_them=iso(last_them),
+                last_from_you=iso(last_you),
+                ended_with=None
+                if not (last_them or last_you)
+                else ("you" if last_you > last_them else "them"),
+                their_last_message=outcome,
+            )
         out["settings"] = card
         return out
 
     def make_slot(self, state, targets, now):
         d = self.data()
-        sid = self.m.started_item_id(now)   # the fires' id scheme
-        slot = {"id": sid, "kind": KIND, "nonce": secrets.token_hex(16),
-                "at": now, "expires": now + SLOT_SECS,
-                "max_posts": MAX_PER_SLOT, "spent": False, "posts": {},
-                "targets": {t["channel_id"]: {"type": t["type"],
-                                              "user_id": t.get("user_id")}
-                            for t in targets}}
+        sid = self.m.started_item_id(now)  # the fires' id scheme
+        slot = {
+            "id": sid,
+            "kind": KIND,
+            "nonce": secrets.token_hex(16),
+            "at": now,
+            "expires": now + SLOT_SECS,
+            "max_posts": MAX_PER_SLOT,
+            "spent": False,
+            "posts": {},
+            "targets": {
+                t["channel_id"]: {"type": t["type"], "user_id": t.get("user_id")} for t in targets
+            },
+        }
         tzname = self.every("proactive.timezone")
         local = datetime.fromtimestamp(now, zone(tzname))
         item = {
-            "message_id": sid, "kind": KIND, "channel_id": None,
-            "channel_name": "(no one asked: your call)", "guild_id": None,
-            "author": None, "author_id": None, "content": "",
-            "timestamp": iso(now), "queued_at": now,
-            "media": [], "documents": [], "unviewable": [], "history": [],
-            "may_generate": False, "owner_command": False,
-            "reply_to": None, "burst": False, "burst_fragments": [],
-            "from_bot": False, "bot_turns": 0, "participants": [],
-            "follow_up": False, "settings": None,
-            FIELD: {"expires_at": iso(now + SLOT_SECS),
-                    "max_messages": MAX_PER_SLOT,
-                    "local_time": local.strftime("%A %H:%M"),
-                    "timezone": tzname,
-                    "targets": [self.describe(state, t, now)
-                                for t in targets]},
+            "message_id": sid,
+            "kind": KIND,
+            "channel_id": None,
+            "channel_name": "(no one asked: your call)",
+            "guild_id": None,
+            "author": None,
+            "author_id": None,
+            "content": "",
+            "timestamp": iso(now),
+            "queued_at": now,
+            "media": [],
+            "documents": [],
+            "unviewable": [],
+            "history": [],
+            "may_generate": False,
+            "owner_command": False,
+            "reply_to": None,
+            "burst": False,
+            "burst_fragments": [],
+            "from_bot": False,
+            "bot_turns": 0,
+            "participants": [],
+            "follow_up": False,
+            "settings": None,
+            FIELD: {
+                "expires_at": iso(now + SLOT_SECS),
+                "max_messages": MAX_PER_SLOT,
+                "local_time": local.strftime("%A %H:%M"),
+                "timezone": tzname,
+                "targets": [self.describe(state, t, now) for t in targets],
+            },
         }
         d["slot"] = slot
-        d["side"] = "public" if targets[0]["type"] == "channel" \
-            else "private"
-        self.save()                  # the slot (and its nonce) first,
-        self.write_nonces()          # then the hook's nonce file,
+        d["side"] = "public" if targets[0]["type"] == "channel" else "private"
+        self.save()  # the slot (and its nonce) first,
+        self.write_nonces()  # then the hook's nonce file,
         self.m.queue_edit(add=[item])  # then the queue
-        print(f"Heartbeat: {len(targets)} place(s) or people it may reach "
-              f"out to; queued slot {sid}.", flush=True)
+        print(
+            f"Heartbeat: {len(targets)} place(s) or people it may reach out to; queued slot {sid}.",
+            flush=True,
+        )
         return item
 
     def end_slot(self, state, why):
@@ -780,7 +821,7 @@ class Proactive:
     def tick(self, state, now=None):
         """Main loop: slot upkeep, then the heartbeat when it is due."""
         now = self.clock() if now is None else now
-        self.send_asks(now)   # each pass: right after the reply it follows
+        self.send_asks(now)  # each pass: right after the reply it follows
         if now < self._next_tick:
             return
         self._next_tick = now + TICK_SECS
@@ -790,14 +831,16 @@ class Proactive:
             print("Proactive: a damaged slot record was dropped.", flush=True)
             d["slot"] = s = None
         if s:
-            sending = [p for p in s["posts"].values()
-                       if p.get("status") == "sending"
-                       and now - p.get("first", now) < SEND_RETRY_SECS + 60]
+            sending = [
+                p
+                for p in s["posts"].values()
+                if p.get("status") == "sending" and now - p.get("first", now) < SEND_RETRY_SECS + 60
+            ]
             if s.get("spent") and not sending:
                 self.end_slot(state, "used")
             elif not s.get("spent") and now > s.get("expires", 0):
                 self.end_slot(state, "expired unanswered")
-        self.write_nonces()   # (after a restart, say; only when it changed)
+        self.write_nonces()  # (after a restart, say; only when it changed)
         self.drop_orphans()
         if self._alert and self.m.notify_owners(self._alert):
             self._alert = None
@@ -814,15 +857,15 @@ class Proactive:
         due = self.due_heartbeats(now)
         if due:
             if d.get("slot"):
-                print("Heartbeat deferred: the last one is still open.",
-                      flush=True)
+                print("Heartbeat deferred: the last one is still open.", flush=True)
             elif self.blocked():
-                print("Heartbeat skipped: a bad proactive.json is set aside "
-                      "(docs/PROTOCOL.md, proactive.json).", flush=True)
+                print(
+                    "Heartbeat skipped: a bad proactive.json is set aside "
+                    "(docs/PROTOCOL.md, proactive.json).",
+                    flush=True,
+                )
             elif self.sent_total(now) < self.total_cap():
-                candidates = [
-                    t for t in self.eligible(state, now)
-                    if self.heartbeat_key(t) in due]
+                candidates = [t for t in self.eligible(state, now) if self.heartbeat_key(t) in due]
                 targets = self.pick_side(candidates)
                 available = {self.heartbeat_key(t) for t in candidates}
                 selected = {self.heartbeat_key(t) for t in targets}
@@ -830,8 +873,7 @@ class Proactive:
                 if targets:
                     self.make_slot(state, targets, now)
                     return
-                print("Heartbeat: nobody and nowhere to reach out to now; "
-                      "no wake.", flush=True)
+                print("Heartbeat: nobody and nowhere to reach out to now; no wake.", flush=True)
         if self._dirty and now - self._flushed >= FLUSH_SECS:
             self.save()
 
@@ -842,13 +884,14 @@ class Proactive:
         s = self.data().get("slot") or {}
         live = s.get("id") if not s.get("spent") else None
         try:
-            if any(isinstance(q, dict) and q.get("kind") == KIND
-                   and str(q.get("message_id")) != live
-                   for q in self.m.load_queue()):
-                self.m.queue_edit(drop=lambda q: q.get("kind") == KIND
-                                  and str(q.get("message_id")) != live)
-                print("Proactive: dropped a slot item with no live slot.",
-                      flush=True)
+            if any(
+                isinstance(q, dict) and q.get("kind") == KIND and str(q.get("message_id")) != live
+                for q in self.m.load_queue()
+            ):
+                self.m.queue_edit(
+                    drop=lambda q: q.get("kind") == KIND and str(q.get("message_id")) != live
+                )
+                print("Proactive: dropped a slot item with no live slot.", flush=True)
         except (OSError, ValueError) as e:
             print(f"Proactive: queue unreadable ({e}).", flush=True)
 
@@ -878,8 +921,7 @@ class Proactive:
         try:
             return self._decide(state, item, d, s, sid)
         except Exception as e:
-            print(f"Proactive: slot {sid}: {type(e).__name__}: {e}",
-                  flush=True)
+            print(f"Proactive: slot {sid}: {type(e).__name__}: {e}", flush=True)
             return Verdict(f"slot {sid}: could not be checked", spent=sid)
 
     def _decide(self, state, item, d, s, sid):
@@ -893,58 +935,59 @@ class Proactive:
             return Verdict(f"slot {sid}: already used or expired")
         got = item.get(NONCE_FIELD)
         if not isinstance(got, str) or not hmac.compare_digest(
-                s["nonce"].encode(), got.encode("utf-8", "replace")):
+            s["nonce"].encode(), got.encode("utf-8", "replace")
+        ):
             # A forgery from another wake: the slot is untouched.
             return Verdict(f"slot {sid}: bad nonce")
         cid = str(item.get("channel_id") or "")
         post = s["posts"].get(cid)
         if post and post.get("status") == "sending":
-            return self._send(state, s, cid, item, now)   # a retry
+            return self._send(state, s, cid, item, now)  # a retry
         if s.get("spent"):
             return Verdict(f"slot {sid}: already used", spent=sid)
         if self.blocked():
             s["spent"] = True
-            return Verdict(f"slot {sid}: proactive.json is set aside",
-                           spent=sid)
+            return Verdict(f"slot {sid}: proactive.json is set aside", spent=sid)
         if now > s.get("expires", 0):
             return Verdict(f"slot {sid}: expired", spent=sid)
         if item.get("silent"):
             s["spent"] = True
             self.save()
-            print(f"Slot {sid}: the worker chose not to reach out.",
-                  flush=True)
+            print(f"Slot {sid}: the worker chose not to reach out.", flush=True)
             return Verdict(spent=sid)
         t = s["targets"].get(cid)
         if t is None:
             s["spent"] = True
             self.save()
-            return Verdict(f"slot {sid}: {cid} is not one of its targets",
-                           spent=sid)
+            return Verdict(f"slot {sid}: {cid} is not one of its targets", spent=sid)
         t = dict(t, channel_id=cid)
         why = self.target_problem(state, t, now)
-        if why is None and len(s["posts"]) >= s.get("max_posts",
-                                                    MAX_PER_SLOT):
+        if why is None and len(s["posts"]) >= s.get("max_posts", MAX_PER_SLOT):
             why = "the slot's messages are used"
         # Clamped to Discord's limit after the rewrites, as replies are.
-        parts = [x[:self.m.DISCORD_MAX_CHARS]
-                 for x in self.m.normalize_parts(item)]
+        parts = [x[: self.m.DISCORD_MAX_CHARS] for x in self.m.normalize_parts(item)]
         if why is None and not parts:
             why = "nothing to send"
-        if why is None and t["type"] != "owner" \
-                and self.m.never_share_hit(state, {"channel_id": cid}, None,
-                                           parts):
+        if (
+            why is None
+            and t["type"] != "owner"
+            and self.m.never_share_hit(state, {"channel_id": cid}, None, parts)
+        ):
             why = "it contains a never_share phrase (dropped)"
         if why is not None:
             s["spent"] = True
             self.save()
-            return Verdict(f"slot {sid}: not sent to {cid}: {why}",
-                           spent=sid)
-        s["posts"][cid] = {"status": "sending", "first": now, "n": 0,
-                           "next": 0, "parts": parts}
+            return Verdict(f"slot {sid}: not sent to {cid}: {why}", spent=sid)
+        s["posts"][cid] = {"status": "sending", "first": now, "n": 0, "next": 0, "parts": parts}
         if len(s["posts"]) >= s.get("max_posts", MAX_PER_SLOT):
             s["spent"] = True
-        entry = {"at": now, "slot": sid, "channel_id": cid,
-                 "user_id": t.get("user_id"), "type": t["type"]}
+        entry = {
+            "at": now,
+            "slot": sid,
+            "channel_id": cid,
+            "user_id": t.get("user_id"),
+            "type": t["type"],
+        }
         d["sent"].append(entry)
         self.save()
         return self._send(state, s, cid, item, now)
@@ -964,8 +1007,7 @@ class Proactive:
         try:
             # The monitor's one send path (plain messages: no reply_to),
             # each part's Discord nonce seeded with the slot id.
-            msgs = self.m.send_fragmented(cid, parts, None, (),
-                                          mentions=mentions, nonce_key=sid)
+            msgs = self.m.send_fragmented(cid, parts, None, (), mentions=mentions, nonce_key=sid)
         except Exception as e:
             code = getattr(e, "code", None)
             post["n"] = post.get("n", 0) + 1
@@ -980,8 +1022,7 @@ class Proactive:
                 post["landed"] = True
             refused = isinstance(code, int) and 400 <= code < 500
             maybe = not blocked and (post.get("landed") or not refused)
-            if code == 403 or blocked \
-                    or now - post["first"] >= SEND_RETRY_SECS:
+            if code == 403 or blocked or now - post["first"] >= SEND_RETRY_SECS:
                 post["status"] = "failed"
                 if maybe or code == 403:
                     # It counts, as a reply that may have landed does; a
@@ -989,31 +1030,39 @@ class Proactive:
                     # nobody is tried again before they write.
                     for x in self.data()["sent"]:
                         if x.get("slot") == sid and x.get("channel_id") == cid:
-                            x["msgs"] = list(getattr(e, "sent_ids", None)
-                                             or [])[-4:]
+                            x["msgs"] = list(getattr(e, "sent_ids", None) or [])[-4:]
                 else:
                     self.data()["sent"] = [
-                        x for x in self.data()["sent"]
-                        if not (x.get("slot") == sid
-                                and x.get("channel_id") == cid)]
+                        x
+                        for x in self.data()["sent"]
+                        if not (x.get("slot") == sid and x.get("channel_id") == cid)
+                    ]
                 self.save()
-                print(f"Slot {sid}: could not post to {cid} ({e}); "
-                      f"dropped{' (part of it may have landed)' if maybe else ''}.",
-                      flush=True)
+                print(
+                    f"Slot {sid}: could not post to {cid} ({e}); "
+                    f"dropped{' (part of it may have landed)' if maybe else ''}.",
+                    flush=True,
+                )
                 return Verdict(spent=sid)
             post["next"] = now + min(30, 2 ** post["n"])
             self.save()
-            print(f"Slot {sid}: post to {cid} failed (attempt "
-                  f"{post['n']}; retrying, same nonce): {e}", flush=True)
+            print(
+                f"Slot {sid}: post to {cid} failed (attempt "
+                f"{post['n']}; retrying, same nonce): {e}",
+                flush=True,
+            )
             return Verdict(retry=True, spent=sid)
         post["status"] = "sent"
         post.pop("parts", None)
         for x in self.data()["sent"]:
             if x.get("slot") == sid and x.get("channel_id") == cid:
-                x["msgs"] = msgs[-4:]     # for reactions (an answer too)
+                x["msgs"] = msgs[-4:]  # for reactions (an answer too)
         self.save()
-        print(f"Slot {sid}: reached out in {cid} ({t['type']}, "
-              f"{len(parts)} part(s)): {parts[0][:60]}", flush=True)
+        print(
+            f"Slot {sid}: reached out in {cid} ({t['type']}, "
+            f"{len(parts)} part(s)): {parts[0][:60]}",
+            flush=True,
+        )
         return Verdict(spent=sid)
 
     # -- "stop messaging me" ------------------------------------------------------
@@ -1030,25 +1079,28 @@ class Proactive:
             return None
         v = item.get(FIELD)
         if v not in OPT_VALUES:
-            return f"{FIELD}: expected \"opt-out\" or \"opt-in\""
+            return f'{FIELD}: expected "opt-out" or "opt-in"'
         qid = str(item.get("item") or "")
         index = index or {"frags": {}, "channels": {}}
         if qid not in index["channels"]:
             return f"{FIELD}: that message is no longer waiting for a reply"
         meta = self.m.queued_item_meta(state, qid, index)
-        if not isinstance(meta, dict) or meta.get("bot") \
-                or meta.get("kind") not in TEXT_KINDS:
-            return (f"{FIELD}: goes on the reply to the person's own "
-                    f"message (item: its message_id)")
-        if str(item.get("channel_id")) != str(meta.get("channel_id")) \
-                or index["channels"].get(qid) != str(meta.get("channel_id")):
+        if not isinstance(meta, dict) or meta.get("bot") or meta.get("kind") not in TEXT_KINDS:
+            return f"{FIELD}: goes on the reply to the person's own message (item: its message_id)"
+        if str(item.get("channel_id")) != str(meta.get("channel_id")) or index["channels"].get(
+            qid
+        ) != str(meta.get("channel_id")):
             return f"{FIELD}: channel_id must be that message's channel"
         rt = str(item.get("reply_to") or "")
-        if item.get("silent") or item.get("standalone") \
-                or not self.m.normalize_parts(item) \
-                or (rt != qid and index["frags"].get(rt) != qid):
-            return (f"{FIELD}: goes on a reply with text, under that "
-                    f"message (reply_to), so they see it")
+        if (
+            item.get("silent")
+            or item.get("standalone")
+            or not self.m.normalize_parts(item)
+            or (rt != qid and index["frags"].get(rt) != qid)
+        ):
+            return (
+                f"{FIELD}: goes on a reply with text, under that message (reply_to), so they see it"
+            )
         if v == "opt-in" and not (meta.get("dm") and meta.get("kind") == "dm"):
             return f"{FIELD}: opt-in only in the person's own DM"
         uid = str(meta.get("author_id") or "")
@@ -1070,10 +1122,14 @@ class Proactive:
     def _sync_live(self):
         """The open asks, for on_button (the interaction thread)."""
         d, now = self._data or {}, self.clock()
-        live = {t: (a.get("user_id"), a.get("at", 0))
-                for t, a in (d.get("asks") or {}).items()
-                if isinstance(a, dict) and a.get("sent")
-                and not a.get("done") and now - a.get("at", 0) < ASK_SECS}
+        live = {
+            t: (a.get("user_id"), a.get("at", 0))
+            for t, a in (d.get("asks") or {}).items()
+            if isinstance(a, dict)
+            and a.get("sent")
+            and not a.get("done")
+            and now - a.get("at", 0) < ASK_SECS
+        }
         with self._lock:
             self._live = live
 
@@ -1090,21 +1146,32 @@ class Proactive:
         send_asks; at most ASKS_PER_DAY a person, one open per kind."""
         d, now = self.data(), self.clock()
         asks = d["asks"]
-        for t in [t for t, a in asks.items() if not isinstance(a, dict)
-                  or now - a.get("at", 0) >= ASK_SECS]:
+        for t in [
+            t
+            for t, a in asks.items()
+            if not isinstance(a, dict) or now - a.get("at", 0) >= ASK_SECS
+        ]:
             del asks[t]
         mine = [a for a in asks.values() if a.get("user_id") == uid]
-        if any(a.get("what") == what and not a.get("done")
-               and a.get("tz") == tz for a in mine):
-            return            # that very question is open already
+        if any(a.get("what") == what and not a.get("done") and a.get("tz") == tz for a in mine):
+            return  # that very question is open already
         if len(mine) >= ASKS_PER_DAY:
-            print(f"Proactive: no new button for {uid} ({what}): "
-                  f"{ASKS_PER_DAY} in a day already.", flush=True)
+            print(
+                f"Proactive: no new button for {uid} ({what}): {ASKS_PER_DAY} in a day already.",
+                flush=True,
+            )
             return
-        self._close_asks(uid, what)        # a newer question replaces it
-        asks[secrets.token_hex(8)] = {"user_id": uid, "channel_id": cid,
-                                      "what": what, "tz": tz, "at": now,
-                                      "sent": False, "n": 0, "next": 0}
+        self._close_asks(uid, what)  # a newer question replaces it
+        asks[secrets.token_hex(8)] = {
+            "user_id": uid,
+            "channel_id": cid,
+            "what": what,
+            "tz": tz,
+            "at": now,
+            "sent": False,
+            "n": 0,
+            "next": 0,
+        }
         for old in sorted(asks, key=lambda t: asks[t]["at"])[:-ASKS_MAX]:
             del asks[old]
         self.save()
@@ -1124,8 +1191,9 @@ class Proactive:
             return
         if uid in self.m.OWNER_USER_IDS:
             cid = self.owner_dm_channel(uid)
-        elif p.get("dm") and self.m.dm_refusal(
-                {"id": uid, "username": p.get("name") or uid}) is None:
+        elif (
+            p.get("dm") and self.m.dm_refusal({"id": uid, "username": p.get("name") or uid}) is None
+        ):
             cid = p["dm"]
         else:
             return
@@ -1136,39 +1204,56 @@ class Proactive:
         if a["what"] == "in":
             q = "Okay if I message you first again now and then?"
         else:
-            tz = a.get("tz") or (f"the default time zone "
-                                 f"({self.every('proactive.timezone')})")
-            q = (f"Should I use {tz} for the night hours when I don't "
-                 f"message you first?")
-        return (f"{q} Tap **Yes** if so; otherwise nothing changes. "
-                f"(Only you can tap it, for 24 hours.)")
+            tz = a.get("tz") or (f"the default time zone ({self.every('proactive.timezone')})")
+            q = f"Should I use {tz} for the night hours when I don't message you first?"
+        return (
+            f"{q} Tap **Yes** if so; otherwise nothing changes. "
+            f"(Only you can tap it, for 24 hours.)"
+        )
 
     def send_asks(self, now):
         """Send the asks not sent yet (each pass of the main loop);
         retried for ASK_SEND_SECS, then dropped."""
         d = self._data if self._data is not None else self.data()
-        owed = [(t, a) for t, a in d["asks"].items()
-                if isinstance(a, dict) and not a.get("sent")
-                and not a.get("done") and a.get("next", 0) <= now]
+        owed = [
+            (t, a)
+            for t, a in d["asks"].items()
+            if isinstance(a, dict)
+            and not a.get("sent")
+            and not a.get("done")
+            and a.get("next", 0) <= now
+        ]
         if not owed or self.m.rest_backing_off():
             return
         for tok, a in owed:
             try:
                 self.m.send_reply(
-                    a["channel_id"], self.ask_text(a), None, nonce=tok,
-                    components=[{"type": 1, "components": [
-                        {"type": 2, "style": 1, "label": "Yes",
-                         "custom_id": f"{ASK_KEY}:yes:{tok}"}]}],
-                    mentions={"parse": []})
+                    a["channel_id"],
+                    self.ask_text(a),
+                    None,
+                    nonce=tok,
+                    components=[
+                        {
+                            "type": 1,
+                            "components": [
+                                {
+                                    "type": 2,
+                                    "style": 1,
+                                    "label": "Yes",
+                                    "custom_id": f"{ASK_KEY}:yes:{tok}",
+                                }
+                            ],
+                        }
+                    ],
+                    mentions={"parse": []},
+                )
                 a["sent"], a["at"] = True, now
             except Exception as e:
                 a["n"] = a.get("n", 0) + 1
                 a["next"] = now + min(30, 2 ** a["n"])
-                if getattr(e, "code", None) == 403 \
-                        or now - a["at"] >= ASK_SEND_SECS:
+                if getattr(e, "code", None) == 403 or now - a["at"] >= ASK_SEND_SECS:
                     a["done"] = True
-                print(f"Proactive: could not send the button to "
-                      f"{a['user_id']} ({e}).", flush=True)
+                print(f"Proactive: could not send the button to {a['user_id']} ({e}).", flush=True)
             self._dirty = True
         self._sync_live()
         self.save()
@@ -1180,20 +1265,29 @@ class Proactive:
         verb, _, tok = str(rest).partition(":")
         with self._lock:
             rec = self._live.get(tok)
-            if verb != "yes" or rec is None \
-                    or self.clock() - rec[1] >= ASK_SECS:
+            if verb != "yes" or rec is None or self.clock() - rec[1] >= ASK_SECS:
                 return None
             if rec[0] != str(uid):
-                return {"type": 4, "data": {
-                    "content": "That button is not for you.", "flags": 64,
-                    "allowed_mentions": {"parse": []}}}
+                return {
+                    "type": 4,
+                    "data": {
+                        "content": "That button is not for you.",
+                        "flags": 64,
+                        "allowed_mentions": {"parse": []},
+                    },
+                }
             del self._live[tok]
         record({"kind": "proactive_yes", "token": tok, "by": str(uid)})
         original = (ix.get("message") or {}).get("content") or ""
         line = "**Yes**: done."
-        return {"type": 7, "data": {
-            "content": original[:1990 - len(line)] + "\n\n" + line,
-            "components": [], "allowed_mentions": {"parse": []}}}
+        return {
+            "type": 7,
+            "data": {
+                "content": original[: 1990 - len(line)] + "\n\n" + line,
+                "components": [],
+                "allowed_mentions": {"parse": []},
+            },
+        }
 
     def apply_button(self, rec):
         """Main loop: the person's own Yes (on_button). Checked again
@@ -1201,16 +1295,19 @@ class Proactive:
         d = self.data()
         tok = str(rec.get("token") or "")
         a = d["asks"].get(tok)
-        if not isinstance(a, dict) or a.get("done") or not a.get("sent") \
-                or a.get("user_id") != str(rec.get("by")) \
-                or self.clock() - a.get("at", 0) >= ASK_SECS:
+        if (
+            not isinstance(a, dict)
+            or a.get("done")
+            or not a.get("sent")
+            or a.get("user_id") != str(rec.get("by"))
+            or self.clock() - a.get("at", 0) >= ASK_SECS
+        ):
             return
         a["done"] = True
         uid = a["user_id"]
         if a["what"] == "in":
             d["opted_out"].pop(uid, None)
-            print(f"Proactive: {uid} opted back in (their button).",
-                  flush=True)
+            print(f"Proactive: {uid} opted back in (their button).", flush=True)
         else:
             p = d["people"].setdefault(uid, {})
             if a.get("tz"):
@@ -1220,4 +1317,3 @@ class Proactive:
             print(f"Proactive: {uid} confirmed their time zone.", flush=True)
         self._sync_live()
         self.save()
-

@@ -51,6 +51,7 @@ with an Undo button. --category ID names a channel's category.
 --config PATH picks the file (default: $MUSE_DISCORD_CONFIG, else
 config.yaml in the package directory).
 """
+
 import argparse
 import json
 import os
@@ -64,19 +65,16 @@ import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
 from muse_discord import muse_settings as MS  # noqa: E402
 
 
-
 def _cfg_path(args):
-    return args.config or os.environ.get("MUSE_DISCORD_CONFIG") \
-        or os.path.join(PKG, "config.yaml")
+    return args.config or os.environ.get("MUSE_DISCORD_CONFIG") or os.path.join(PKG, "config.yaml")
 
 
 def _state(cfg):
     try:
-        with open(os.path.join(os.path.dirname(os.path.abspath(cfg)),
-                               "state.json")) as f:
+        with open(os.path.join(os.path.dirname(os.path.abspath(cfg)), "state.json")) as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
 
 
@@ -86,7 +84,7 @@ def _known_guilds(cfg):
 
 
 DIRECTORY_STALE_SECS = 3600
-CARD_TYPES = (0, 5, 15, 16)   # text, announcement, forum, media channels
+CARD_TYPES = (0, 5, 15, 16)  # text, announcement, forum, media channels
 
 
 def _directory(cfg):
@@ -96,7 +94,7 @@ def _directory(cfg):
         try:
             with open(os.path.join(d, "directory.json")) as f:
                 data = json.load(f)
-        except (OSError, ValueError):
+        except OSError, ValueError:
             continue
         if isinstance(data, dict) and isinstance(data.get("guilds"), list):
             return data
@@ -112,19 +110,22 @@ def _info(cfg):
     counts = state.get("guild_members")
     known = known if isinstance(known, dict) else {}
     counts = counts if isinstance(counts, dict) else {}
-    guilds = {str(g): {"id": str(g), "name": n,
-                       "member_count": counts.get(g)}
-              for g, n in known.items()}
+    guilds = {
+        str(g): {"id": str(g), "name": n, "member_count": counts.get(g)} for g, n in known.items()
+    }
     channels = {}
     d = _directory(cfg)
     if d is not None:
         for g in d.get("guilds") or []:
             if isinstance(g, dict) and g.get("id"):
                 gid = str(g["id"])
-                guilds[gid] = {"id": gid, "name": g.get("name") or gid,
-                               "member_count": g.get("member_count")
-                               if g.get("member_count") is not None
-                               else counts.get(gid)}
+                guilds[gid] = {
+                    "id": gid,
+                    "name": g.get("name") or gid,
+                    "member_count": g.get("member_count")
+                    if g.get("member_count") is not None
+                    else counts.get(gid),
+                }
         chans = d.get("channels")
         channels = chans if isinstance(chans, dict) else {}
     return {"guilds": list(guilds.values()), "channels": channels}
@@ -135,8 +136,7 @@ def _fmt(spec, value):
     if isinstance(v, str):
         return json.dumps(v) if v == "" or "\n" in v else v
     if isinstance(v, list):
-        return "[" + ", ".join(json.dumps(x) if isinstance(x, str) else
-                               str(x) for x in v) + "]"
+        return "[" + ", ".join(json.dumps(x) if isinstance(x, str) else str(x) for x in v) + "]"
     return str(v)
 
 
@@ -148,8 +148,10 @@ def cmd_validate(args):
     if n or st.retire:
         print(f"{MS.OVERLAY_NAME}: {n} Discord change(s) in effect.")
     for keystr, _entry, reason in st.retire:
-        print(f"  {keystr}: no longer applies ({reason}); the monitor will "
-              f"move it to history and tell the owners.")
+        print(
+            f"  {keystr}: no longer applies ({reason}); the monitor will "
+            f"move it to history and tell the owners."
+        )
     if getattr(st, "overlay_error", None):
         print(st.overlay_error)
     return 0
@@ -163,8 +165,7 @@ def cmd_show(args):
         scope = MS.Scope.dm()
     elif args.server:
         name = known.get(args.server) or st.labels.get(args.server)
-        scope = MS.Scope.server(args.server, name, args.channel,
-                                args.category)
+        scope = MS.Scope.server(args.server, name, args.channel, args.category)
     else:
         if args.channel:
             print("--channel needs --server", file=sys.stderr)
@@ -174,16 +175,25 @@ def cmd_show(args):
     if scope.kind == "everywhere":
         print(f"  owners                   {', '.join(st.owners) or '(none)'}")
         print(f"  persona                  {st.persona}")
-        print("  token_from               "
-              + ", ".join(f"env:{w}" if k == "env" else w
-                          for k, w in st.token_sources()))
-        for key in ("presence.status", "presence.kind", "updates.notify",
-                    "telemetry.usage_stats", "memory.save_dms"):
+        print(
+            "  token_from               "
+            + ", ".join(f"env:{w}" if k == "env" else w for k, w in st.token_sources())
+        )
+        for key in (
+            "presence.status",
+            "presence.kind",
+            "updates.notify",
+            "telemetry.usage_stats",
+            "memory.save_dms",
+        ):
             print(f"  {key:<24} {_fmt(MS.TOP[key], st.top(key))}")
         if not st.presence_enabled:
             print("  presence.enabled         off")
-    kinds = {MS._scope_kind(p) for p, _n in st.chain(scope)
-             if p[0] not in ("builtin", "builtin_all_servers")}
+    kinds = {
+        MS._scope_kind(p)
+        for p, _n in st.chain(scope)
+        if p[0] not in ("builtin", "builtin_all_servers")
+    }
     if scope.kind == "server":
         kinds |= {"server", "channel"}
     for key, value, source, rows in st.explain(scope):
@@ -197,34 +207,36 @@ def cmd_show(args):
             for name, path, is_set, v, src in rows:
                 shown = _fmt(spec, v) if is_set else "(not set)"
                 where = MS._source_text(src) if is_set else ""
-                print(f"      {name:<28} {shown}"
-                      + (f"  ({where})" if where else ""))
+                print(f"      {name:<28} {shown}" + (f"  ({where})" if where else ""))
     return 0
 
 
 def cmd_fold(args):
     cfg = _cfg_path(args)
     st = MS.load(cfg)
-    keys = sorted(MS.format_key(p, k) for (p, k), e in st.overlay.items()
-                  if MS.entry_role(e) != "admin")
+    keys = sorted(
+        MS.format_key(p, k) for (p, k), e in st.overlay.items() if MS.entry_role(e) != "admin"
+    )
     if not keys:
-        print("Nothing to fold: no Discord changes in effect (server "
-              "admins' changes stay in Discord).")
+        print(
+            "Nothing to fold: no Discord changes in effect (server "
+            "admins' changes stay in Discord)."
+        )
         return 0
     if args.dry_run:
-        print("Would copy into config.yaml (and clear from "
-              f"{MS.OVERLAY_NAME}):")
+        print(f"Would copy into config.yaml (and clear from {MS.OVERLAY_NAME}):")
         for k in keys:
             print(f"  {k}")
         return 0
     bak, folded = MS.fold(cfg)
     print(f"Backed up config.yaml to {bak}.")
-    print(f"Copied {len(folded)} Discord change(s) into config.yaml and "
-          f"cleared them from {MS.OVERLAY_NAME}:")
+    print(
+        f"Copied {len(folded)} Discord change(s) into config.yaml and "
+        f"cleared them from {MS.OVERLAY_NAME}:"
+    )
     for k in folded:
         print(f"  {k}")
-    print("config.yaml was rewritten: its comments are gone (the backup "
-          "has them).")
+    print("config.yaml was rewritten: its comments are gone (the backup has them).")
     return 0
 
 
@@ -239,8 +251,7 @@ def _place(args, info):
             raise MS.SettingsError("--category goes with a channel place")
         cat = str(args.category).strip()
         if not cat.isdigit() or len(cat) > 25 or cat == place.channel_id:
-            raise MS.SettingsError(f"--category {cat}: expected the "
-                                   f"channel's category id (digits)")
+            raise MS.SettingsError(f"--category {cat}: expected the channel's category id (digits)")
         place.category_id = cat
     return place
 
@@ -265,9 +276,7 @@ def _run(args, st, cfg, info, changes, by):
         print("Warning: " + w)
     if risk.risky and not args.yes:
         raise NeedsYes()
-    MS.apply(cfg, [r.change for r in todo], by,
-             group=f"cli-{secrets.token_hex(4)}",
-             role="owner")
+    MS.apply(cfg, [r.change for r in todo], by, group=f"cli-{secrets.token_hex(4)}", role="owner")
     print("Done.")
     return 0
 
@@ -287,11 +296,12 @@ def cmd_set(args, reset=False):
         else:
             value = MS.parse_value(st, key, raw)
             changes = MS.dms_from_changes(
-                st, "list" if isinstance(value, list) else value,
-                value if isinstance(value, list) else None)
+                st,
+                "list" if isinstance(value, list) else value,
+                value if isinstance(value, list) else None,
+            )
     else:
-        changes = [MS.Change(place, key, MS.parse_value(st, key,
-                                                        args.value))]
+        changes = [MS.Change(place, key, MS.parse_value(st, key, args.value))]
     return _run(args, st, cfg, info, changes, args.by)
 
 
@@ -306,8 +316,10 @@ def cmd_preset(args):
     place = _place(args, info)
     changes = MS.preset_changes(st, args.name, place, info)
     if not changes:
-        print(f"No change: {MS.place_name(place, MS.names_from(info, st))} "
-              f"already matches {args.name.capitalize()}.")
+        print(
+            f"No change: {MS.place_name(place, MS.names_from(info, st))} "
+            f"already matches {args.name.capitalize()}."
+        )
         return 0
     return _run(args, st, cfg, info, changes, args.by)
 
@@ -321,8 +333,7 @@ def cmd_pause(args, resume=False):
     if resume:
         changes = MS.resume_changes(st, place)
         if not changes:
-            print(f"No change: {MS.place_name(place, names)} is not paused "
-                  f"there.")
+            print(f"No change: {MS.place_name(place, names)} is not paused there.")
             return 0
     else:
         changes = MS.pause_changes(place)
@@ -350,8 +361,7 @@ def cmd_undo(args):
         print("Warning: " + w)
     if risk.risky and not args.yes:
         raise NeedsYes()
-    MS.undo_changes(cfg, place, args.by, children=children,
-                    role="owner", expect=ident)
+    MS.undo_changes(cfg, place, args.by, children=children, role="owner", expect=ident)
     print("Done.")
     return 0
 
@@ -377,17 +387,20 @@ def cmd_places(args):
     cfg = _cfg_path(args)
     d = _directory(cfg)
     if d is None:
-        print("No directory.json yet: the monitor writes it once it is "
-              "running. Start the monitor, then try again.",
-              file=sys.stderr)
+        print(
+            "No directory.json yet: the monitor writes it once it is "
+            "running. Start the monitor, then try again.",
+            file=sys.stderr,
+        )
         return 1
     age = time.time() - (d.get("updated") or 0)
     if age > DIRECTORY_STALE_SECS:
-        print(f"Note: directory.json is {int(age // 3600)} hour(s) old; "
-              f"start the monitor for fresh names.")
+        print(
+            f"Note: directory.json is {int(age // 3600)} hour(s) old; "
+            f"start the monitor for fresh names."
+        )
     find = (args.find or "").strip().lower()
-    chans = d.get("channels") if isinstance(d.get("channels"), dict) \
-        else {}
+    chans = d.get("channels") if isinstance(d.get("channels"), dict) else {}
     lines = [] if find or args.server else ["defaults", "dms"]
     for g in d.get("guilds") or []:
         if not isinstance(g, dict) or not g.get("id"):
@@ -397,16 +410,15 @@ def cmd_places(args):
             continue
         n = g.get("member_count")
         size = f"{n:,} members" if isinstance(n, int) else "size unknown"
-        rows = [c for c in chans.get(gid) or [] if isinstance(c, dict)
-                and c.get("type") in CARD_TYPES]
+        rows = [
+            c for c in chans.get(gid) or [] if isinstance(c, dict) and c.get("type") in CARD_TYPES
+        ]
         hit = not find or find in name.lower()
-        rows = [c for c in rows
-                if hit or find in str(c.get("name") or "").lower()]
+        rows = [c for c in rows if hit or find in str(c.get("name") or "").lower()]
         if not hit and not rows:
             continue
         lines.append(f"server:{gid}  {name} ({size})")
-        lines += [f"  channel:{gid}:{c['id']}  #{c.get('name') or c['id']}"
-                  for c in rows]
+        lines += [f"  channel:{gid}:{c['id']}  #{c.get('name') or c['id']}" for c in rows]
     if not lines:
         print(f"Nothing matches {args.find or args.server!r}.")
         return 1
@@ -415,8 +427,7 @@ def cmd_places(args):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(
-        prog="settings.py", description="muse-discord settings tool")
+    ap = argparse.ArgumentParser(prog="settings.py", description="muse-discord settings tool")
     ap.add_argument("--config", help="config.yaml to use")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("validate", help="check config.yaml")
@@ -427,56 +438,70 @@ def main(argv=None):
     sh.add_argument("--channel", help="a channel id (with --server)")
     sh.add_argument("--category", help="that channel's category id")
     sh.add_argument("--explain", action="store_true")
-    fo = sub.add_parser("fold", help="copy Discord changes into "
-                        "config.yaml")
+    fo = sub.add_parser("fold", help="copy Discord changes into config.yaml")
     fo.add_argument("--dry-run", action="store_true")
+
     def changer(name, help_, *pos):
         p = sub.add_parser(name, help=help_)
         for a in pos:
             p.add_argument(*a[0], **a[1])
-        p.add_argument("--place", required=name not in ("explain",),
-                       help="defaults, dms, server:ID or channel:ID:ID")
+        p.add_argument(
+            "--place",
+            required=name not in ("explain",),
+            help="defaults, dms, server:ID or channel:ID:ID",
+        )
         p.add_argument("--category", help="the channel's category id")
         if name != "explain":
-            p.add_argument("--by", default="muse.ai",
-                           help="who asked (default: muse.ai)")
-            p.add_argument("--yes", action="store_true",
-                           help="make a risky change (only after the "
-                                "owner said yes)")
+            p.add_argument("--by", default="muse.ai", help="who asked (default: muse.ai)")
+            p.add_argument(
+                "--yes",
+                action="store_true",
+                help="make a risky change (only after the owner said yes)",
+            )
         return p
-    changer("set", "change a setting at a place",
-            (["key"], {}), (["value"], {}))
-    changer("reset", "make a place follow its wider place again",
-            (["key"], {}))
+
+    changer("set", "change a setting at a place", (["key"], {}), (["value"], {}))
+    changer("reset", "make a place follow its wider place again", (["key"], {}))
     changer("undo", "undo the newest change at a place")
-    changer("preset", "apply Friends, Community or Work to a server",
-            (["name"], {"choices": ["friends", "community", "work"],
-                        "type": str.lower}))
+    changer(
+        "preset",
+        "apply Friends, Community or Work to a server",
+        (["name"], {"choices": ["friends", "community", "work"], "type": str.lower}),
+    )
     changer("pause", "stop answering at a place")
     changer("resume", "undo a pause at a place")
-    changer("explain", "what the bot does at a place, in plain words",
-            (["keys"], {"nargs": "*"}))
-    pl = sub.add_parser("places", help="the places (servers, channels) "
-                        "with their ids")
+    changer("explain", "what the bot does at a place, in plain words", (["keys"], {"nargs": "*"}))
+    pl = sub.add_parser("places", help="the places (servers, channels) with their ids")
     pl.add_argument("--find", help="only names containing this text")
     pl.add_argument("--server", help="only this server id")
     args = ap.parse_args(argv)
     by = getattr(args, "by", None)
-    if by is not None and (not str(by).strip()
-                           or MS._id_str(str(by)) is not None):
-        print(f"--by {by!r}: give a name (like muse.ai), not a user id; "
-              f"user ids are for changes made in Discord.",
-              file=sys.stderr)
+    if by is not None and (not str(by).strip() or MS._id_str(str(by)) is not None):
+        print(
+            f"--by {by!r}: give a name (like muse.ai), not a user id; "
+            f"user ids are for changes made in Discord.",
+            file=sys.stderr,
+        )
         return 2
     try:
-        return {"validate": cmd_validate, "show": cmd_show,
-                "fold": cmd_fold, "set": cmd_set,
-                "reset": cmd_reset, "undo": cmd_undo, "preset": cmd_preset,
-                "pause": cmd_pause, "resume": cmd_resume,
-                "explain": cmd_explain, "places": cmd_places}[args.cmd](args)
+        return {
+            "validate": cmd_validate,
+            "show": cmd_show,
+            "fold": cmd_fold,
+            "set": cmd_set,
+            "reset": cmd_reset,
+            "undo": cmd_undo,
+            "preset": cmd_preset,
+            "pause": cmd_pause,
+            "resume": cmd_resume,
+            "explain": cmd_explain,
+            "places": cmd_places,
+        }[args.cmd](args)
     except NeedsYes:
-        print("Not changed: this is risky. Tell the owner the warning; run "
-              "it again with --yes only after they say yes.")
+        print(
+            "Not changed: this is risky. Tell the owner the warning; run "
+            "it again with --yes only after they say yes."
+        )
         return 3
     except MS.SettingsError as e:
         print(str(e), file=sys.stderr)

@@ -37,6 +37,7 @@ the running monitor to send now (the SEND_NOW_FILE flag).
 
 Standard library only.
 """
+
 import json
 import math
 import os
@@ -59,29 +60,49 @@ SCHEMA = 1
 # sent (counts are still kept locally).
 TELEMETRY_URL = "https://muse-telemetry.clono.workers.dev"
 REPORT_PATH = "/v1/report"
-ENV_SWITCH = "MUSE_DISCORD_TELEMETRY"       # "off" turns it off
-ENV_URL = "MUSE_DISCORD_TELEMETRY_URL"      # overrides TELEMETRY_URL
+ENV_SWITCH = "MUSE_DISCORD_TELEMETRY"  # "off" turns it off
+ENV_URL = "MUSE_DISCORD_TELEMETRY_URL"  # overrides TELEMETRY_URL
 SETTING = "telemetry.usage_stats"
 
-KEEP_DAYS = 7               # unsent closed days kept at most
-FLUSH_SECS = 300            # counters reach telemetry.json this often
-TICK_SECS = 30              # tick() does its work at most this often
-JITTER_SECS = 3 * 3600      # the daily send waits up to this into the day
-TIMEOUT_SECS = 10           # per request
-RETRY_SECS = 3600           # a failed send retries after this, doubling
-NOTICE_AFTER_DAYS = 3       # unreachable this many days: tell the owners
-SEND_NOW_FILE = "telemetry.send_now"   # next to telemetry.json
-LATENCY_MAX_SECS = 3600     # longer latencies count as this
+KEEP_DAYS = 7  # unsent closed days kept at most
+FLUSH_SECS = 300  # counters reach telemetry.json this often
+TICK_SECS = 30  # tick() does its work at most this often
+JITTER_SECS = 3 * 3600  # the daily send waits up to this into the day
+TIMEOUT_SECS = 10  # per request
+RETRY_SECS = 3600  # a failed send retries after this, doubling
+NOTICE_AFTER_DAYS = 3  # unreachable this many days: tell the owners
+SEND_NOW_FILE = "telemetry.send_now"  # next to telemetry.json
+LATENCY_MAX_SECS = 3600  # longer latencies count as this
 MAX_CRASH_NAMES = 20
-MAX_WAKES_BYTES = 1 << 20   # a wakes file past this is just dropped
+MAX_WAKES_BYTES = 1 << 20  # a wakes file past this is just dropped
 REFUSAL_CODES = (
-    "replies-off", "dm-off", "bots-ignore", "not-allowed", "dm-not-allowed",
-    "cap", "bot-exchange", "suspicious-ignored", "predates-join", "no-send",
-    "internal", "worker-skipped", "send-failed", "never-share", "other")
+    "replies-off",
+    "dm-off",
+    "bots-ignore",
+    "not-allowed",
+    "dm-not-allowed",
+    "cap",
+    "bot-exchange",
+    "suspicious-ignored",
+    "predates-join",
+    "no-send",
+    "internal",
+    "worker-skipped",
+    "send-failed",
+    "never-share",
+    "other",
+)
 SOURCES = ("settings", "dm", "cli")
 PRESETS = ("friends", "community", "work")
-COUNTERS = ("messages_seen", "queued", "replies_sent", "quarantined",
-            "wakes", "media_sent", "restarts")
+COUNTERS = (
+    "messages_seen",
+    "queued",
+    "replies_sent",
+    "quarantined",
+    "wakes",
+    "media_sent",
+    "restarts",
+)
 OS_FAMILIES = ("linux", "darwin", "windows", "freebsd", "openbsd")
 FEATURES = {
     # name: allowed values (anything else is reported as "other")
@@ -98,8 +119,10 @@ FEATURES = {
     "update_notices": ("on", "off"),
     "media": ("on", "off"),
 }
-_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}"
-                      r"-[0-9a-f]{12}$")
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}"
+    r"-[0-9a-f]{12}$"
+)
 _NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 _SEMVER_RE = re.compile(r"^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -109,22 +132,23 @@ NOTICE_TEXT = (
     "My anonymous usage stats haven't reached "
     "{host} for {days} days. Most likely Muse "
     "asked you to allow it and the request wasn't approved. If you're "
-    "happy to share them, pick the \"always\" option next time Muse asks. "
-    "To stop them instead, tell me \"turn off usage stats\".")
+    'happy to share them, pick the "always" option next time Muse asks. '
+    'To stop them instead, tell me "turn off usage stats".'
+)
 
 
 # ---------------------------------------------------------------------------
 # Small pure helpers
 # ---------------------------------------------------------------------------
 def utc_day(now=None):
-    return datetime.fromtimestamp(time.time() if now is None else now,
-                                  timezone.utc).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(time.time() if now is None else now, timezone.utc).strftime(
+        "%Y-%m-%d"
+    )
 
 
 def day_start(day):
     """The epoch second a UTC day ("YYYY-MM-DD") starts."""
-    return datetime.strptime(day, "%Y-%m-%d").replace(
-        tzinfo=timezone.utc).timestamp()
+    return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
 
 
 def day_secs(day):
@@ -151,8 +175,7 @@ def endpoint(environ=None):
     rely on this, so they can never reach the real Worker)."""
     env = os.environ if environ is None else environ
     url = (env[ENV_URL] if ENV_URL in env else TELEMETRY_URL or "").strip()
-    return url.rstrip("/") if url.startswith(("https://", "http://")) \
-        else ""
+    return url.rstrip("/") if url.startswith(("https://", "http://")) else ""
 
 
 def enabled(st, environ=None):
@@ -172,7 +195,7 @@ def members_bucket(total):
     """Total members rounded down to a power of 2 (0 stays 0)."""
     try:
         n = int(total)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return 0
     if n <= 0:
         return 0
@@ -182,8 +205,7 @@ def members_bucket(total):
 def percentile(hist, q):
     """The q-th percentile (0-1) of a {seconds: count} histogram, in
     whole seconds; None when it is empty."""
-    pairs = sorted((int(k), int(v)) for k, v in (hist or {}).items()
-                   if int(v) > 0)
+    pairs = sorted((int(k), int(v)) for k, v in (hist or {}).items() if int(v) > 0)
     total = sum(v for _k, v in pairs)
     if not total:
         return None
@@ -211,17 +233,19 @@ def installed_version(pkg_dir, timeout=5):
     cannot tell."""
     try:
         out = subprocess.run(
-            ["git", "-C", pkg_dir, "tag", "--merged", "HEAD", "--list",
-             "v*"], capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.SubprocessError):
+            ["git", "-C", pkg_dir, "tag", "--merged", "HEAD", "--list", "v*"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except OSError, subprocess.SubprocessError:
         return "unknown"
     if out.returncode != 0:
         return "unknown"
     tags = [t for t in out.stdout.split() if _SEMVER_RE.match(t)]
     if not tags:
         return "unreleased"
-    return max(tags, key=lambda t: tuple(int(x) for x in
-                                         _SEMVER_RE.match(t).groups()))
+    return max(tags, key=lambda t: tuple(int(x) for x in _SEMVER_RE.match(t).groups()))
 
 
 def build_info(pkg_dir, version, timeout=5):
@@ -233,23 +257,35 @@ def build_info(pkg_dir, version, timeout=5):
         return 0, False
     git = ["git", "-C", pkg_dir]
     try:
-        n = subprocess.run(git + ["rev-list", "--count", f"{version}..HEAD"],
-                           capture_output=True, text=True, timeout=timeout)
-        st = subprocess.run(git + ["status", "--porcelain",
-                                   "--untracked-files=no", "--",
-                                   "*.py", "*.sh"],
-                            capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.SubprocessError):
+        n = subprocess.run(
+            git + ["rev-list", "--count", f"{version}..HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        st = subprocess.run(
+            git + ["status", "--porcelain", "--untracked-files=no", "--", "*.py", "*.sh"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except OSError, subprocess.SubprocessError:
         return 0, False
-    ahead = int(n.stdout.strip()) if n.returncode == 0 \
-        and n.stdout.strip().isdigit() else 0
+    ahead = int(n.stdout.strip()) if n.returncode == 0 and n.stdout.strip().isdigit() else 0
     return min(ahead, 100_000), st.returncode == 0 and bool(st.stdout.strip())
 
 
 def new_day(day):
-    return {"day": day, **{c: 0 for c in COUNTERS}, "refusals": {},
-            "latency": {}, "settings_changes": {}, "presets": {},
-            "crashes": {}, "gauges": {}}
+    return {
+        "day": day,
+        **{c: 0 for c in COUNTERS},
+        "refusals": {},
+        "latency": {},
+        "settings_changes": {},
+        "presets": {},
+        "crashes": {},
+        "gauges": {},
+    }
 
 
 def _bump(d, key, n=1):
@@ -282,8 +318,7 @@ def features(st, ms):
         "bots": get("who.bots", E),
         "length": get("style.length", E),
         "daily_cap": onoff(get("limits.per_day", E) is not None),
-        "per_person_cap": onoff(
-            get("limits.per_person_per_day", E) is not None),
+        "per_person_cap": onoff(get("limits.per_person_per_day", E) is not None),
         "media": onoff(get("media.enabled", A) or get("media.enabled", E)),
     }
     try:
@@ -304,7 +339,7 @@ def _is_id(v):
 
 
 def change_source(h):
-    """"settings" (/settings: an owner or server admin by user id), "dm"
+    """ "settings" (/settings: an owner or server admin by user id), "dm"
     (historical plain-language DM changes), or "cli" (bin/settings.py, the
     owners' Muse, bin/telemetry.py)."""
     g = str(h.get("group") or "")
@@ -376,18 +411,27 @@ def build_payload(rec, install_id):
     """The report for one closed day: every field, and nothing else (the
     Worker refuses anything it does not know)."""
     g = rec.get("gauges") or {}
-    refusals = {k: int(v) for k, v in (rec.get("refusals") or {}).items()
-                if k in REFUSAL_CODES and int(v) > 0}
-    crashes = {k: int(v) for k, v in (rec.get("crashes") or {}).items()
-               if _NAME_RE.match(str(k)) and int(v) > 0}
+    refusals = {
+        k: int(v)
+        for k, v in (rec.get("refusals") or {}).items()
+        if k in REFUSAL_CODES and int(v) > 0
+    }
+    crashes = {
+        k: int(v)
+        for k, v in (rec.get("crashes") or {}).items()
+        if _NAME_RE.match(str(k)) and int(v) > 0
+    }
     lat = rec.get("latency") or {}
     version = str(g.get("version") or "unknown")
     release = bool(_SEMVER_RE.match(version))
     if not release and version != "unreleased":
         version = "unknown"
     os_ = g.get("os") or os_family()
-    feats = {k: v for k, v in (g.get("features") or {}).items()
-             if k in FEATURES and (v in FEATURES[k] or v == "other")}
+    feats = {
+        k: v
+        for k, v in (g.get("features") or {}).items()
+        if k in FEATURES and (v in FEATURES[k] or v == "other")
+    }
     return {
         "schema": SCHEMA,
         "install_id": install_id,
@@ -395,8 +439,7 @@ def build_payload(rec, install_id):
         "version": version,
         # Past the release, or edited: lets reports from main or a
         # customized copy be told apart from the release itself.
-        "ahead": max(0, min(int(g.get("ahead") or 0), 100_000))
-        if release else 0,
+        "ahead": max(0, min(int(g.get("ahead") or 0), 100_000)) if release else 0,
         "modified": release and bool(g.get("modified")),
         "python": str(g.get("python") or python_minor())[:8],
         "os": os_ if os_ in OS_FAMILIES else "other",
@@ -410,12 +453,14 @@ def build_payload(rec, install_id):
         "wakes": int(rec.get("wakes", 0)),
         "latency_p50": percentile(lat, 0.5),
         "latency_p90": percentile(lat, 0.9),
-        "settings_changes": {k: int(v) for k, v in
-                             (rec.get("settings_changes") or {}).items()
-                             if k in SOURCES and int(v) > 0},
-        "presets_applied": {k: int(v) for k, v in
-                            (rec.get("presets") or {}).items()
-                            if k in PRESETS and int(v) > 0},
+        "settings_changes": {
+            k: int(v)
+            for k, v in (rec.get("settings_changes") or {}).items()
+            if k in SOURCES and int(v) > 0
+        },
+        "presets_applied": {
+            k: int(v) for k, v in (rec.get("presets") or {}).items() if k in PRESETS and int(v) > 0
+        },
         "media_sent": int(rec.get("media_sent", 0)),
         "restarts": int(rec.get("restarts", 0)),
         "crashes": crashes,
@@ -427,9 +472,9 @@ def build_payload(rec, install_id):
 # Files
 # ---------------------------------------------------------------------------
 def atomic_write_json(path, obj):
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
-                               prefix="." + os.path.basename(path) + ".",
-                               suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(path) or ".", prefix="." + os.path.basename(path) + ".", suffix=".tmp"
+    )
     try:
         with os.fdopen(fd, "w") as f:
             os.fchmod(f.fileno(), 0o600)
@@ -449,7 +494,7 @@ def load_file(path):
         with open(path) as f:
             d = json.load(f)
         return d if isinstance(d, dict) else {}
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return {}
 
 
@@ -470,9 +515,9 @@ def read_install_id(path, create=True):
 
 def reset_install_id(path):
     v = str(uuid.uuid4())
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".",
-                               prefix="." + os.path.basename(path) + ".",
-                               suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(path) or ".", prefix="." + os.path.basename(path) + ".", suffix=".tmp"
+    )
     with os.fdopen(fd, "w") as f:
         f.write(v + "\n")
     os.replace(tmp, path)
@@ -515,9 +560,14 @@ def post_json(url, obj, timeout=TIMEOUT_SECS):
     for anything else (no connection, a timeout)."""
     body = json.dumps(obj, separators=(",", ":")).encode()
     req = urllib.request.Request(
-        url, data=body, method="POST",
-        headers={"Content-Type": "application/json",
-                 "User-Agent": f"muse-discord-telemetry/{SCHEMA}"})
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": f"muse-discord-telemetry/{SCHEMA}",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status
@@ -536,9 +586,9 @@ def _safe(fn):
         except Exception as e:
             self._errors += 1
             if self._errors <= 3:
-                print(f"Telemetry: {type(e).__name__} (ignored)",
-                      flush=True)
+                print(f"Telemetry: {type(e).__name__} (ignored)", flush=True)
             return None
+
     wrapper.__name__ = fn.__name__
     wrapper.__doc__ = fn.__doc__
     return wrapper
@@ -549,8 +599,7 @@ class Recorder:
     id file, the wakes file), read on every use so tests can move them.
     Every method is safe to call from any thread and never raises."""
 
-    def __init__(self, paths, ms=None, pkg_dir=None, clock=time.time,
-                 post=post_json, environ=None):
+    def __init__(self, paths, ms=None, pkg_dir=None, clock=time.time, post=post_json, environ=None):
         self.paths = paths
         self.ms = ms
         self.pkg_dir = pkg_dir
@@ -558,7 +607,7 @@ class Recorder:
         self.post = post
         self.environ = environ
         self.lock = threading.Lock()
-        self.data = None          # telemetry.json, loaded on first use
+        self.data = None  # telemetry.json, loaded on first use
         self.version = None
         self.ahead, self.modified = 0, False
         self._errors = 0
@@ -566,8 +615,8 @@ class Recorder:
         self._last_flush = 0.0
         self._flushed_day = None
         self._hooked = False
-        self._sending = None      # the send thread
-        self._result = None       # (day attempted, [sent days], [dropped])
+        self._sending = None  # the send thread
+        self._result = None  # (day attempted, [sent days], [dropped])
 
     # -- state -------------------------------------------------------------
     def _load(self):
@@ -576,16 +625,17 @@ class Recorder:
         d = load_file(self.paths()[0])
         today = utc_day(self.clock())
         rec = d.get("today")
-        if not isinstance(rec, dict) or not _DAY_RE.match(
-                str(rec.get("day") or "")):
+        if not isinstance(rec, dict) or not _DAY_RE.match(str(rec.get("day") or "")):
             rec = new_day(today)
         base = new_day(rec["day"])
         base.update(rec)
         d["today"] = base
         pend = d.get("pending")
-        d["pending"] = [p for p in pend if isinstance(p, dict)
-                        and _DAY_RE.match(str(p.get("day") or ""))] \
-            if isinstance(pend, list) else []
+        d["pending"] = (
+            [p for p in pend if isinstance(p, dict) and _DAY_RE.match(str(p.get("day") or ""))]
+            if isinstance(pend, list)
+            else []
+        )
         self.data = d
         self._roll(today)
         return d
@@ -605,12 +655,11 @@ class Recorder:
         if rec["day"] >= today:
             return
         if not rec.get("off"):
-            d["pending"] = [p for p in d["pending"]
-                            if p["day"] != rec["day"]] + [rec]
+            d["pending"] = [p for p in d["pending"] if p["day"] != rec["day"]] + [rec]
         d["pending"] = sorted(d["pending"], key=lambda p: p["day"])
-        d["pending"] = [p for p in d["pending"]
-                        if day_start(p["day"]) >= day_start(today)
-                        - KEEP_DAYS * 86400][-KEEP_DAYS:]
+        d["pending"] = [
+            p for p in d["pending"] if day_start(p["day"]) >= day_start(today) - KEEP_DAYS * 86400
+        ][-KEEP_DAYS:]
         d["today"] = new_day(today)
 
     def flush(self):
@@ -631,8 +680,7 @@ class Recorder:
         thread: git can be slow), and thread crashes counted."""
         with self.lock:
             _bump(self._today(), "restarts")
-        threading.Thread(target=self._find_version, daemon=True,
-                         name="telemetry-version").start()
+        threading.Thread(target=self._find_version, daemon=True, name="telemetry-version").start()
         if self._hooked:
             return
         self._hooked = True
@@ -640,7 +688,8 @@ class Recorder:
 
         def hook(args):
             if args.exc_type is not None and not issubclass(
-                    args.exc_type, (SystemExit, KeyboardInterrupt)):
+                args.exc_type, (SystemExit, KeyboardInterrupt)
+            ):
                 self.crashed(args.exc_type, flush=False)
             prev(args)
 
@@ -649,8 +698,7 @@ class Recorder:
     def _find_version(self):
         try:
             self.version = installed_version(self.pkg_dir or ".")
-            self.ahead, self.modified = build_info(self.pkg_dir or ".",
-                                                   self.version)
+            self.ahead, self.modified = build_info(self.pkg_dir or ".", self.version)
         except Exception:
             self.version = "unknown"
 
@@ -667,8 +715,7 @@ class Recorder:
         or burst: replied, queued, quarantined, or why it was skipped.
         before: the burst's ledger entries before this write; when every
         one already had this outcome, it is not counted again."""
-        if before and all(isinstance(e, dict) and e.get("code") == code
-                          for e in before):
+        if before and all(isinstance(e, dict) and e.get("code") == code for e in before):
             return
         with self.lock:
             rec = self._today()
@@ -677,8 +724,7 @@ class Recorder:
             elif code in ("queued", "quarantined"):
                 _bump(rec, code)
             else:
-                _bump(rec["refusals"], code if code in REFUSAL_CODES
-                      else "other")
+                _bump(rec["refusals"], code if code in REFUSAL_CODES else "other")
 
     @_safe
     def latency(self, secs):
@@ -699,8 +745,7 @@ class Recorder:
         name = cls.__name__ if _NAME_RE.match(cls.__name__) else "Other"
         with self.lock:
             crashes = self._today()["crashes"]
-            if name not in crashes \
-                    and len(crashes) >= MAX_CRASH_NAMES - 1:
+            if name not in crashes and len(crashes) >= MAX_CRASH_NAMES - 1:
                 name = "Other"
             _bump(crashes, name)
             if flush:
@@ -708,8 +753,7 @@ class Recorder:
 
     # -- the main loop ----------------------------------------------------------
     @_safe
-    def tick(self, settings=None, guilds=None, member_counts=None,
-             force=False):
+    def tick(self, settings=None, guilds=None, member_counts=None, force=False):
         """Main loop, every iteration (cheap: does its work at most every
         TICK_SECS). settings: a callable giving the current Settings;
         guilds: the servers the bot is in; member_counts: {id: count}."""
@@ -727,31 +771,37 @@ class Recorder:
                 _bump(rec, "wakes", wakes)
             if not on:
                 rec["off"] = True
-                d["pending"] = []   # days of an install that is off now
+                d["pending"] = []  # days of an install that is off now
                 d.pop("notice", None)
                 d.pop("failing", None)
             if st is not None and self.ms is not None:
                 lines, d["history_mark"] = self.ms.history_since(
-                    getattr(st, "overlay_doc", None), d.get("history_mark"))
+                    getattr(st, "overlay_doc", None), d.get("history_mark")
+                )
                 count_history(rec, lines, st, self.ms)
-            counts = [v for v in (member_counts or {}).values()
-                      if isinstance(v, int) and v > 0]
+            counts = [v for v in (member_counts or {}).values() if isinstance(v, int) and v > 0]
             rec["gauges"] = {
                 "servers": len(guilds or ()),
                 "members": sum(counts),
                 "features": features(st, self.ms),
-                "version": self.version or rec.get("gauges", {}).get(
-                    "version"),
-                "ahead": self.ahead, "modified": self.modified,
-                "python": python_minor(), "os": os_family()}
+                "version": self.version or rec.get("gauges", {}).get("version"),
+                "ahead": self.ahead,
+                "modified": self.modified,
+                "python": python_minor(),
+                "os": os_family(),
+            }
             self._take_result(d, now)
             forced = self._sending is None and self._take_send_now()
-            if on and self.released() and endpoint(self.environ) \
-                    and d["pending"] and self._sending is None \
-                    and (forced or self._send_due(d, now)):
+            if (
+                on
+                and self.released()
+                and endpoint(self.environ)
+                and d["pending"]
+                and self._sending is None
+                and (forced or self._send_due(d, now))
+            ):
                 self._start_send(d, now)
-            if force or now - self._last_flush >= FLUSH_SECS \
-                    or self._flushed_day != rec["day"]:
+            if force or now - self._last_flush >= FLUSH_SECS or self._flushed_day != rec["day"]:
                 self._flushed_day = rec["day"]
                 self._flush_locked()
 
@@ -765,19 +815,21 @@ class Recorder:
         JITTER_SECS of it (drawn once per day)."""
         today = utc_day(now)
         if d.get("last_attempt") == today:
-            after = d.get("retry_after")   # set when today's send failed
+            after = d.get("retry_after")  # set when today's send failed
             return isinstance(after, (int, float)) and now >= after
         sched = d.get("send_after")
-        if not isinstance(sched, (int, float)) \
-                or utc_day(sched) != today:
+        if not isinstance(sched, (int, float)) or utc_day(sched) != today:
             sched = day_start(today) + random.uniform(0, JITTER_SECS)
             d["send_after"] = sched
         return now >= sched
 
     def _start_send(self, d, now):
         tries = d.get("tries")
-        d["tries"] = max(0, tries) + 1 if isinstance(tries, int) \
-            and d.get("last_attempt") == utc_day(now) else 1
+        d["tries"] = (
+            max(0, tries) + 1
+            if isinstance(tries, int) and d.get("last_attempt") == utc_day(now)
+            else 1
+        )
         d["last_attempt"] = utc_day(now)
         d.pop("retry_after", None)
         install_id = read_install_id(self.paths()[1])
@@ -792,7 +844,7 @@ class Recorder:
                     try:
                         status = self.post(url, p)
                     except Exception as e:
-                        error = failure_reason(e)   # offline / timeout
+                        error = failure_reason(e)  # offline / timeout
                         break
                     reached = True
                     if 200 <= status < 300:
@@ -818,32 +870,33 @@ class Recorder:
         self._sending = None
         gone = set(sent) | set(dropped)
         d["pending"] = [p for p in d["pending"] if p["day"] not in gone]
-        d["last_send"] = {"day": attempt, "sent": len(sent),
-                          "refused": len(dropped),
-                          "ok": not d["pending"]}
+        d["last_send"] = {
+            "day": attempt,
+            "sent": len(sent),
+            "refused": len(dropped),
+            "ok": not d["pending"],
+        }
         if reached:
             d.pop("failing", None)
             d.pop("notice", None)
         if d["pending"] and error:
             d["last_send"]["error"] = error
             tries = d.get("tries") if isinstance(d.get("tries"), int) else 1
-            d["retry_after"] = now + RETRY_SECS * 2 ** min(max(tries, 1) - 1,
-                                                           5)
+            d["retry_after"] = now + RETRY_SECS * 2 ** min(max(tries, 1) - 1, 5)
             at = datetime.fromtimestamp(d["retry_after"], timezone.utc)
-            print(f"Telemetry: send failed ({error}); trying again after "
-                  f"{at:%Y-%m-%d %H:%M} UTC.", flush=True)
+            print(
+                f"Telemetry: send failed ({error}); trying again after {at:%Y-%m-%d %H:%M} UTC.",
+                flush=True,
+            )
         if d["pending"] and error and not reached:
             # Unreachable on consecutive days: {since, last} (days).
-            f = d.get("failing") if isinstance(d.get("failing"), dict) \
-                else {}
+            f = d.get("failing") if isinstance(d.get("failing"), dict) else {}
             since, last = day_secs(f.get("since")), day_secs(f.get("last"))
             day = day_start(attempt)
-            if since is None or last is None or day - last > 86400 \
-                    or last < since:
+            if since is None or last is None or day - last > 86400 or last < since:
                 since = day
             d["failing"] = {"since": utc_day(since), "last": attempt}
-            if day - since >= (NOTICE_AFTER_DAYS - 1) * 86400 \
-                    and d.get("notice") is None:
+            if day - since >= (NOTICE_AFTER_DAYS - 1) * 86400 and d.get("notice") is None:
                 d["notice"] = "due"
         self._flush_locked()
 
@@ -859,14 +912,12 @@ class Recorder:
             d["notice"] = "sent"
             self._flush_locked()
         host = urllib.parse.urlsplit(endpoint(self.environ)).hostname
-        return NOTICE_TEXT.format(host=host or "the stats server",
-                                  days=NOTICE_AFTER_DAYS)
+        return NOTICE_TEXT.format(host=host or "the stats server", days=NOTICE_AFTER_DAYS)
 
     def _take_send_now(self):
         """True (once) when `bin/telemetry.py send` asked for a send."""
         try:
-            os.unlink(os.path.join(os.path.dirname(self.paths()[0]),
-                                   SEND_NOW_FILE))
+            os.unlink(os.path.join(os.path.dirname(self.paths()[0]), SEND_NOW_FILE))
             return True
         except OSError:
             return False

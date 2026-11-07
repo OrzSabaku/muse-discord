@@ -16,14 +16,16 @@ find(text, token, nonces) names what it found, or returns None:
 Nothing more elaborate: a determined encoder gets past any filter, and
 this one must never alter text it lets through.
 """
+
 import base64
 import re
 
 _TOKEN_SHAPE = re.compile(
     r"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{17,40})\.([A-Za-z0-9_-]{4,10})"
-    r"\.([A-Za-z0-9_-]{20,})")
+    r"\.([A-Za-z0-9_-]{20,})"
+)
 _NOT_ALNUM = re.compile(r"[^A-Za-z0-9]")
-_FORMS = {}   # token -> (squashed, [base64 cores], hex)
+_FORMS = {}  # token -> (squashed, [base64 cores], hex)
 
 
 def _token_forms(token):
@@ -34,7 +36,7 @@ def _token_forms(token):
             full = base64.b64encode(b"\0" * i + raw).decode()
             # Only the characters every encoding of the token shares,
             # whatever the bytes before and after it.
-            core = full[-(-8 * i // 6):(8 * (i + len(raw))) // 6]
+            core = full[-(-8 * i // 6) : (8 * (i + len(raw))) // 6]
             cores.append(_NOT_ALNUM.sub("", core))
         _FORMS.clear()
         _FORMS[token] = (_NOT_ALNUM.sub("", token), cores, raw.hex())
@@ -46,7 +48,7 @@ def token_shaped(text):
         seg = m.group(1)
         try:
             dec = base64.urlsafe_b64decode(seg + "=" * (-len(seg) % 4))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             continue
         if re.fullmatch(rb"[1-9][0-9]{16,19}", dec):
             return True
@@ -62,9 +64,14 @@ def find(text, token=None, nonces=()):
     backwards = squashed[::-1]
     if token and len(token) >= 20:
         flat, cores, hexed = _token_forms(token)
-        if token in text or token in text[::-1] or flat in squashed \
-                or flat in backwards or hexed in squashed.lower() \
-                or any(c in squashed for c in cores):
+        if (
+            token in text
+            or token in text[::-1]
+            or flat in squashed
+            or flat in backwards
+            or hexed in squashed.lower()
+            or any(c in squashed for c in cores)
+        ):
             return "the bot token"
     for n in nonces:
         if n and (n in text or n in squashed or n in backwards):

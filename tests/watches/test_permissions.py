@@ -1,4 +1,5 @@
 """Discord permission rules on fresh snapshots, plus fail-closed watch policy."""
+
 import os
 import sys
 import unittest
@@ -7,12 +8,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_watches as H
 from muse_discord.discord_permissions import channel_permissions, guild_permissions
 
-G, R1, R2, U, OWNER = '100', '200', '201', '300', '400'
+G, R1, R2, U, OWNER = "100", "200", "201", "300", "400"
 VIEW, SEND, ADMIN = 1 << 10, 1 << 11, 1 << 3
 
 
 def overwrite(id_, allow=0, deny=0, type_=0):
-    return {'id': id_, 'type': type_, 'allow': str(allow), 'deny': str(deny)}
+    return {"id": id_, "type": type_, "allow": str(allow), "deny": str(deny)}
 
 
 class PermissionRules(unittest.TestCase):
@@ -32,7 +33,17 @@ class PermissionRules(unittest.TestCase):
             self.assertTrue(guild_permissions(G, roles, OWNER, uid, role_ids) & ADMIN)
 
     def test_everyone_projection_ignores_member_and_other_role_grants(self):
-        self.assertFalse(channel_permissions(G, {G: 0, R1: 0}, OWNER, None, [], [overwrite(R1, allow=VIEW), overwrite(U, allow=VIEW, type_=1)]) & VIEW)
+        self.assertFalse(
+            channel_permissions(
+                G,
+                {G: 0, R1: 0},
+                OWNER,
+                None,
+                [],
+                [overwrite(R1, allow=VIEW), overwrite(U, allow=VIEW, type_=1)],
+            )
+            & VIEW
+        )
         self.assertTrue(channel_permissions(G, {G: VIEW}, OWNER, None, [], []) & VIEW)
 
     def test_missing_default_role_does_not_grant_permissions(self):
@@ -50,34 +61,48 @@ class WatchPermissionPolicy(H.Base):
         m = self.mod
         self.assertTrue(m.user_can_view(H.G1, H.U2, H.CH2))
         self.assertIn((H.G1, H.U2), m._WATCH_MEMBERS)
-        m.watch_perm_event({'t': 'GUILD_ROLE_DELETE', 'd': {'guild_id': H.G1, 'role_id': H.ROLE}})
+        m.watch_perm_event({"t": "GUILD_ROLE_DELETE", "d": {"guild_id": H.G1, "role_id": H.ROLE}})
         self.assertFalse(m.user_can_view(H.G1, H.U2, H.CH2))
 
     def test_role_and_channel_events_change_view_immediately(self):
         m = self.mod
         m._CHANNEL_OVERWRITES[H.CH2] = []
-        m._GUILD_PERMS[H.G1]['roles'][H.G1] = 0
+        m._GUILD_PERMS[H.G1]["roles"][H.G1] = 0
         self.assertFalse(m.user_can_view(H.G1, H.U2, H.CH2))
-        m.watch_perm_event({'t': 'GUILD_ROLE_UPDATE', 'd': {'guild_id': H.G1, 'role': {'id': H.ROLE, 'permissions': str(VIEW)}}})
+        m.watch_perm_event(
+            {
+                "t": "GUILD_ROLE_UPDATE",
+                "d": {"guild_id": H.G1, "role": {"id": H.ROLE, "permissions": str(VIEW)}},
+            }
+        )
         self.assertTrue(m.user_can_view(H.G1, H.U2, H.CH2))
-        m.watch_perm_event({'t': 'CHANNEL_UPDATE', 'd': {'guild_id': H.G1, 'id': H.CH2, 'permission_overwrites': [overwrite(H.U2, deny=VIEW, type_=1)]}})
+        m.watch_perm_event(
+            {
+                "t": "CHANNEL_UPDATE",
+                "d": {
+                    "guild_id": H.G1,
+                    "id": H.CH2,
+                    "permission_overwrites": [overwrite(H.U2, deny=VIEW, type_=1)],
+                },
+            }
+        )
         self.assertFalse(m.user_can_view(H.G1, H.U2, H.CH2))
 
     def test_owner_transfer_invalidates_owner_bypass(self):
         m = self.mod
-        m._GUILD_PERMS[H.G1]['roles'] = {H.G1: 0}
-        m.watch_perm_event({'t': 'GUILD_UPDATE', 'd': {'id': H.G1, 'owner_id': H.U1}})
+        m._GUILD_PERMS[H.G1]["roles"] = {H.G1: 0}
+        m.watch_perm_event({"t": "GUILD_UPDATE", "d": {"id": H.G1, "owner_id": H.U1}})
         self.assertTrue(m.user_can_view(H.G1, H.U1, H.CH))
-        m.watch_perm_event({'t': 'GUILD_UPDATE', 'd': {'id': H.G1, 'owner_id': H.U2}})
+        m.watch_perm_event({"t": "GUILD_UPDATE", "d": {"id": H.G1, "owner_id": H.U2}})
         self.assertFalse(m.user_can_view(H.G1, H.U1, H.CH))
 
     def test_unknown_nonmember_private_thread_and_malformed_overwrite_deny_view(self):
         m = self.mod
-        self.assertFalse(m.user_can_view(H.G1, H.U1, 'unknown'))
-        self.assertFalse(m.user_can_view(H.G1, '100000000000000099', H.CH))
-        m.CHANNELS[H.THREAD]['private'] = True
+        self.assertFalse(m.user_can_view(H.G1, H.U1, "unknown"))
+        self.assertFalse(m.user_can_view(H.G1, "100000000000000099", H.CH))
+        m.CHANNELS[H.THREAD]["private"] = True
         self.assertFalse(m.user_can_view(H.G1, H.U1, H.THREAD))
-        m._CHANNEL_OVERWRITES[H.CH] = [{'id': 'bad', 'type': 0, 'allow': str(VIEW), 'deny': '0'}]
+        m._CHANNEL_OVERWRITES[H.CH] = [{"id": "bad", "type": 0, "allow": str(VIEW), "deny": "0"}]
         self.assertIsNone(m.user_channel_perms(H.G1, H.U1, H.CH))
         self.assertFalse(m.channel_public(H.G1, H.CH))
 
@@ -85,9 +110,9 @@ class WatchPermissionPolicy(H.Base):
         m = self.mod
         m.api_get = lambda path: {}
         self.assertIsNone(m.user_channel_perms(H.G1, H.U1, H.CH))
-        m.api_get = lambda path: (_ for _ in ()).throw(AssertionError('failure must be cached'))
+        m.api_get = lambda path: (_ for _ in ()).throw(AssertionError("failure must be cached"))
         self.assertFalse(m.user_can_view(H.G1, H.U1, H.CH))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

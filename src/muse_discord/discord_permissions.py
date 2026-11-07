@@ -24,9 +24,7 @@ def _guild(gid, owner_id, roles):
         data={
             "id": gid,
             "owner_id": owner_id or None,
-            "roles": [
-                {"id": rid, "name": "", "permissions": str(bits)} for rid, bits in roles
-            ],
+            "roles": [{"id": rid, "name": "", "permissions": str(bits)} for rid, bits in roles],
         },
     )
 

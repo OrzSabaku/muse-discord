@@ -5,6 +5,7 @@ Runs inside its own user+PID namespace (re-execs itself under unshare),
 so pgrep/pkill only ever see this suite's fakes and every fake dies with
 the namespace. MUT_DIR = the package tree under test.
 """
+
 import json
 import os
 import shutil
@@ -17,17 +18,31 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
-from common import (HOOK_RUNTIME as RUNTIME, MUT_DIR,  # noqa: E402
-                    copy_watchdog)
+from common import (  # noqa: E402 (local import path bootstrap)
+    HOOK_RUNTIME as RUNTIME,
+    MUT_DIR,  # noqa: E402
+    copy_watchdog,
+)
 
 if os.environ.get("FR_IN_NS") != "1":
     env = dict(os.environ, FR_IN_NS="1")
     # bash (not python) as PID 1: it reaps the orphaned daemons.
     r = subprocess.run(
-        ["unshare", "--user", "--map-root-user", "--pid", "--fork",
-         "--mount-proc", "bash", "-c",
-         f"python3 '{os.path.abspath(__file__)}' \"$@\"; exit $?", "x"]
-        + sys.argv[1:], env=env)
+        [
+            "unshare",
+            "--user",
+            "--map-root-user",
+            "--pid",
+            "--fork",
+            "--mount-proc",
+            "bash",
+            "-c",
+            f"python3 '{os.path.abspath(__file__)}' \"$@\"; exit $?",
+            "x",
+        ]
+        + sys.argv[1:],
+        env=env,
+    )
     sys.exit(r.returncode)
 
 
@@ -39,9 +54,8 @@ def killall():
         subprocess.run(["pkill", "-9", "-f", pat], capture_output=True)
     end = time.time() + 5
     while time.time() < end and any(
-            subprocess.run(["pgrep", "-f", pat],
-                           capture_output=True).returncode == 0
-            for pat in PATS):
+        subprocess.run(["pgrep", "-f", pat], capture_output=True).returncode == 0 for pat in PATS
+    ):
         time.sleep(0.02)
 
 
@@ -54,21 +68,21 @@ class Base(unittest.TestCase):
         self.d = tempfile.mkdtemp(prefix="muse-fastrestart-")
         os.makedirs(os.path.join(self.d, "hooks"))
         os.makedirs(os.path.join(self.d, "bin"))
-        shutil.copy(os.path.join(MUT_DIR, "hooks", "mention-watch.sh"),
-                    os.path.join(self.d, "hooks"))
+        shutil.copy(
+            os.path.join(MUT_DIR, "hooks", "mention-watch.sh"), os.path.join(self.d, "hooks")
+        )
         if self.real_watchdog:
             # Also poll the run lock every 0.05 s instead of 1 s.
             wd = copy_watchdog(self.d)
             with open(wd) as f:
                 text = f.read()
             with open(wd, "w") as f:
-                f.write(text.replace("        time.sleep(1)\n",
-                                     "        time.sleep(0.05)\n"))
+                f.write(text.replace("        time.sleep(1)\n", "        time.sleep(0.05)\n"))
         else:
-            shutil.copy(os.path.join(HERE, "fake_watchdog.sh"),
-                        os.path.join(self.d, "bin", "watchdog.sh"))
-        shutil.copy(os.path.join(HERE, "fake_proc.py"),
-                    os.path.join(self.d, "bin", "monitor.py"))
+            shutil.copy(
+                os.path.join(HERE, "fake_watchdog.sh"), os.path.join(self.d, "bin", "watchdog.sh")
+            )
+        shutil.copy(os.path.join(HERE, "fake_proc.py"), os.path.join(self.d, "bin", "monitor.py"))
         tok = os.path.join(self.d, "bot_token")
         with open(tok, "w") as f:
             f.write("dummy\n")
@@ -80,10 +94,13 @@ updates:
   notify: false
 """)
         self.state = os.path.join(self.d, "hookstate.json")
-        self.env = dict(os.environ,
-                        HATCH_HOOK_RUNTIME=RUNTIME, HOOK_STATE=self.state,
-                        MUSE_DISCORD_DIR=self.d,
-                        FAKE_WD_SECS="1.2")
+        self.env = dict(
+            os.environ,
+            HATCH_HOOK_RUNTIME=RUNTIME,
+            HOOK_STATE=self.state,
+            MUSE_DISCORD_DIR=self.d,
+            FAKE_WD_SECS="1.2",
+        )
         self.env.pop("MUSE_DISCORD_CONFIG", None)
 
     def tearDown(self):
@@ -102,9 +119,13 @@ updates:
         timeout would: a restart it started must survive that."""
         t = time.monotonic()
         proc = subprocess.Popen(
-            ["bash", self.p("hooks/mention-watch.sh")], env=self.env,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-            start_new_session=True)
+            ["bash", self.p("hooks/mention-watch.sh")],
+            env=self.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
         out, _ = proc.communicate(timeout=30)
         secs = time.monotonic() - t
         try:
@@ -117,8 +138,7 @@ updates:
     def calls(self):
         try:
             with open(self.p("wd_calls")) as f:
-                return [ln for ln in f.read().splitlines()
-                        if ln.startswith("start")]
+                return [ln for ln in f.read().splitlines() if ln.startswith("start")]
         except FileNotFoundError:
             return []
 
@@ -148,13 +168,16 @@ updates:
         self.put_state(st)
 
     def start_monitor(self, argv0_path, pidfile=True):
-        proc = subprocess.Popen(["python3", argv0_path], cwd=self.d,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, env=self.env)
+        proc = subprocess.Popen(
+            ["python3", argv0_path],
+            cwd=self.d,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=self.env,
+        )
         self.procs.append(proc)
         end = time.time() + 5
-        while time.time() < end and not os.path.exists(
-                self.p("monitor.pid")):
+        while time.time() < end and not os.path.exists(self.p("monitor.pid")):
             time.sleep(0.05)
         if not pidfile:
             os.remove(self.p("monitor.pid"))
@@ -163,8 +186,7 @@ updates:
     def starts(self, name="monitor.py"):
         try:
             with open(self.p("starts.log")) as f:
-                return [ln for ln in f.read().splitlines()
-                        if ln.startswith(name + " ")]
+                return [ln for ln in f.read().splitlines() if ln.startswith(name + " ")]
         except FileNotFoundError:
             return []
 
@@ -247,8 +269,7 @@ class HookTrigger(Base):
             self.hook()
             self.assertEqual(self.get_state()["restart"], r)
             self.expire()
-        self.assertEqual(len(self.wait_calls(len(expect) + 1, 0.3)),
-                         len(expect))
+        self.assertEqual(len(self.wait_calls(len(expect) + 1, 0.3)), len(expect))
 
     def test_recovery_resets_backoff(self):
         now = int(time.time())
@@ -273,8 +294,10 @@ class HookTrigger(Base):
     def test_token_rejection_no_restart(self):
         # The monitor's own log says the token was rejected.
         with open(self.p("monitor.log"), "w") as f:
-            f.write("Bot user id: 1\n" * 2000 + "TOKEN REJECTED: Discord "
-                    "refused the bot token. Exiting.\n")
+            f.write(
+                "Bot user id: 1\n" * 2000 + "TOKEN REJECTED: Discord "
+                "refused the bot token. Exiting.\n"
+            )
         for _ in range(3):
             self.hook()
         now = int(time.time())
@@ -285,16 +308,19 @@ class HookTrigger(Base):
         os.remove(self.p("monitor.log"))
         self.put_state({})
         with open(self.p("watchdog_state.json"), "w") as f:
-            json.dump({"last_alert": "monitor DOWN: Discord rejected the "
-                       "token; it was probably reset."}, f)
+            json.dump(
+                {"last_alert": "monitor DOWN: Discord rejected the token; it was probably reset."},
+                f,
+            )
         self.hook()
         self.assertEqual(self.get_state()["restart"]["fails"], 0)
         self.assertEqual(self.wait_calls(1, 0.3), [])
         # Any other alert still restarts.
         self.put_state({})
         with open(self.p("watchdog_state.json"), "w") as f:
-            json.dump({"last_alert": "monitor DOWN: restart attempted but "
-                       "the process is not healthy"}, f)
+            json.dump(
+                {"last_alert": "monitor DOWN: restart attempted but the process is not healthy"}, f
+            )
         self.hook()
         self.assertEqual(len(self.wait_calls(1)), 1)
 
@@ -306,17 +332,21 @@ class RealWatchdog(Base):
         """Wait until no watchdog.sh run is left."""
         end = time.time() + secs
         while time.time() < end:
-            r = subprocess.run(["pgrep", "-f", "watchdog.sh"],
-                               capture_output=True)
+            r = subprocess.run(["pgrep", "-f", "watchdog.sh"], capture_output=True)
             if r.returncode != 0:
                 return
             time.sleep(0.05)
         self.fail("watchdog.sh still running")
 
     def wd(self, *args):
-        return subprocess.run(["bash", self.p("bin/watchdog.sh"), *args],
-                              cwd=self.d, env=self.env, capture_output=True,
-                              text=True, timeout=400)
+        return subprocess.run(
+            ["bash", self.p("bin/watchdog.sh"), *args],
+            cwd=self.d,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=400,
+        )
 
     def test_hook_brings_monitor_back_and_lock_is_released(self):
         secs, out = self.hook()
@@ -352,26 +382,35 @@ class RealWatchdog(Base):
             now = int(time.time())
             self.hook()
             r = self.get_state()["restart"]
-            self.assertEqual(r["fails"], 1)   # no new attempt
+            self.assertEqual(r["fails"], 1)  # no new attempt
             self.assertGreaterEqual(r["next"], now + 590)
         time.sleep(0.3)  # a detached start would show by now
         self.wait_wd_idle()
         self.assertEqual(len(self.starts()), 1)
         r = self.wd()
-        self.assertIn("ALERT: monitor DOWN: Discord rejected the token",
-                      r.stdout)
+        self.assertIn("ALERT: monitor DOWN: Discord rejected the token", r.stdout)
 
     def test_two_concurrent_runs_start_one_monitor(self):
         with open(self.p("config.yaml")) as f:
             cfg = f.read().replace("enabled: false", "enabled: true")
         with open(self.p("config.yaml"), "w") as f:
             f.write(cfg)
-        a = subprocess.Popen(["bash", self.p("bin/watchdog.sh")], cwd=self.d,
-                             env=self.env, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, text=True)
-        b = subprocess.Popen(["bash", self.p("bin/watchdog.sh")], cwd=self.d,
-                             env=self.env, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, text=True)
+        a = subprocess.Popen(
+            ["bash", self.p("bin/watchdog.sh")],
+            cwd=self.d,
+            env=self.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        b = subprocess.Popen(
+            ["bash", self.p("bin/watchdog.sh")],
+            cwd=self.d,
+            env=self.env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
         oa, _ = a.communicate(timeout=400)
         ob, _ = b.communicate(timeout=400)
         self.assertEqual(len(self.starts("monitor.py")), 1, oa + ob)

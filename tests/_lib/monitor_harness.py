@@ -1,6 +1,7 @@
 """Offline harness: load monitor.py from $MUT_DIR with every
 network call stubbed and every file redirected to a scratch dir. Used by
 the reliability, fastloop, updatedm and settingsplumb suites."""
+
 import importlib.util
 import os
 import sys
@@ -20,8 +21,7 @@ def sf(age_secs=0.0):
     """A snowflake for a message created age_secs ago (unique, ascending
     for equal ages)."""
     _seq[0] += 1
-    return str(((int((time.time() - age_secs) * 1000) - EPOCH) << 22)
-               + _seq[0])
+    return str(((int((time.time() - age_secs) * 1000) - EPOCH) << 22) + _seq[0])
 
 
 class HTTPErr(Exception):
@@ -37,9 +37,9 @@ class HTTPErr(Exception):
 class FakeAPI:
     def __init__(self, mod):
         self.mod = mod
-        self.msgs = {}      # channel id -> [message dicts]
-        self.routes = {}    # exact path -> response
-        self.errors = {}    # path prefix -> exception (or callable)
+        self.msgs = {}  # channel id -> [message dicts]
+        self.routes = {}  # exact path -> response
+        self.errors = {}  # path prefix -> exception (or callable)
         self.calls = []
         self.posts = []
 
@@ -89,12 +89,15 @@ class FakeAPI:
 def write_cfg(tmp, extra=""):
     path = os.path.join(tmp, "config.yaml")
     with open(path, "w") as f:
-        f.write(f"""owners:
+        f.write(
+            f"""owners:
 - '{OWNER}'
 engine:
   rest_poll_seconds: 1
   coalesce_seconds: 0.01
-""" + extra)
+"""
+            + extra
+        )
     return path
 
 
@@ -104,19 +107,22 @@ def load_monitor(tmp=None, cfg_extra=""):
     sys.argv = ["x", "dummy-token"]
     _seq[0] += 1
     spec = importlib.util.spec_from_file_location(
-        f"mut_monitor_{_seq[0]}", os.path.join(MUT_DIR, "src/muse_discord/monitor.py"))
+        f"mut_monitor_{_seq[0]}", os.path.join(MUT_DIR, "src/muse_discord/monitor.py")
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     redirect_files(mod, tmp)
-    for attr, fn in [("STATE_FILE", "state.json"),
-                     ("QUEUE_FILE", "reply_queue.json"),
-                     ("OUTBOX_FILE", "reply_outbox.json"),
-                     ("QUARANTINE_FILE", "quarantine.json"),
-                     ("LEDGER_FILE", "mention_ledger.json"),
-                     ("PIDFILE", "monitor.pid"),
-                     ("HEARTBEAT_FILE", "monitor.heartbeat"),
-                     ("MEDIA_DIR", "media"),
-                     ("GENERATED_DIR", "generated")]:
+    for attr, fn in [
+        ("STATE_FILE", "state.json"),
+        ("QUEUE_FILE", "reply_queue.json"),
+        ("OUTBOX_FILE", "reply_outbox.json"),
+        ("QUARANTINE_FILE", "quarantine.json"),
+        ("LEDGER_FILE", "mention_ledger.json"),
+        ("PIDFILE", "monitor.pid"),
+        ("HEARTBEAT_FILE", "monitor.heartbeat"),
+        ("MEDIA_DIR", "media"),
+        ("GENERATED_DIR", "generated"),
+    ]:
         setattr(mod, attr, os.path.join(tmp, fn))
     mod.api = FakeAPI(mod)
     mod.api_get = mod.api.get
@@ -130,19 +136,20 @@ def load_monitor(tmp=None, cfg_extra=""):
     return mod
 
 
-def msg(cid, author_id, content="", mention=False, gid=G1, bot=False,
-        age=600.0, mid=None):
-    m = {"id": mid or sf(age), "channel_id": cid,
-         "author": {"id": author_id, "username": f"user{author_id}",
-                    "bot": bot},
-         "content": content,
-         "mentions": [{"id": BOT}] if mention else [],
-         "timestamp": "2026-10-17T00:00:00+00:00", "type": 0}
+def msg(cid, author_id, content="", mention=False, gid=G1, bot=False, age=600.0, mid=None):
+    m = {
+        "id": mid or sf(age),
+        "channel_id": cid,
+        "author": {"id": author_id, "username": f"user{author_id}", "bot": bot},
+        "content": content,
+        "mentions": [{"id": BOT}] if mention else [],
+        "timestamp": "2026-10-17T00:00:00+00:00",
+        "type": 0,
+    }
     if gid:
         m["guild_id"] = gid
     return m
 
 
 def chan(name="general", can_send=True, gid=G1):
-    return {"name": name, "guild_id": gid, "guild_name": "Srv",
-            "can_send": can_send}
+    return {"name": name, "guild_id": gid, "guild_name": "Srv", "can_send": can_send}
