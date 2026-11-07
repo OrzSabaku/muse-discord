@@ -9,18 +9,18 @@ Discord HTTP通信はローカルサーバーと実際のdiscord.pyで検証し�
 ## 実行
 
 ```bash
-bash tests/run_all.sh                    # 全スイート、並列数4
-bash tests/run_all.sh settings ownerdm   # 対象を指定
-bash tests/run_all.sh --skip-slow -j 8
-MUT_DIR=/path/to/tree python3 tests/locking/test_locking.py
-bash tests/run_all.sh onboarding
+uv run bash tests/run_all.sh                    # 全スイート、並列数4
+uv run bash tests/run_all.sh settings ownerdm   # 対象を指定
+uv run bash tests/run_all.sh --skip-slow -j 8
+MUT_DIR=/path/to/tree uv run python tests/locking/test_locking.py
+uv run bash tests/run_all.sh onboarding
 ```
 
-Python 3.10以上、PyYAML、Pydantic v2、discord.py 2.7系（2.7.1以上）、bash、git、jq、unshareが必要です。
+Python 3.15系、PyYAML、Pydantic v2、discord.py 2.7系（2.7.1以上）、bash、git、jq、unshareが必要です。
 watchdog系はユーザー・PID名前空間を使います。UbuntuのAppArmor設定で制限される場合は名前空間の許可が必要です。
 動画テストはffmpegがないとスキップします。遅いスイートには `SLOW` があります。
 
-MCP・承認検証はPython 3.11以上とオプション依存を使います。依存がない場合は該当テストをスキップします。
+MCP・承認検証にはオプション依存を使います。依存がない場合は該当テストをスキップします。
 
 ```bash
 uv sync --group apps

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """muse-discord proactive: the bot starts a conversation on
 its own now and then, like a person would, instead of only replying.
 

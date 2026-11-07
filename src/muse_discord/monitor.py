@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 muse-discord monitor: the engine of the muse-discord connector.
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """muse-discord reminders and watches.
 
 One concept for people ("reminders and watches": one list, one cancel),

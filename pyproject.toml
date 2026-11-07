@@ -7,7 +7,7 @@ name = "muse-discord"
 version = "0.1.0"
 description = "Discord connector for Muse"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.15,<3.16"
 dependencies = [
     "aiohttp>=3.9,<4",
     "discord.py>=2.7.1,<2.8",
@@ -37,7 +37,7 @@ apps = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py315"
 
 [tool.ruff.lint]
 select = ["E", "F"]
@@ -52,8 +52,9 @@ exclude = ["**/__pycache__", ".venv", "build", "dist"]
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
-pythonVersion = "3.10"
+pythonVersion = "3.15"
 extraPaths = ["src"]
 
 [tool.uv]
+python-preference = "only-managed"
 default-groups = ["dev"]

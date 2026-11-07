@@ -43,7 +43,7 @@ everywhere:
 
 ## 計画と実行
 
-Python 3.11以上で、外部アプリ用の依存を追加します。
+外部アプリ用の依存を追加します。
 
 ```bash
 uv sync --group apps

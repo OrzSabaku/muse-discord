@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """muse-discord settings: schema, validation, scopes, the Discord overlay,
 and configuration persistence.
 
