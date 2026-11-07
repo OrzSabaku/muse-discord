@@ -26,7 +26,7 @@ from discord.http import HTTPClient, Route
 # data. Callers log the sanitized errors below instead.
 if not (2, 7, 1) <= discord.version_info[:3] < (2, 8, 0):
     raise ImportError(
-        "discord.py 2.7.x (>=2.7.1) is required; install requirements.txt"
+        "discord.py 2.7.x (>=2.7.1) is required; run uv sync"
     )
 logging.getLogger("discord.http").disabled = True
 API = "https://discord.com/api/v10"

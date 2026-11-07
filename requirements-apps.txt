@@ -1,3 +1,0 @@
-# Optional external-app execution and signed approval verification, Python 3.11+.
--r requirements-mcp.txt
-cryptography>=45,<51

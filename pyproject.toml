@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "muse-discord"
+version = "0.1.0"
+description = "Discord connector for Muse"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.9,<4",
+    "discord.py>=2.7.1,<2.8",
+    "pydantic>=2.10,<3",
+    "PyYAML>=6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3",
+    "pyright>=1.1",
+    "pytest>=8.3",
+    "pytest-cov>=6.1",
+    "ruff>=0.15",
+]
+mcp = [
+    "anyio>=4.5,<4.12",
+    "mcp>=2.3,<3",
+]
+apps = [
+    { include-group = "mcp" },
+    "cryptography>=45,<51",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"
+
+[tool.pyright]
+include = ["src", "bin"]
+exclude = ["**/__pycache__", ".venv", "build", "dist"]
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.10"
+extraPaths = ["src"]
+
+[tool.uv]
+default-groups = ["dev"]

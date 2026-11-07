@@ -32,11 +32,11 @@ Aはチャンネル作成・削除とスレッド作成も行います。Server 
 ## 実行
 
 ```bash
-pip install -r requirements.txt
-python3 -m unittest discover -s e2e/tests -t .
-python3 e2e/run.py --tree . --tier 1 --dry-run
-python3 e2e/run.py --tree . --tier 1
-python3 e2e/run.py --tree . --tier 1 --scenario mention_burst --keep-channels
+uv sync
+uv run python -m unittest discover -s e2e/tests -t .
+uv run python e2e/run.py --tree . --tier 1 --dry-run
+uv run python e2e/run.py --tree . --tier 1
+uv run python e2e/run.py --tree . --tier 1 --scenario mention_burst --keep-channels
 ```
 
 Tier 2は `--tier 2` を指定し、ログイン済みの `claude` が必要です。`CLAUDE_BIN` と `E2E_CLAUDE_MODEL` で実行先・モデルを指定できます。

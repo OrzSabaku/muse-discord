@@ -23,10 +23,10 @@ watchdog系はユーザー・PID名前空間を使います。UbuntuのAppArmor�
 MCP・承認検証はPython 3.11以上とオプション依存を使います。依存がない場合は該当テストをスキップします。
 
 ```bash
-.venv-mcp/bin/pip install -r requirements-apps.txt
-.venv-mcp/bin/python tests/discordtools/test_mcp.py
-.venv-mcp/bin/python tests/externalapps/test_broker.py
-.venv-mcp/bin/python tests/externalapps/test_transport.py
+uv sync --group apps
+uv run --group apps python tests/discordtools/test_mcp.py
+uv run --group apps python tests/externalapps/test_broker.py
+uv run --group apps python tests/externalapps/test_transport.py
 node --test telemetry/worker/test/worker.test.js
 ```
 

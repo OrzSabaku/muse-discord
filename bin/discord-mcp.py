@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional MCP stdio server; install requirements-mcp.txt first."""
+"""Optional MCP stdio server; run ``uv sync --group mcp`` first."""
 from pathlib import Path
 import sys
 
@@ -10,7 +10,7 @@ def main():
     try:
         from muse_discord.discord_tools.mcp_server import create_server
     except ImportError:
-        print('MCP SDK missing: use Python 3.11+ and install requirements-mcp.txt.',
+        print('MCP SDK missing: use Python 3.11+ and run "uv sync --group mcp".',
               file=sys.stderr)
         return 1
     create_server().run(transport='stdio')

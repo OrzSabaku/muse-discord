@@ -13,7 +13,7 @@ cd ~/muse-discord
 bash bin/install.sh
 ```
 
-Python 3.10以上とjqが必要です。`.venv` が作られた場合は、以後の `python3` を `.venv/bin/python3` に置き換えます。
+Python 3.10以上、uv、jqが必要です。`bin/install.sh` はuvで`.venv`を作成します。以後の `python3` は`.venv/bin/python3`に置き換えるか、`uv run`経由で実行します。
 既に `config.yaml` がある場合は再導入せず、[更新・復旧](UPDATING.md) を参照してください。
 
 ## 2. Botの接続
