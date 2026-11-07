@@ -36,7 +36,7 @@ Security model:
 Configuration: config.yaml next to this file (or --config PATH, or the
 MUSE_DISCORD_CONFIG env var), plus config.discord.yaml (changes made
 from Discord), both read through muse_settings.py. See
-config.example.yaml for the schema; an old-layout file still works.
+config.example.yaml for the schema.
 """
 import contextlib
 import fcntl
@@ -2543,16 +2543,8 @@ register_interaction("mdpro", on_proactive_button, owner_only=False)
 
 
 # ---------------------------------------------------------------------------
-# /settings: the slash command and its pages. settings_ui.py (next to
-# this file) renders every page: settings_ui.handle(interaction, ctx)
-# returns the whole interaction callback body and never touches the
-# network. This side registers the command, routes the command and every
-# mdset:* component or modal to it on the interaction thread (inside
-# Discord's 3s deadline, whatever the main loop is doing), and gives it a
-# SettingsCtx: the current settings, the server and channel directory
-# from discovery, and overlay writes. Permissions (owner / server admin /
-# anyone else) are settings_ui's to check, on every interaction; so the
-# routes are not owner-only here.
+# /settings is rendered and dispatched by discord.py (discord_connection.py).
+# This context exposes the existing settings engine and discovery directory.
 # ---------------------------------------------------------------------------
 SETTINGS_PREFIX = "mdset"
 SETTINGS_COMMAND = {
@@ -2635,16 +2627,8 @@ def publish_directory():
             print(f"Could not write directory.json: {e}", flush=True)
 
 
-# /settings' stash: what a confirm card, a preset preview or a failed
-# modal is waiting on, in memory only (a restart forgets it: the page
-# then says it expired). token -> (user id, payload, expires at).
-_STASH = {}
-_STASH_LOCK = threading.Lock()
-STASH_MAX = 500
-# Per-user UI sessions (settings_ui's edit drafts): keyed by
-# (user_id, key), readable and writable any number of times until the
-# ttl lapses or the entry is dropped. Unlike the stash, nothing here is
-# a credential: a draft is only ever staged changes the user made.
+# Private settings screens and drafts, keyed by (user_id, random token).
+# Stored only in memory: restart or expiry discards uncommitted edits.
 _SESSIONS = {}
 _SESSIONS_LOCK = threading.Lock()
 SESSIONS_MAX = 200
@@ -2656,9 +2640,9 @@ _ADMIN_LOCK = threading.Lock()
 
 
 class SettingsCtx:
-    """What settings_ui.handle gets: safe to use from the interaction
-    thread. write/undo raise muse_settings.SettingsError for an
-    invalid key, value or scope."""
+    """Settings/directory access for Discord callbacks and worker threads.
+    Invalid writes and undo operations raise muse_settings.SettingsError.
+    """
 
     def __init__(self):
         self.now = time.time()
@@ -2722,19 +2706,6 @@ class SettingsCtx:
         """A person's name the monitor has seen (None when unknown)."""
         return _USER_NAMES.get(str(user_id))
 
-    def stash_put(self, user_id, payload, ttl=900):
-        """Keep payload for user_id (single use, ttl seconds); a 10
-        character token."""
-        tok = secrets.token_urlsafe(8)[:10]
-        now = time.time()
-        with _STASH_LOCK:
-            for k in [k for k, v in _STASH.items() if v[2] < now]:
-                del _STASH[k]
-            while len(_STASH) >= STASH_MAX:
-                _STASH.pop(next(iter(_STASH)))
-            _STASH[tok] = (str(user_id), payload, now + ttl)
-        return tok
-
     def session_peek(self, user_id, key):
         """The payload session_put kept for (user_id, key), or None
         (never kept, dropped, or expired). Not consumed."""
@@ -2757,20 +2728,6 @@ class SettingsCtx:
     def session_drop(self, user_id, key):
         with _SESSIONS_LOCK:
             _SESSIONS.pop((str(user_id), str(key)), None)
-
-    def stash_take(self, user_id, token):
-        """The payload stash_put kept, once; None when it is gone
-        (expired, used, or the monitor restarted). PermissionError when
-        it is someone else's (it stays theirs)."""
-        with _STASH_LOCK:
-            e = _STASH.get(str(token))
-            if e is None or e[2] < time.time():
-                _STASH.pop(str(token), None)
-                return None
-            if e[0] != str(user_id):
-                raise PermissionError("not this user's")
-            del _STASH[str(token)]
-        return e[1]
 
     def recent_outcomes(self, place, limit=20):
         """The newest mention-ledger entries for a place (a Place from
@@ -2959,69 +2916,6 @@ def flush_admin_digests(force=False):
             print(f"Admin digest for server {gid} undelivered; retrying.",
                   flush=True)
     return sent
-
-
-_SETTINGS_UI = {"mod": None, "failed": None}
-
-
-def load_settings_ui():
-    """settings_ui.py next to monitor.py (else one on sys.path), imported
-    once; None (logged once per distinct error) when it is missing or
-    fails to import."""
-    if _SETTINGS_UI["mod"] is not None:
-        return _SETTINGS_UI["mod"]
-    try:
-        here = os.path.join(CODE_DIR, "settings_ui.py")
-        if os.path.isfile(here):
-            spec = importlib.util.spec_from_file_location("settings_ui",
-                                                          here)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-        else:
-            mod = importlib.import_module("muse_discord.settings_ui")
-        if not callable(getattr(mod, "handle", None)):
-            raise ImportError("settings_ui has no handle()")
-    except Exception as e:
-        err = f"{type(e).__name__}: {e}"
-        if _SETTINGS_UI["failed"] != err:
-            _SETTINGS_UI["failed"] = err
-            print(f"/settings UI unavailable ({err}); /settings answers "
-                  f"\"Settings UI unavailable\".", flush=True)
-        return None
-    _SETTINGS_UI["mod"] = mod
-    _SETTINGS_UI["failed"] = None
-    return mod
-
-
-def on_settings_interaction(ix, rest, uid, record):
-    ui = load_settings_ui()
-    if ui is None:
-        return ephemeral("Settings UI unavailable.")
-    t0 = time.time()
-    try:
-        response = ui.handle(ix, SettingsCtx())
-    except Exception as e:
-        print(f"/settings handler error: {type(e).__name__}: {e}",
-              flush=True)
-        return ephemeral("Something went wrong; try again.")
-    spent = time.time() - t0
-    if spent > 1.5:
-        print(f"/settings took {spent:.1f}s to answer (Discord allows 3s).",
-              flush=True)
-    if not isinstance(response, dict) \
-            or not isinstance(response.get("type"), int):
-        print("/settings handler returned no callback body.", flush=True)
-        return ephemeral("Something went wrong; try again.")
-    return response
-
-
-register_interaction(SETTINGS_PREFIX, on_settings_interaction,
-                     owner_only=False)
-register_interaction("/" + SETTINGS_COMMAND["name"], on_settings_interaction,
-                     owner_only=False)
-for _name in WHY_NAMES:
-    register_interaction("/" + _name, on_settings_interaction,
-                         owner_only=False)
 
 
 # ---------------------------------------------------------------------------
@@ -8185,7 +8079,6 @@ def main():
               "guild membership and channel permissions); discovery "
               "keeps retrying on the refresh cadence.", flush=True)
     state = load_state()
-    load_settings_ui()  # imported now, not on the first /settings
     # Join watermarks for every guild, plus the owner summary for any
     # guild joined while the monitor was down.
     sync_guilds(state, GUILDS, CHANNELS)

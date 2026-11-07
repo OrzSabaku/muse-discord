@@ -1,15 +1,18 @@
-"""discord.py owns Gateway connection, heartbeats and reconnection.
+"""discord.py owns the Gateway and native settings interactions.
 
 The monitor's existing queue consumes raw Discord message dictionaries, so
 forward decoded dispatch events without changing ingestion/dedup semantics.
-Interactions still use the monitor's existing interaction worker.
+Legacy approval/update buttons still use the monitor's interaction worker.
 """
 
+import asyncio
 import json
 import time
 
 import discord
 
+from muse_discord import muse_settings as ms
+from muse_discord import settings_ui
 
 
 class Connection(discord.Client):
@@ -25,6 +28,9 @@ class Connection(discord.Client):
         self.inbox, self.gateway_status = inbox, status
         self.settings_context, self.settings_guard = context_factory, guard
         self.settings_log = lambda message: print(message, flush=True)
+
+    async def setup_hook(self):
+        self.add_dynamic_items(settings_ui.Action)
 
     async def on_connect(self):
         self.gateway_status["connected"] = True
@@ -79,11 +85,72 @@ class Connection(discord.Client):
                     }
                 }
             )
-        elif event == "INTERACTION_CREATE":
+        elif event == "INTERACTION_CREATE" and not self.native_settings(data):
             inbox = self.gateway_status.get("interactions")
             if inbox is not None:
                 inbox.put(data)
 
+    @staticmethod
+    def native_settings(raw):
+        data = raw.get("data") or {}
+        return data.get("name") in ("settings", "Why no reply?", "Why no reply") or str(
+            data.get("custom_id", "")
+        ).startswith((settings_ui.PREFIX, "mdset:"))
+
+    async def on_interaction(self, interaction):
+        data = interaction.data or {}
+        name, custom = data.get("name"), data.get("custom_id", "")
+        try:
+            if name in (
+                "settings",
+                "Why no reply?",
+                "Why no reply",
+            ) or custom.startswith("mdset:"):
+                # Acknowledge before even loading config from disk.
+                await interaction.response.defer(ephemeral=True, thinking=True)
+                ctx = await asyncio.to_thread(self.settings_context)
+                if name in ("Why no reply?", "Why no reply"):
+                    await settings_ui.why_message(interaction, ctx)
+                elif custom.startswith("mdset:") and not custom.startswith(
+                    "mdset:open:server:"
+                ):
+                    await interaction.edit_original_response(
+                        content="この設定画面は古い形式です。/settingsを開き直してください。"
+                    )
+                else:
+                    place = None
+                    if custom.startswith("mdset:open:server:"):
+                        if str(interaction.user.id) not in set(
+                            map(str, ctx.settings.owners)
+                        ):
+                            raise ms.SettingsError(
+                                "この操作はBotの所有者のみ利用できます。"
+                            )
+                        place = ms.parse_place(
+                            "server:" + custom.rsplit(":", 1)[1], ctx
+                        )
+                    await settings_ui.open_settings(interaction, ctx, place)
+            elif (
+                custom.startswith(settings_ui.PREFIX)
+                and interaction.type == discord.InteractionType.modal_submit
+            ):
+                # Modal objects are deliberately not restored after a restart.
+                # The native modal callback acknowledges first when still alive.
+                await asyncio.sleep(0)
+                if not interaction.response.is_done():
+                    await settings_ui.error(
+                        interaction,
+                        "入力画面の有効期限が切れました。/settingsを開き直してください。",
+                    )
+            # mset:* buttons/selects are dispatched by discord.py's DynamicItem.
+        except ms.SettingsError as exc:
+            await settings_ui.error(interaction, str(exc))
+        except Exception as exc:
+            self.settings_log(f"settings command failed: {type(exc).__name__}: {exc}")
+            await settings_ui.error(
+                interaction,
+                "設定画面を開けませんでした。monitor.logを確認してください。",
+            )
 
 
 async def run(token, inbox, status, context_factory, guard, intents):

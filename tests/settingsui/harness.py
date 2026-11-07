@@ -1,12 +1,7 @@
-"""The /settings fixtures and fake Ctx shared by the settingsui suites
-and the crawler (crawl.py): an owner, a server admin (Manage Server in
-Muse Lounge) and a member; Muse Lounge (1,240 members), Study Group (9)
-and Pixel Plaza (48,213) plus 60 more servers; a Staff category; 80
-channels in Muse Lounge; 20-digit ids; a ledger with every reason; a
-config.yaml value the overlay overrides; a hidden "answer" value; and
-(on request) an unreadable overlay. Writes go through muse_settings
-into a temp dir, as the monitor's SettingsCtx does.
-MUT_DIR = the package tree under test."""
+"""Shared native UI fixtures: real settings files/overlay in scratch space,
+large guild/channel directories, users/roles, and recorded refusal reasons.
+Only Discord interactions are faked; writes use the real settings engine.
+"""
 import json
 import os
 import sys
@@ -20,8 +15,8 @@ sys.path.insert(0, os.path.join(MUT, "src"))
 from muse_discord import muse_settings as MS  # noqa: E402
 from muse_discord import settings_ui as UI  # noqa: E402,F401 (re-exported)
 
-# The custom_id prefix the pages render now ("mdset:<version>:").
-P = f"{UI.PREFIX}:{UI.VERSION}:"
+# Native UI component prefix.
+P = UI.PREFIX
 
 # 20-digit snowflakes (the longest real ids).
 OWNER = "11100000000000000001"
@@ -353,11 +348,11 @@ class FakeCtx:
         if e is None or e[1] < self.now:
             self.sessions.pop((str(uid), str(key)), None)
             return None
-        return json.loads(json.dumps(e[0]))
+        return e[0]
 
     def session_put(self, uid, key, payload, ttl=900):
         self.sessions[(str(uid), str(key))] = (
-            json.loads(json.dumps(payload)), self.now + ttl)
+            payload, self.now + ttl)
 
     def session_drop(self, uid, key):
         self.sessions.pop((str(uid), str(key)), None)
@@ -374,124 +369,3 @@ class FakeCtx:
 
     def overlay(self):
         return MS._read_overlay_doc(self.overlay_path)
-
-
-# ---------------------------------------------------------------------------
-# Interactions
-# ---------------------------------------------------------------------------
-def _who(ix, user, guild, perms, channel, ctype=0, parent=None):
-    if guild:
-        ix["guild_id"] = guild
-        ix["member"] = {"user": {"id": user, "username": NAMES.get(
-            user, "user").lower()}, "permissions": perms or "0"}
-        ix["channel_id"] = channel
-        ix["channel"] = {"id": channel, "type": ctype,
-                         "parent_id": parent}
-    else:
-        ix["user"] = {"id": user, "username": NAMES.get(user,
-                                                        "user").lower()}
-        ix["channel_id"] = "40000000000000000077"
-        ix["channel"] = {"id": "40000000000000000077", "type": 1}
-    return ix
-
-
-def command(user, guild=None, perms=None, channel=MUSECHAT, ctype=0,
-            parent=None):
-    return _who({"type": 2, "id": "1", "token": "t",
-                 "data": {"name": "settings", "type": 1}},
-                user, guild, perms, channel, ctype, parent)
-
-
-def context_command(user, target, guild=G1, perms=None, channel=MUSECHAT,
-                    author=SAM, mentions=(BOT,), name="Why no reply?"):
-    msg = {"id": target, "channel_id": channel,
-           "author": {"id": author, "username": NAMES.get(author, "x")},
-           "mentions": [{"id": m} for m in mentions], "content": "hey"}
-    return _who({"type": 2, "id": "1", "token": "t",
-                 "data": {"name": name, "type": 3, "target_id": target,
-                          "resolved": {"messages": {target: msg}}}},
-                user, guild, perms, channel)
-
-
-def component(user, custom_id, values=None, guild=None, perms=None,
-              channel=MUSECHAT, resolved=None, message=None, ctype=0,
-              parent=None):
-    data = {"custom_id": custom_id, "component_type": 2}
-    if values is not None:
-        data["values"] = list(values)
-        data["component_type"] = 3
-    if resolved:
-        data["resolved"] = resolved
-    return _who({"type": 3, "id": "1", "token": "t", "data": data,
-                 "message": message or {"id": "9", "flags": 64 | 32768}},
-                user, guild, perms, channel, ctype, parent)
-
-
-def submit(user, custom_id, fields, guild=None, perms=None,
-           channel=MUSECHAT):
-    comps = []
-    for name, value in fields.items():
-        inner = {"type": 3, "custom_id": name, "values": list(value)} \
-            if isinstance(value, list) else \
-            {"type": 4, "custom_id": name, "value": value}
-        comps.append({"type": 18, "component": inner})
-    return _who({"type": 5, "id": "1", "token": "t",
-                 "data": {"custom_id": custom_id, "components": comps},
-                 "message": {"id": "9", "flags": 64 | 32768}},
-                user, guild, perms, channel)
-
-
-def resolved_for(kind, values):
-    """Resolved data a user / mentionable / channel select carries."""
-    if kind == 8:
-        return {"channels": {v: {"id": v, "type": 0} for v in values}}
-    users = {v: {"id": v, "username": NAMES.get(v, "u")} for v in values
-             if v != ROLE}
-    roles = {v: {"id": v, "name": "Mods"} for v in values if v == ROLE}
-    out = {}
-    if users:
-        out["users"] = users
-    if roles:
-        out["roles"] = roles
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Reading responses
-# ---------------------------------------------------------------------------
-def walk(comps):
-    for c in comps or []:
-        if not isinstance(c, dict):
-            continue
-        yield c
-        yield from walk(c.get("components"))
-        if isinstance(c.get("accessory"), dict):
-            yield c["accessory"]
-        if isinstance(c.get("component"), dict):
-            yield from walk([c["component"]])
-
-
-def controls(resp):
-    return [c for c in walk(resp.get("data", {}).get("components"))
-            if c.get("custom_id", "").startswith("mdset:")]
-
-
-def texts(resp):
-    return [c["content"] for c in walk(resp.get("data", {}).get(
-        "components")) if c.get("type") == 10]
-
-
-def text(resp):
-    return "\n".join(texts(resp))
-
-
-def find(resp, prefix=None, label=None):
-    """The first control whose custom_id starts with prefix (or whose
-    label is label)."""
-    for c in controls(resp):
-        if prefix and not c["custom_id"].startswith(prefix):
-            continue
-        if label and c.get("label") != label:
-            continue
-        return c
-    return None

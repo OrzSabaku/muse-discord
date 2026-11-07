@@ -1,3080 +1,1032 @@
-#!/usr/bin/env python3
-"""/settings in Discord: one screen with a few direct settings and a
-Where select, as one pure function of an interaction and a Ctx (see
-handle). monitor.py owns the plumbing (registering the commands,
-routing "mdset:" interactions here, building the Ctx, answering
-Discord); this module never touches the network, so it answers well
-inside Discord's 3 seconds, and it never raises.
+"""Discord settings built with discord.py's native components.
 
-What each person gets:
-
-- An owner gets the place they typed /settings in (a channel, or DMs in
-  the bot's DM; the join DM's Configure button opens a whole server),
-  with a Where select to switch to its server or everywhere: a
-  plain-words line on how the bot behaves there, the few settings most
-  owners change (when it replies, reply length, images & video, who
-  can DM it, replies a person a day: whichever that place has), a
-  style picker for the server (the Friends / Community / Work
-  presets), Pause or Resume, "Why no reply?", Undo for the last
-  change. Other settings are available under Edit settings or in
-  config.yaml.
-- The owner's Edit button opens the edit pages (basic, then "More
-  settings"): every Discord-editable setting that place has, detailed
-  ones included (who it answers and ignores, other bots, the daily
-  caps, what it remembers, reminders, reaching out on its own).
-  Nothing on an edit page applies at once: picks stage into a draft
-  (a Ctx session, 15 minutes), the pages list what would change, and
-  Save applies the whole draft as one undo group through the same
-  assess / confirm path as any other write; Cancel throws it away.
-  Owners manage owner commands and external app access on Permissions.
-  privacy.never_share remains file-only.
-- A server admin (Manage Server) gets "Quiet the bot" for their server:
-  quieter only (muse_settings' admin rule), and Undo of admins' changes.
-- Anyone else gets a polite refusal.
-
-Pages are Components V2 messages (flags 64|32768: no content, no
-embeds; at most 40 components), edited in place after the first. Every
-write goes through muse_settings.apply as one undo group, after
-muse_settings.assess (a risky outcome shows a confirm card first).
-
-custom_id grammar ("mdset:3:" + colon-separated parts, <= 100 chars):
-
-    place := x (everywhere) | d (DMs) | s<gid> | c<gid>.<cid>
-    k     := a short code (CORE_CODES) | ~media.<key>
-
-    pg:<place>:<page>        page: h home (admins: their panel), y why,
-                             e edit (basic), d edit (more settings)
-    wh:<place>               Where select: a place token (here, its
-                             server, everywhere)
-    set:<place>:<k>          a setting's select: r ln med df pp (see
-                             PLACE_CONTROLS; "=" follows the server);
-                             on an edit page the pick is staged, and
-                             the detail codes (see EDIT_CODES) count
-    pre:<place>              style select (a server): apply a preset
-                             (staged instead while a draft is open)
-    val:<place>:<k>:<v>      a button with an absolute value ("=": what
-                             the place would follow without its own)
-    ed:<place>               owner: open the edit pages (starts a draft)
-    sv:<place> | cx:<place>  owner: save the draft as one change /
-                             throw the draft away
-    tg:<place>:<k>:<v>       owner, edit pages: stage an absolute value
-                             ("=" stages "inherit", "everyone" a
-                             people value)
-    pk:<place>:<k>           owner, edit pages: a people picker staging
-                             who.allow / who.ignore / abilities.reminders
-    mod:<place>:n            owner, edit pages: the style-notes form
-                             (sub:<place>:n stages what it submits)
-    ppl:<place>:ig           admins: add to the ignore list
-    rm:<place>:ig            admins: take their additions off it
-    pz:<place> | rs:<place>  pause / resume
-    un:<place>:<grp>         undo the newest group there (+ channels),
-                             if it is still <grp>
-    ok:<place>:<tok>         apply what a confirm card stashed
-    fx:<place>:<k>:<op>      a "Why no reply?" fix: = | v<value>
-                             | -<id> | +<id>
-    wy:d[:<id>]              DMs: check one person (mod:d:wy opens the
-                             by-ID form, sub:d:wy is its submit)
-
-Nothing in a custom_id is trusted: who may do what, and where, is
-checked again on every interaction (server admins through
-muse_settings' admin rule), and a stash token is bound to the user it
-was made for. Ids from older designs ("mdset:2:..." and before) answer
-"out of date" and change nothing, except mdset:open:server:<gid> (the
-join DM's Configure button), which still opens that server.
+One private screen: choose a place, a category and a setting. Every edit
+waits in the same draft until Save. The settings engine still owns validation,
+inheritance, permissions, risk assessment and undo. Sessions are user-bound
+and expire after 15 minutes; restarting never resurrects a pending change.
 """
+
+import asyncio
+import json
 import re
-import time
-import traceback
-from datetime import datetime, timezone
-from typing import Protocol
+import secrets
+from dataclasses import dataclass, field
+
+import discord
+from discord import ui
 
 from muse_discord import muse_settings as ms
 
-PREFIX = "mdset"
-VERSION = "3"
-COMMAND = "settings"
-# The message context command; Discord may refuse "?" in its name, in
-# which case the monitor registers the second.
-WHY_COMMANDS = ("Why no reply?", "Why no reply")
-EPHEMERAL = 1 << 6
-COMPONENTS_V2 = 1 << 15
-NEW_FLAGS = EPHEMERAL | COMPONENTS_V2
-MANAGE_GUILD = 1 << 5
-ADMINISTRATOR = 1 << 3
-CUSTOM_ID_MAX = 100
-MAX_COMPONENTS = 40
-TEXT_BUDGET = 3600
-STASH_TTL = 900
-BLURPLE, GREY, AMBER, RED = 0x5865F2, 0x80848E, 0xF0B232, 0xED4245
-WHY_ENTRIES = 5
-# Whether a user select in the bot's DM searches people the DM does not
-# include (verify on real clients; see e2e/README.md). While False, the
-# DMs Why page in a DM offers Check by ID instead.
-DM_USER_SELECT_SEARCHES = False
-THREAD_TYPES = (10, 11, 12)
-CATEGORY = 4
-
-# Component types and button styles.
-ROW, BUTTON, STRING_SELECT, TEXT_INPUT = 1, 2, 3, 4
-USER_SELECT, MENTIONABLE_SELECT = 5, 7
-SECTION, TEXT, SEPARATOR, CONTAINER, LABEL = 9, 10, 14, 17, 18
-PRIMARY, SECONDARY, SUCCESS, DANGER = 1, 2, 3, 4
-
-REFUSAL_SERVER = ("Sorry, only the bot's owners can change its settings. "
-                  "Server admins (Manage Server) can make it quieter here.")
-REFUSAL_DM = ("Sorry, only the bot's owners can use /settings in DMs. "
-              "Server admins: run it in your server.")
-REFUSAL_WHY = ("Sorry, only the bot's owners and this server's admins can "
-               "see why the bot didn't reply.")
-OUT_OF_DATE = ("This settings page is out of date. Run /settings for a "
-               "fresh one. Nothing was changed.")
-NOT_THERE = ("I'm not in that server any more, so there is nothing to set "
-             "there. Nothing was changed.")
-EXPIRED = "This confirmation expired, so nothing was changed."
-WRONG_USER = ("That button was made for someone else, so nothing was "
-              "changed.")
-APOLOGY = ("Sorry, something went wrong with /settings. Nothing was "
-           "changed by this click; try again in a moment.")
-ADMIN_ONLY_QUIETER = ("Server admins can make the bot quieter here, never "
-                      "louder. Ask one of the bot's owners for that.")
-OVERLAY_BROKEN = ("⚠ I can't read config.discord.yaml, so changes from "
-                  "Discord are paused. Ask your Muse to fix that file.")
-ROLES_ELSEWHERE = ("Roles only count in their own server, so the roles "
-                   "you picked were left out.")
-FIXED_NOTE = "-# Fixed. {who} must send again; refused messages stay " \
-             "unanswered."
-FOOTER_SERVER = "-# Detailed settings are under “Edit settings” or in config.yaml."
-FOOTER_DM = FOOTER_SERVER
-
-
-
-class Ctx(Protocol):
-    """What the monitor provides (monitor.SettingsCtx)."""
-    settings: "ms.Settings"   # current, already reloaded
-    owners: set
-    bot_id: str
-    now: float
-
-    def guilds(self) -> list: ...
-    # [{"id", "name", "member_count", "system_channel_id"}]
-    def channels(self, guild_id) -> list: ...
-    # [{"id", "name", "type", "parent_id", "readable", "can_send"}]
-    def apply(self, changes, by, role, group=None, admin_gid=None): ...
-    def undo(self, prefix, by, **kw): ...    # children, admin_gid, expect
-    def reload(self) -> "ms.Settings": ...
-    def names(self, some_id) -> str: ...      # servers and channels
-    def display_name(self, user_id) -> str: ...
-    def recent_outcomes(self, place, limit) -> list: ...
-    def outcome(self, message_id) -> dict: ...
-    def stash_put(self, user_id, payload, ttl=STASH_TTL) -> str: ...
-    def stash_take(self, user_id, token): ...  # None: gone; raises
-    #                                           PermissionError: not yours
-    def session_peek(self, user_id, key): ...  # the edit draft or None
-    def session_put(self, user_id, key, payload, ttl=STASH_TTL): ...
-    def session_drop(self, user_id, key): ...
-    def notify_owners_admin_change(self, guild_id, user_id, key, old,
-                                   new) -> None: ...
-    def log(self, msg: str) -> None: ...
-
-
-# ---------------------------------------------------------------------------
-# Keys and places in custom ids
-# ---------------------------------------------------------------------------
-CORE_CODES = {
-    "who.replies": "r", "who.dms_from": "df", "who.allow": "al",
-    "who.ignore": "ig", "who.bots": "b", "who.bot_exchange_limit": "bx",
-    "style.length": "ln", "style.notes": "n",
-    "abilities.external_apps": "ea", "abilities.owner_commands": "oc", "abilities.reminders": "rw",
-    "privacy.memory": "m",
-    "privacy.suspicious": "su", "limits.per_day": "pd",
-    "limits.per_person_per_day": "pp", "presence.status": "ps",
-    "presence.kind": "pk", "updates.notify": "un",
-    "proactive.enabled": "pe", "proactive.frequency": "pf",
-    "media.per_day": "mp",
+TTL = 900
+PREFIX = "mset:"
+CATEGORIES = {
+    "reply": (
+        "返信・話し方",
+        (
+            "who.replies",
+            "style.length",
+            "style.notes",
+            "limits.per_day",
+            "limits.per_person_per_day",
+        ),
+    ),
+    "people": (
+        "利用者・権限",
+        (
+            "who.dms_from",
+            "who.allow",
+            "who.ignore",
+            "who.bots",
+            "who.bot_exchange_limit",
+            "abilities.reminders",
+            "abilities.owner_commands",
+            "abilities.external_apps",
+        ),
+    ),
+    "proactive": (
+        "自発的な発言",
+        tuple(k for k in ms.CORE if k.startswith("proactive.")),
+    ),
+    "media": ("画像・動画", tuple(k for k in ms.CORE if k.startswith("media."))),
+    "privacy": (
+        "プライバシー",
+        ("privacy.memory", "privacy.suspicious", "memory.save_dms"),
+    ),
+    "other": (
+        "その他",
+        ("presence.status", "presence.kind", "updates.notify", "telemetry.usage_stats"),
+    ),
 }
-CODE_KEYS = {v: k for k, v in CORE_CODES.items()}
-_MEDIA_CODE = re.compile(r"~media\.([A-Za-z0-9_\-]{1,40})")
-_PLACE = re.compile(r"x|d|s(\d{1,25})|c(\d{1,25})\.(\d{1,25})")
-_ID = re.compile(r"\d{1,25}")
-_PART = re.compile(r"[^:]{1,100}")
-PAGES = ("h", "y", "e", "d", "f", "p")
-
-
-def kcode(key):
-    if key in CORE_CODES:
-        return CORE_CODES[key]
-    if key.startswith("media."):
-        return "~" + key  # the media plugin's code: ids stay valid
-    return None
-
-
-def kdecode(code):
-    if code in CODE_KEYS:
-        return CODE_KEYS[code]
-    if _MEDIA_CODE.fullmatch(code or ""):
-        key = code[1:]
-        return key if key in ms.CORE else None
-    return None
-
-
-class BadId(ValueError):
-    pass
-
-
-def cid(*parts):
-    parts = [str(p) for p in parts]
-    s = ":".join([PREFIX, VERSION] + parts)
-    if len(s) > CUSTOM_ID_MAX or any(not _PART.fullmatch(p)
-                                     for p in parts):
-        raise BadId(s)
-    return s
-
-
-def ptok(place):
-    if place.kind == "defaults":
-        return "x"
-    if place.kind == "dms":
-        return "d"
-    if place.kind == "server":
-        return f"s{place.guild_id}"
-    return f"c{place.guild_id}.{place.channel_id}"
-
-
-# ---------------------------------------------------------------------------
-# Components
-# ---------------------------------------------------------------------------
-clip = ms.clip
-
-
-_MD = re.compile(r"([\\*_~|>#\[\]()`])")
-# Bidi controls (embeddings, overrides, isolates): a name could reorder
-# the words around it on the page.
-_BIDI = re.compile("[\u202a-\u202e\u2066-\u2069]")
-_SCHEME = re.compile(r"(?i)\b([a-z][a-z0-9+.\-]{0,30}):(?=//)")
-_UNMD = re.compile(r"\\([\\*_~|>#\[\]()`])")
-ZWSP = "​"
-
-
-def esc(text):
-    """A name (a server's, a channel's, a person's: anyone can choose
-    them) made safe to put in a Text Display: markdown escaped, mentions
-    and @everyone / @here neutralised, on one line. Labels and options
-    are plain text in Discord; plain() undoes this for them."""
-    t = _BIDI.sub("", " ".join(str(text).split()))
-    t = _MD.sub(r"\\\1", t)
-    t = re.sub(r"<(?=[@#])", "<" + ZWSP, t)
-    # "https://" becomes "https:<ZWSP>//": a URL in a name never links.
-    t = _SCHEME.sub(r"\1:" + ZWSP, t)
-    return re.sub(r"@(?=(everyone|here)\b)", "@" + ZWSP, t)
-
-
-def plain(text):
-    """esc() undone, for text Discord shows as is (labels, options,
-    placeholders, modal titles)."""
-    t = _UNMD.sub(r"\1", str(text)).replace(ZWSP, "")
-    return t[:-2] + "…" if t.endswith("\\…") else t
-
-
-def td(text):
-    return {"type": TEXT, "content": clip(text, 3900)}
-
-
-def sep(divider=True):
-    return {"type": SEPARATOR, "divider": divider, "spacing": 1}
-
-
-def btn(label, custom_id, style=SECONDARY, disabled=False):
-    b = {"type": BUTTON, "style": style, "label": clip(label, 80),
-         "custom_id": custom_id}
-    if disabled:
-        b["disabled"] = True
-    return b
-
-
-def section(text, accessory):
-    return {"type": SECTION, "components": [td(text)],
-            "accessory": accessory}
-
-
-def row(*components):
-    return {"type": ROW, "components": [c for c in components if c]}
-
-
-def container(children, colour=None):
-    c = {"type": CONTAINER, "components": [x for x in children if x]}
-    if colour is not None:
-        c["accent_color"] = colour
-    return c
-
-
-def opt(label, value, description=None, default=False):
-    o = {"label": clip(label, 100), "value": clip(value, 100)}
-    if description:
-        o["description"] = clip(description, 100)
-    if default:
-        o["default"] = True
-    return o
-
-
-def sel(custom_id, options, placeholder, min_values=1, max_values=1):
-    return {"type": STRING_SELECT, "custom_id": custom_id,
-            "options": options[:25], "placeholder": clip(placeholder, 150),
-            "min_values": min_values, "max_values": max_values}
-
-
-def picker(kind, custom_id, placeholder, min_values=0, max_values=25):
-    return {"type": kind, "custom_id": custom_id,
-            "placeholder": clip(placeholder, 150),
-            "min_values": min_values, "max_values": max_values}
-
-
-def message(R, comps):
-    data = {"flags": COMPONENTS_V2 | (EPHEMERAL if R.new else 0),
-            "components": finish_text(comps),
-            "allowed_mentions": {"parse": []}}
-    return {"type": 4 if R.new else 7, "data": data}
-
-
-LIMITS = {"label": 80, "placeholder": 150}
-
-
-def _all(comps):
-    for c in comps or []:
-        if isinstance(c, dict):
-            yield c
-            yield from _all(c.get("components"))
-            for k in ("accessory", "component"):
-                if isinstance(c.get(k), dict):
-                    yield from _all([c[k]])
-
-
-def text_size(comps):
-    n = 0
-    for c in _all(comps):
-        for k in ("content", "label", "placeholder", "description"):
-            if isinstance(c.get(k), str):
-                n += len(c[k])
-        for o in c.get("options") or []:
-            n += len(o.get("label", "")) + len(o.get("description", ""))
-    return n
-
-
-def finish_text(comps):
-    """Labels, options and placeholders as plain text (names unescaped),
-    then the page within TEXT_BUDGET: option descriptions dropped, then
-    long texts clipped."""
-    for c in _all(comps):
-        for k, n in LIMITS.items():
-            if isinstance(c.get(k), str):
-                c[k] = clip(plain(c[k]), n)
-        if c.get("type") == LABEL and isinstance(c.get("description"), str):
-            c["description"] = clip(plain(c["description"]), 100)
-        for o in c.get("options") or []:
-            o["label"] = clip(plain(o["label"]), 100)
-            if "description" in o:
-                o["description"] = clip(plain(o["description"]), 100)
-    for c in sorted((c for c in _all(comps) if c.get("options")),
-                    key=lambda c: -len(c["options"])):
-        if text_size(comps) <= TEXT_BUDGET:
-            return comps
-        for o in c["options"]:
-            o.pop("description", None)
-    while text_size(comps) > TEXT_BUDGET:
-        tds = [c for c in _all(comps) if c.get("type") == TEXT]
-        big = max(tds, key=lambda c: len(c["content"]), default=None)
-        if big is None or len(big["content"]) < 80:
-            break
-        over = text_size(comps) - TEXT_BUDGET
-        big["content"] = clip(big["content"],
-                              max(60, len(big["content"]) - over - 1))
-    return comps
-
-
-def card(text, colour=None, extra=()):
-    return [container([td(text)] + list(extra), colour)]
-
-
-def notice(text):
-    """A new ephemeral message; the page it came from stays as it was."""
-    return {"type": 4, "data": {"flags": NEW_FLAGS,
-                                "components": card(text),
-                                "allowed_mentions": {"parse": []}}}
-
-
-def modal(custom_id, title, components):
-    comps = finish_text(components[:5])
-    for c in comps:
-        if c.get("type") == LABEL:
-            c["label"] = clip(plain(c["label"]), 45)
-    return {"type": 9, "data": {"custom_id": custom_id,
-                                "title": clip(plain(title), 45),
-                                "components": comps}}
-
-
-def labelled(text, component, description=None):
-    c = {"type": LABEL, "label": clip(text, 45), "component": component}
-    if description:
-        c["description"] = clip(description, 100)
-    return c
-
-
-def text_input(custom_id, style, max_length, value=None, placeholder=None,
-               required=False):
-    t = {"type": TEXT_INPUT, "custom_id": custom_id, "style": style,
-         "max_length": max_length, "required": required}
-    if value:
-        t["value"] = str(value)[:max_length]
-    if placeholder:
-        t["placeholder"] = clip(placeholder, 100)
-    return t
-
-
-def count_components(comps):
-    n = 0
-    for c in comps or []:
-        if not isinstance(c, dict):
-            continue
-        n += 1
-        n += count_components(c.get("components"))
-        if isinstance(c.get("accessory"), dict):
-            n += 1
-        if isinstance(c.get("component"), dict):
-            n += count_components([c["component"]])
-    return n
-
-
-# ---------------------------------------------------------------------------
-# Who and where
-# ---------------------------------------------------------------------------
-def identify(ix, ctx):
-    """(user id, "owner" | "admin" | None, the admin's server id)."""
-    user = (ix.get("member") or {}).get("user") or ix.get("user") or {}
-    uid = str(user.get("id") or "")
-    if uid and uid in {str(o) for o in ctx.owners}:
-        return uid, "owner", None
-    gid = ix.get("guild_id")
-    member = ix.get("member")
-    if uid and gid and isinstance(member, dict):
-        try:
-            perms = int(member.get("permissions") or 0)
-        except (TypeError, ValueError):
-            perms = 0
-        if perms & (MANAGE_GUILD | ADMINISTRATOR):
-            return uid, "admin", str(gid)
-    return uid, None, None
-
-
-def _harvest_names(ix):
-    """Names the interaction itself carries (the clicking user, resolved
-    users and members, a context command's message author)."""
-    out = {}
-    people = set()
-
-    def user(u, member=None):
-        if not isinstance(u, dict) or not u.get("id"):
-            return
-        n = ((member or {}).get("nick") or u.get("global_name")
-             or u.get("username"))
-        if n:
-            out[str(u["id"])] = str(n)
-            people.add(str(u["id"]))
-    m = ix.get("member") or {}
-    user(m.get("user"), m)
-    user(ix.get("user"))
-    res = (ix.get("data") or {}).get("resolved") or {}
-    members = res.get("members") or {}
-    for uid, u in (res.get("users") or {}).items():
-        user(dict(u, id=uid), members.get(uid))
-    for rid, r in (res.get("roles") or {}).items():
-        if isinstance(r, dict) and r.get("name"):
-            out[str(rid)] = "@" + str(r["name"])
-            people.add(str(rid))
-    for msg in (res.get("messages") or {}).values():
-        if isinstance(msg, dict):
-            user(msg.get("author"), msg.get("member"))
-    for chid, ch in (res.get("channels") or {}).items():
-        if isinstance(ch, dict) and ch.get("name"):
-            out[str(chid)] = str(ch["name"])
-    return out, people
-
-
-class Req:
-    """One interaction being answered."""
-
-    def __init__(self, ix, ctx):
-        self.ix, self.ctx = ix, ctx
-        self.st = ctx.settings
-        self.uid, self.role, self.admin_gid = identify(ix, ctx)
-        self.guild_id = str(ix.get("guild_id") or "") or None
-        self.data = ix.get("data") or {}
-        self.new = False
-        self.banner = None
-        self.extra_names, self.extra_users = _harvest_names(ix)
-        self.inf = ms._Info(ctx)
-        self._chans = {}
-        self.fixed = None       # whose refusal a Why fix just fixed
-        self.check = None       # DMs: the person checked
-        self.thread_note = False
-
-    @property
-    def owner(self):
-        return self.role == "owner"
-
-    @property
-    def admin(self):
-        return self.role == "admin"
-
-    @property
-    def now(self):
-        try:
-            return float(self.ctx.now)
-        except (TypeError, ValueError, AttributeError):
-            return time.time()
-
-    def reload(self):
-        fn = getattr(self.ctx, "reload", None)
-        try:
-            self.st = fn() if callable(fn) else ms.load(self.st.path)
-        except Exception as e:  # keep showing the old values; it was saved
-            self.ctx.log(f"settings_ui: reload after a write failed: {e}")
-
-    # -- the directory ------------------------------------------------------
-    def guilds(self):
-        return self.inf.guilds()
-
-    def channels(self, gid):
-        gid = str(gid)
-        if gid not in self._chans:
-            self._chans[gid] = {str(c["id"]): c
-                                for c in self.inf.channels(gid) or []}
-        return self._chans[gid]
-
-    def chan(self, gid, cid_):
-        return self.channels(gid).get(str(cid_))
-
-    def category_of(self, gid, cid_):
-        return self.inf.category_of(gid, cid_)
-
-    def members(self, gid):
-        return self.inf.members(gid)
-
-    def can_see(self, gid, cid_):
-        """False when the bot cannot read the channel."""
-        ch = self.channels(gid).get(str(cid_))
-        return ch is None or ch.get("readable") is not False
-
-    def look(self, some_id):
-        """A name for a server, channel, role or person (None: unknown),
-        escaped for a Text Display (see esc)."""
-        n = self._look(some_id)
-        return esc(n) if n else None
-
-    def _look(self, some_id):
-        i = str(some_id)
-        if i in self.extra_names:
-            return self.extra_names[i]
-        g = self.guilds().get(i)
-        if g and g.get("name"):
-            return str(g["name"])
-        for chans in self._chans.values():
-            if i in chans and chans[i].get("name"):
-                return str(chans[i]["name"])
-        for name in ("names", "display_name"):
-            fn = getattr(self.ctx, name, None)
-            if callable(fn):
-                try:
-                    n = fn(i)
-                except Exception:
-                    n = None
-                if n:
-                    return str(n)
-        return (self.st.labels or {}).get(i)
-
-    def person(self, uid):
-        """A person's (or role's) name, escaped, or None: only from the
-        interaction's resolved data and the people the monitor has seen,
-        never a server's or channel's name for a forged id."""
-        i = str(uid)
-        n = self.extra_names.get(i) if i in self.extra_users else None
-        if not n:
-            fn = getattr(self.ctx, "display_name", None)
-            try:
-                n = fn(i) if callable(fn) else None
-            except Exception:
-                n = None
-        if n and str(n).startswith("@"):
-            n = str(n)[1:]
-        return esc(n) if n else None
-
-    def typed(self):
-        """(channel id, in a thread?) where the interaction happened, a
-        thread counting as its parent; (None, False) outside a server."""
-        if not self.guild_id:
-            return None, False
-        ch = self.ix.get("channel") or {}
-        c = str(self.ix.get("channel_id") or ch.get("id") or "")
-        if not _ID.fullmatch(c):
-            return None, False
-        if ch.get("type") in THREAD_TYPES and ch.get("parent_id"):
-            return str(ch["parent_id"]), True
-        return c, False
-
-    def here(self):
-        """The place the interaction happened: its channel (a thread
-        counting as its parent), else its server, else DMs."""
-        if not self.guild_id:
-            return ms.Place.dms()
-        here, _thread = self.typed()
-        if not here or (self.chan(self.guild_id, here) or {}).get(
-                "type") == CATEGORY:
-            return ms.Place.server(self.guild_id)
-        return ms.Place.channel(self.guild_id, here,
-                                self.category_of(self.guild_id, here))
-
-    def in_guild(self, gid):
-        return self.guild_id is not None and self.guild_id == str(gid)
-
-    def place(self, tok):
-        """The Place a token names, or None (malformed, a category)."""
-        m = _PLACE.fullmatch(tok or "")
-        if not m:
-            return None
-        if tok == "x":
-            return ms.Place.defaults()
-        if tok == "d":
-            return ms.Place.dms()
-        if m[1]:
-            return ms.Place.server(m[1])
-        gid, c = m[2], m[3]
-        if (self.chan(gid, c) or {}).get("type") == CATEGORY:
-            return None
-        return ms.Place.channel(gid, c, self.category_of(gid, c))
-
-    def name(self, place):
-        if place.kind == "defaults":
-            return "everywhere"
-        return ms.place_name(place, self.look)
-
-    def gname(self, gid):
-        return self.look(gid) or "this server"
-
-
-# ---------------------------------------------------------------------------
-# Values at a place
-# ---------------------------------------------------------------------------
-class Val:
-    """One setting at one place: path, set here?, value here, source,
-    value in force, value without this layer."""
-
-    def __init__(self, R, place, key):
-        st = R.st
-        self.key = key
-        self.place = place
-        self.spec = st.spec(key)
-        self.path = ms.place_path(st, place, key)
-        self.set, self.here, self.src = st.layer(self.path, key)
-        self.value = ms.place_value(st, place, key)
-        self.inherited = st.value_without(
-            ms._scope_for(place, key, self.path), key, self.path)
-
-
-def value(R, place, key):
-    return ms.place_value(R.st, place, key)
-
-
-def short_date(at):
-    try:
-        d = datetime.strptime(str(at), "%Y-%m-%dT%H:%M:%SZ")
-        return f"{d:%b} {d.day}"
-    except ValueError:
-        return "earlier"
-
-
-def ago(R, when):
-    """"4 min ago", "3 h ago", "Oct 19" for a unix time or ISO stamp."""
-    if isinstance(when, str):
-        try:
-            when = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ").replace(
-                tzinfo=timezone.utc).timestamp()
-        except ValueError:
-            return "earlier"
-    try:
-        secs = max(0, R.now - float(when))
-    except (TypeError, ValueError):
-        return "earlier"
-    if secs < 60:
-        return f"{int(secs)} s ago"
-    if secs < 3600:
-        return f"{int(secs // 60)} min ago"
-    if secs < 86400:
-        return f"{int(secs // 3600)} h ago"
-    d = datetime.fromtimestamp(float(when), timezone.utc)
-    return f"{d:%b} {d.day}"
-
-
-def snowflake_time(mid):
-    try:
-        return ((int(mid) >> 22) + 1420070400000) / 1000.0
-    except (TypeError, ValueError):
-        return None
-
-
-def who_text(R, by):
-    """"you", a mention, or a name such as muse.ai."""
-    by = str(by or "")
-    if by and by == R.uid:
-        return "you"
-    if _ID.fullmatch(by):
-        return f"<@{by}>"
-    return esc(by) if by else "someone"
-
-
-# ---------------------------------------------------------------------------
-# How the bot behaves at a place, in plain words
-# ---------------------------------------------------------------------------
-REPLIES_WORDS = {"conversational": "I chat freely",
-                 "when-addressed": "I reply only when @mentioned",
-                 "off": "I'm off"}
-LENGTH_WORDS = {"brief": "short replies", "detailed": "detailed replies"}
-MEMORY_WORDS = {"everything": "may bring up anything I remember about "
-                               "people",
-                "public-only": "shares only public facts about people",
-                "nothing": "keeps personal things out of it"}
-DM_WORDS = {"owners": "Only you can DM me",
-            "shared-servers": "Anyone in your servers can DM me",
-            "anyone": "Anyone can DM me", "nobody": "Nobody can DM me"}
-
-
-def paused_at(R, place):
-    """The place whose pause keeps the bot quiet at place (place itself,
-    its server, or "everywhere"), or None."""
-    st = R.st
-    servers_off = st.layer(("all_servers",), "who.replies")[:2] == (
-        True, "off")
-    if place.kind == "dms":
-        if ms.is_paused(st, ms.Place.defaults()):
-            return ms.Place.defaults()
-        return place if ms.is_paused(st, place) else None
-    if place.kind == "defaults":
-        return place if servers_off else None
-    if place.kind == "channel" and ms.is_paused(st, place):
-        return place
-    server = ms.Place.server(place.guild_id)
-    if ms.is_paused(st, server):
-        return server
-    return ms.Place.defaults() if servers_off else None
-
-
-def pause_words(R, place, at):
-    """"I'm paused here (you, Oct 19)." and the like."""
-    v = Val(R, at, "who.replies") if at.kind != "defaults" else None
-    who = ""
-    if v is not None and v.src and v.src[0] == "discord":
-        who = f" ({who_text(R, v.src[1])}, {short_date(v.src[2])})"
-    if at.kind == "defaults":
-        where = "everywhere"
-    elif at == place:
-        where = "here"
-    else:
-        where = f"in all of {R.gname(at.guild_id)}"
-    return f"**I'm paused {where}**{who}. I won't reply to anyone"
-
-
-def status_text(R, place):
-    """The page's head: what the bot does at place, in one line."""
-    if place.kind == "dms":
-        access = ms.dm_access(R.st)
-        if access == "list":
-            n = len([p for p in value(R, place, "who.dms_from") or []
-                     if p not in R.ctx.owners])
-            first = (f"You and {n} {'person' if n == 1 else 'people'} you "
-                     f"picked can DM me")
-        else:
-            first = DM_WORDS.get(access, "Only you can DM me")
-    else:
-        rep = value(R, place, "who.replies")
-        first = REPLIES_WORDS.get(rep, "I chat freely")
-        if place.kind == "defaults":
-            first += " in servers"
-    at = paused_at(R, place)
-    if at is not None:
-        return pause_words(R, place, at) + "."
-    parts = [f"**{first}**"]
-    if place.kind == "defaults":
-        dm = DM_WORDS.get(ms.dm_access(R.st)) \
-            or "You and people you picked can DM me"
-        parts.append(dm[0].lower() + dm[1:])
-    ln = LENGTH_WORDS.get(value(R, place, "style.length"))
-    if ln:
-        parts.append(ln)
-    parts.append(MEMORY_WORDS.get(value(R, place, "privacy.memory"),
-                                  MEMORY_WORDS["public-only"]))
-    if value(R, place, "media.enabled"):
-        parts.append(media_words(R, place))
-    cap = value(R, place, "limits.per_person_per_day")
-    if isinstance(cap, int):
-        parts.append(f"up to {cap:,} replies a person a day")
-    return " · ".join(parts)
-
-
-def media_words(R, place):
-    sp = place if place.kind != "channel" \
-        else ms.Place.server(place.guild_id)
-    who = value(R, sp, "media.who")
-    if who == "everyone":
-        return "images & video for everyone"
-    if isinstance(who, list) and [p for p in who if p not in R.ctx.owners]:
-        return "images & video for you and people you picked"
-    return "images & video for you"
-
-
-# ---------------------------------------------------------------------------
-# Changes in plain words
-# ---------------------------------------------------------------------------
-UI_LABELS = {
-    "who.replies": "Replies", "who.ignore": "Ignore list",
-    "who.allow": "Only answers", "who.bots": "Other bots",
-    "who.bot_exchange_limit": "Replies in a row to other bots",
-    "who.dms_from": "Who can DM me", "style.length": "Reply length",
-    "style.notes": "Instructions", "privacy.memory": "What I may share",
-    "privacy.suspicious": "Suspicious messages",
-    "limits.per_day": "Replies a day",
-    "limits.per_person_per_day": "Replies a person a day",
-    "media.enabled": "Images & video",
-    "media.who": "Who can ask for images & video",
-    "media.per_day": "Images & video a day",
+TITLES = {
+    "who.replies": "返信するタイミング",
+    "style.length": "返信の長さ",
+    "style.notes": "話し方の指示",
+    "limits.per_day": "1日の返信上限",
+    "limits.per_person_per_day": "1人あたりの1日の返信上限",
+    "who.dms_from": "DMを許可する相手",
+    "who.allow": "返信を許可する相手",
+    "who.ignore": "無視する相手",
+    "who.bots": "他のBotへの返信",
+    "who.bot_exchange_limit": "Botとの連続返信上限",
+    "abilities.reminders": "リマインダー・監視を使える相手",
+    "abilities.owner_commands": "所有者からの操作依頼",
+    "abilities.external_apps": "外部アプリへのアクセス",
+    "privacy.memory": "会話で使える個人情報",
+    "privacy.suspicious": "攻撃が疑われるメッセージ",
+    "memory.save_dms": "DMの内容を記憶に保存",
+    "media.enabled": "画像・動画の生成",
+    "media.who": "生成を依頼できる相手",
+    "media.per_day": "1日の生成上限",
+    "proactive.enabled": "自発的な発言を許可",
+    "proactive.frequency": "自発的に話しかける頻度",
+    "proactive.per_person_per_day": "1人あたりの1日上限",
+    "proactive.per_person_per_week": "1人あたりの1週間上限",
+    "proactive.per_channel_per_day": "1チャンネルあたりの1日上限",
+    "proactive.quiet_hours": "自発的な発言を控える時間帯",
+    "proactive.timezone": "タイムゾーン",
+    "presence.status": "ステータスの文章",
+    "presence.kind": "ステータスの種類",
+    "updates.notify": "更新のお知らせ",
+    "telemetry.usage_stats": "匿名の利用統計",
 }
-UI_VALUES = {("who.replies", "conversational"): "chat freely",
-             ("who.replies", "when-addressed"): "only when @mentioned",
-             ("who.replies", "off"): "off"}
-
-
-def ui_label(key):
-    return UI_LABELS.get(key) or ms.label(key)
-
-
-def ui_value(R, key, v):
-    if isinstance(v, str) and (key, v) in UI_VALUES:
-        return UI_VALUES[(key, v)]
-    return ms.value_label(key, v, R.look)
-
-
-def ui_where(R, place, path=None):
-    if place.kind == "defaults":
-        if path == ("dms",):
-            return "In DMs"
-        if path == ("all_servers",):
-            return "In every server"
-        return "Everywhere"
-    if place.kind == "server":
-        return f"In all of {R.name(place)}"
-    return f"In {R.name(place)}"
-
-
-def say_change(R, place, key, old, new, path=None):
-    """"In #general, Replies: chat freely → off"."""
-    return (f"{ui_where(R, place, path)}, {ui_label(key)}: "
-            f"{ui_value(R, key, old)} → {ui_value(R, key, new)}")
-
-
-def say_undo(R, plan):
-    """What an Undo of plan would make, as "In #general, Replies back to
-    chat freely"."""
-    return "; ".join(f"{ui_where(R, ch.place, ch.path)}, {ui_label(ch.key)} "
-                     f"back to {ui_value(R, ch.key, new)}"
-                     for ch, new in ms.undo_results(R.st, plan))
-
-
-# ---------------------------------------------------------------------------
-# Banner and last-change slot
-# ---------------------------------------------------------------------------
-def banner_done(R, text, undo_place=None, group=None):
-    text = clip(f"✓ **Done.** {text}", 1500)
-    if undo_place is not None and group:
-        try:
-            return [section(text, btn("Undo", cid("un", ptok(undo_place),
-                                                  group)))]
-        except BadId:   # no Undo without its group (the stale check)
-            pass
-    return [td(text)]
-
-
-def banner_error(text):
-    return [td(clip(f"**Not saved:** {text}", 1500))]
-
-
-def undo_scope(R, place):
-    """(place an Undo works on, include channels?, admin's server): a
-    channel's page undoes its server's newest change (the server's or
-    any channel's), since its style applies to the whole server."""
-    if R.admin:
-        return ms.Place.server(R.admin_gid), True, R.admin_gid
-    if place.kind == "channel":
-        return ms.Place.server(place.guild_id), True, None
-    return place, place.kind == "server", None
-
-
-def last_author(R, plan):
-    """(who, when) of the change an Undo would revert."""
-    if not plan:
-        return None, None
-    ks = ms.format_key(ms.change_path(R.st, plan[0]), plan[0].key)
-    for h in reversed((R.st.overlay_doc or {}).get("history") or []):
-        if isinstance(h, dict) and h.get("key") == ks and "to" in h \
-                and not h.get("undone"):
-            return h.get("by"), h.get("at")
-    return None, None
-
-
-def changed_names(plan):
-    """"Replies", "Replies and Reply length", "Replies, … and 2 more":
-    what a group changed, by name only."""
-    names = list(dict.fromkeys(ui_label(ch.key) for ch in plan))
-    if len(names) > 2:
-        return f"{names[0]}, {names[1]} and {len(names) - 2} more"
-    return " and ".join(names)
-
-
-def last_change_slot(R, place):
-    """SEC "-# Last change: Replies · you, 4 min ago" [Undo], or []:
-    which settings the newest change touched, not its values."""
-    if R.banner or R.st.overlay_error or R.role is None:
-        return []
-    up, children, admin_gid = undo_scope(R, place)
-    try:
-        _text, gid = ms.undo_preview(R.st, up, include_children=children,
-                                     names=R.look, admin_gid=admin_gid)
-        if not gid:
-            return []
-        plan = ms.undo_plan(R.st, up, children, admin_gid)
-    except Exception as e:
-        R.ctx.log(f"settings_ui: last change: {e}")
-        return []
-    by, at = last_author(R, plan)
-    when = f" · {who_text(R, by)}, {ago(R, at)}" if by else ""
-    head = "Last change by admins" if R.admin else "Last change"
-    text = clip(f"-# {head}: {changed_names(plan)}{when}", 300)
-    try:
-        b = btn("Undo", cid("un", ptok(up), gid))
-    except BadId:   # no Undo without its group (the stale check)
-        return [td(text)]
-    return [section(text, b)]
-
-
-WRITE_VERBS = ("set", "pre", "val", "ppl", "rm", "un", "pz", "rs", "fx", "ok")
-
-
-def _verb(c):
-    parts = str(c.get("custom_id") or "").split(":")
-    return parts[2] if len(parts) > 2 and parts[0] == PREFIX else None
-
-
-def read_only(comps):
-    """The overlay can't be read: write controls removed, a warning on
-    top (reading stays)."""
-    out = [td(OVERLAY_BROKEN)]
-    for c in comps:
-        out.append(_strip(c))
-    return [c for c in out if c]
-
-
-def _strip(c):
-    t = c.get("type")
-    if t == SECTION:
-        if _verb(c.get("accessory") or {}) in WRITE_VERBS:
-            return c["components"][0]
-        return c
-    if t == ROW:
-        kept = [x for x in c["components"] if _verb(x) not in WRITE_VERBS]
-        return dict(c, components=kept) if kept else None
-    if t == CONTAINER:
-        kept = [x for x in (_strip(y) for y in c["components"]) if x]
-        return dict(c, components=kept)
-    return c
-
-
-def finish(R, comps):
-    comps = list(R.banner or []) + list(comps)
-    if R.st.overlay_error:
-        comps = read_only(comps)
-    return comps
-
-
-# ---------------------------------------------------------------------------
-# The owner's page
-# ---------------------------------------------------------------------------
-PRESET_HELP = {
-    "friends": "Chats freely, no daily caps, may use what it remembers, "
-               "reaches out now and then",
-    "community": "Only when @mentioned, public facts only, 20 replies a "
-                 "person a day",
-    "work": "Only when @mentioned, nothing personal, ignores other bots",
+WORDS = {
+    "off": "無効",
+    "when-addressed": "呼びかけられたとき",
+    "conversational": "呼びかけと会話の続き",
+    "freely": "呼びかけなしで会話に参加・自発的に発言",
+    "brief": "短め",
+    "normal": "標準",
+    "detailed": "詳しく",
+    "owners": "所有者のみ",
+    "everyone": "全員",
+    "anyone": "誰でも",
+    "shared-servers": "共通サーバーの参加者",
+    "ignore": "無視する",
+    "hold-for-review": "所有者の確認を待つ",
+    "everything": "記憶している情報すべて",
+    "public-only": "公開されている情報のみ",
+    "nothing": "個人情報を使わない",
+    "rarely": "少なめ（1日最大2件）",
+    "sometimes": "ときどき（1日最大5件）",
+    "often": "多め（1日最大10件）",
+    "read-only": "読み取りのみ",
+    "confirm": "書き込みは確認する",
+    "write": "指定範囲の書き込みを許可",
+    "unconditional": "登録済み操作を確認なしで許可",
+}
+REASONS = {
+    "replies-off": "この場所では返信が無効です。",
+    "dm-off": "DMへの返信が無効です。",
+    "bots-ignore": "他のBotには返信しない設定です。",
+    "not-allowed": "許可リスト・無視リストの設定で返信しませんでした。",
+    "dm-not-allowed": "この相手からのDMは許可されていません。",
+    "cap": "返信の日次上限に達しました。",
+    "quarantined": "所有者の確認待ちです。DMを確認してください。",
+    "suspicious-ignored": "攻撃の可能性があるため無視しました。",
+    "no-send": "Discordのチャンネル権限でメッセージを送信できません。",
+    "internal": "内部エラーです。monitor.logを確認してください。",
+    "worker-skipped": "メッセージを読み、返信しないと判断しました。",
+    "send-failed": "送信に失敗しました。monitor.logを確認してください。",
+    "never-share": "共有禁止の文章を含むため返信を保留しました。",
+    "predates-join": "Botが参加する前のメッセージです。",
+    "ownerless": "サーバー内に所有者がおらず、返信が有効化されていません。",
+    "bot-exchange": "Botとの連続返信上限に達しました。",
+    "watch-cap": "リマインダー・監視の上限に達しました。",
+    "watch-held": "リマインダーの配信を保留しています。",
+    "watch-not-allowed": "リマインダー・監視の利用が許可されていません。",
 }
 
 
-def on_off_name(key):
-    return "images & video" if key == "media.enabled" else esc(key)
+def text(value, limit=500):
+    """Names and values are untrusted Discord text; never allow mentions."""
+    value = re.sub(r"[\u202a-\u202e\u2066-\u2069]", "", str(value))
+    return ms.clip(
+        discord.utils.escape_markdown(discord.utils.escape_mentions(value)), limit
+    )
 
 
-def style_select(R, gid):
-    server = ms.Place.server(gid)
-    cur = ms.matching_preset(R.st, server)
-    opts = [opt(title, name, PRESET_HELP.get(name), default=cur == title)
-            for name, (title, _v) in ms.PRESETS.items()]
-    if cur is None:
-        # Not a style to apply: what the select shows while none
-        # matches (picking it changes nothing; see v_pre).
-        opts.append(opt("Customized", CUSTOMIZED, "Change the settings "
-                        "under Edit settings or in config.yaml.", default=True))
-    return sel(cid("pre", f"s{gid}"), opts, "Pick a style…")
+def value_text(value):
+    if value is None:
+        return "無制限"
+    if isinstance(value, bool):
+        return "有効" if value else "無効"
+    if isinstance(value, list):
+        return text(", ".join(value) if value else "なし", 350)
+    return text(WORDS.get(value, value) if value != "" else "未設定", 350)
 
 
-CUSTOMIZED = "custom"
+def current_value(st, place, key):
+    return st.top(key) if key in ms.TOP else st.get(key, place.scope(key))
 
 
-def pause_buttons(R, place):
-    """Pause / Resume (and Turn on, when it is off here without a
-    pause) for place."""
-    at = paused_at(R, place)
-    if at is not None:
-        if at.kind == "defaults":
-            label = "Resume everywhere"
-        elif at == place:
-            label = "Resume here" if place.kind != "dms" else "Resume DMs"
+def check_output(interaction, payload):
+    interaction.client.settings_guard(payload, "settings UI")
+
+
+def role_for(interaction, ctx):
+    if str(interaction.user.id) in set(map(str, ctx.settings.owners)):
+        return "owner"
+    if interaction.guild_id and interaction.permissions.manage_guild:
+        return "admin"
+    raise ms.SettingsError("設定を変更できるのはBotの所有者とサーバー管理者です。")
+
+
+def available(ctx, place, role):
+    """Use the schema's edit policy; never keep another list of valid scopes."""
+    keys = []
+    for key, spec in (ms.CORE | ms.TOP).items():
+        if not spec.discord_editable or spec.hidden:
+            continue
+        if place.kind == "defaults" and key == "who.dms_from":
+            continue
+        if role == "admin" and key not in (
+            "who.replies",
+            "media.enabled",
+            "proactive.enabled",
+            "who.ignore",
+        ):
+            continue
+        try:
+            ms.place_path(ctx.settings, place, key)
+        except ms.SettingsError:
+            continue
+        keys.append(key)
+    return keys
+
+
+@dataclass
+class Screen:
+    uid: str
+    place_text: str
+    token: str = field(default_factory=lambda: secrets.token_urlsafe(9))
+    category: str = "reply"
+    key: str = "who.replies"
+    draft: dict = field(default_factory=dict)
+    baseline: dict = field(default_factory=dict)
+    pending: object = None
+    browse: str = ""
+    page: int = 0
+    undo_id: str | None = None
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    def place(self, ctx):
+        p = ms.parse_place(self.place_text, ctx)
+        if p.guild_id and p.guild_id not in {str(g["id"]) for g in ctx.guilds()}:
+            raise ms.SettingsError("このサーバーにはもう参加していません。")
+        if p.channel_id and not any(
+            str(c["id"]) == p.channel_id and c.get("readable", True)
+            for c in ctx.channels(p.guild_id)
+        ):
+            raise ms.SettingsError("このチャンネルを確認できません。")
+        return p
+
+    def authorize(self, interaction, ctx):
+        if str(interaction.user.id) != self.uid:
+            raise ms.SettingsError(
+                "この画面は別の人のものです。/settingsで自分の画面を開いてください。"
+            )
+        role = role_for(interaction, ctx)
+        place = self.place(ctx)
+        if role == "admin" and (
+            place.kind not in ("server", "channel")
+            or place.guild_id != str(interaction.guild_id)
+        ):
+            raise ms.SettingsError("管理しているサーバー以外の設定は変更できません。")
+        return role
+
+    def changes(self, ctx):
+        place = self.place(ctx)
+        return [ms.Change(place, key, val) for key, val in self.draft.items()]
+
+    def stage(self, ctx, role, key, val):
+        place = self.place(ctx)
+        if key not in available(ctx, place, role):
+            raise ms.SettingsError("この場所では変更できない設定です。")
+        changes = [ms.Change(place, key, val)]
+        if role == "admin":
+            changes = ms.admin_changes(ctx.settings, place.guild_id, changes, ctx)
+        planned = ms.plan_changes(ctx.settings, changes, role)
+        path = ms.place_path(ctx.settings, place, key)
+        # 値だけでなく継承元の変更も検知し、古い画面から上書きしない。
+        self.baseline.setdefault(
+            key,
+            (ctx.settings.layer(path, key), current_value(ctx.settings, place, key)),
+        )
+        if planned[0].noop:
+            self.draft.pop(key, None)
+            self.baseline.pop(key, None)
         else:
-            label = "Resume server"
-        return [btn(label, cid("rs", ptok(at)), SUCCESS)]
-    if place.kind in ("channel", "server") \
-            and value(R, place, "who.replies") == "off":
-        server = ms.Place.server(place.guild_id)
-        to = value(R, server, "who.replies") if place.kind == "channel" \
-            else "off"
-        return [btn("Turn on here", cid(
-            "val", ptok(place), "r",
-            to if to != "off" else "when-addressed"), SUCCESS)]
-    label = {"dms": "Pause DMs", "channel": "Pause here",
-             "server": "Pause server",
-             "defaults": "Pause everywhere"}[place.kind]
-    return [btn(label, cid("pz", ptok(place)), DANGER)]
+            self.draft[key] = changes[0].value
+        self.pending = None
 
+    def clear(self):
+        self.draft.clear()
+        self.baseline.clear()
+        self.pending = None
 
-# -- Where ---------------------------------------------------------------------
-def where_options(R, place):
-    """The places the Where select offers: here (the channel /settings
-    was typed in, or DMs), its server, everywhere; a server opened from
-    the join notice in a DM stays on the list while it is shown."""
-    here = R.here()
-    out = [here]
-    if here.kind == "channel":
-        out.append(ms.Place.server(here.guild_id))
-    if place.kind == "server" and place not in out:
-        out.insert(0, place)
-    out.append(ms.Place.defaults())
-    return out
-
-
-def where_select(R, place):
-    here = R.here()
-    opts = []
-    for p in where_options(R, place):
-        if p.kind == "channel":
-            label, d = f"{R.name(p)} (here)", "Just this channel"
-        elif p.kind == "server":
-            label = f"All of {R.gname(p.guild_id)}" + (
-                " (here)" if p == here else "")
-            d = "Every channel that has no setting of its own"
-        elif p.kind == "dms":
-            label, d = "DMs (here)", "Direct messages with me"
-        else:
-            label, d = "Everywhere", ("Every server and DM that has no "
-                                      "setting of its own")
-        opts.append(opt(label, ptok(p), d, default=p == place))
-    return sel(cid("wh", ptok(place)), opts, "Where…")
-
-
-# -- The settings on the page --------------------------------------------------
-# The settings each kind of place shows, in order (custom_id codes).
-PLACE_CONTROLS = {"channel": ("r", "med"),
-                  "server": ("r", "ln", "med", "pp"),
-                  "dms": ("df", "ln", "med"),
-                  "defaults": ("r", "df", "ln", "med", "pp")}
-CAP_CHOICES = (5, 10, 20, 50, 100)
-# When I reply's options, by value (and "Off", which is Pause).
-REPLY_CHOICES = {"conversational": "Chat freely",
-                 "when-addressed": "Only when @mentioned", "off": "Off"}
-
-
-def follow_option(R, place, key, now):
-    """The "=" option of a channel's select, in Discord's own words (its
-    notification settings): "Use server default", or "Use category
-    default" when the channel's category sets key; now is the label of
-    the value that gives."""
-    cat = place.category_id
-    by_cat = cat and R.st.layer(("servers", place.guild_id, "channels",
-                                 cat), key)[0]
-    return opt("Use category default" if by_cat else "Use server default",
-               "=", f"Currently: {now}")
-
-
-def only_you(R):
-    return "Only you" if len(owners_set(R)) <= 1 else "Only the owners"
-
-
-def ctl_replies(R, place):
-    v = Val(R, place, "who.replies")
-    opts = []
-    if place.kind == "channel":
-        inh = REPLY_CHOICES.get(v.inherited, "Off")
-        o = follow_option(R, place, "who.replies", inh)
-        if not v.set:
-            o["default"] = True
-        opts.append(o)
-    cur = v.here if place.kind == "channel" else v.value
-    for x, label, d in (
-            ("conversational", "Chat freely", "Answers @mentions, replies "
-             "to me, and follow-ups for 2 minutes"),
-            ("when-addressed", "Only when @mentioned", "Answers @mentions "
-             "and replies to my messages")):
-        opts.append(opt(label, x, d, default=(v.set or place.kind !=
-                                               "channel") and cur == x))
-    title = "When I reply" + (" in servers" if place.kind == "defaults"
-                              else "")
-    ph = "Paused · pick one to turn me on" if v.value == "off" \
-        else "When I reply…"
-    return title, sel(cid("set", ptok(place), "r"), opts, ph)
-
-
-def ctl_length(R, place):
-    cur = value(R, place, "style.length")
-    opts = [opt(label, x, d, default=cur == x) for x, label, d in (
-        ("brief", "Short", "A line or two"),
-        ("normal", "Normal", "As long as the message needs"),
-        ("detailed", "Detailed", "Longer, fuller replies"))]
-    return "Reply length", sel(cid("set", ptok(place), "ln"), opts,
-                               "Reply length…")
-
-
-def media_now(R, place):
-    """"off", "owners", "everyone" or "list" in force at a server or
-    everywhere."""
-    if not value(R, place, "media.enabled"):
-        return "off"
-    who = value(R, place, "media.who")
-    if isinstance(who, list):
-        others = [p for p in who if p not in R.ctx.owners]
-        return "list" if others else "owners"
-    return who if who in ("owners", "everyone") else "owners"
-
-
-def ctl_media(R, place):
-    opts = []
-    if place.kind in ("channel", "dms"):
-        v = Val(R, place, "media.enabled")
-        if place.kind == "channel":
-            inh = "On" if v.inherited else "Off"
-            o = follow_option(R, place, "media.enabled", inh)
-            if not v.set:
-                o["default"] = True
-            opts.append(o)
-        on = bool(v.here if v.set else v.value)
-        pick = v.set or place.kind == "dms"
-        opts.append(opt("On", "on", "For the people allowed in the server"
-                        if place.kind == "channel" else
-                        "For the people allowed everywhere",
-                        default=pick and on))
-        opts.append(opt("Off", "off", default=pick and not on))
-    else:
-        cur = media_now(R, place)
-        opts.append(opt("Off", "off", "No images or video",
-                        default=cur == "off"))
-        opts.append(opt(only_you(R), "owners", "Only the bot's owners can "
-                        "ask", default=cur == "owners"))
-        opts.append(opt("Everyone", "everyone", "Anyone can ask; this can "
-                        "cost real money", default=cur == "everyone"))
-        if cur == "list":
-            opts.append(opt("You and people you picked", "list",
-                            "Use Edit settings to change who", default=True))
-    return "Images & video", sel(cid("set", ptok(place), "med"), opts,
-                                 "Images & video…")
-
-
-def ctl_dms(R, place):
-    access = ms.dm_access(R.st)
-    opts = [opt(only_you(R), "owners", "Strangers' DMs go unanswered",
-                default=access == "owners"),
-            opt("Anyone in your servers", "shared-servers",
-                "Anyone who shares a server with me",
-                default=access == "shared-servers"),
-            opt("Anyone", "anyone", "Anyone on Discord, strangers too",
-                default=access == "anyone"),
-            opt("Nobody", "nobody", "No DM gets an answer, not even yours",
-                default=access == "nobody")]
-    if access == "list":
-        n = len(dm_people(R))
-        opts.insert(1, opt(f"You and {n} {'person' if n == 1 else 'people'}"
-                           f" you picked", "list", "Use Edit settings to change who",
-                           default=True))
-    return "Who can DM me", sel(cid("set", ptok(place), "df"), opts,
-                                "Who can DM me…")
-
-
-def ctl_cap(R, place):
-    cur = value(R, place, "limits.per_person_per_day")
-    opts = [opt("No limit", "none", "Owners are never limited",
-                default=cur is None)]
-    choices = list(CAP_CHOICES)
-    if isinstance(cur, int) and cur not in choices:
-        choices = sorted(choices + [cur])
-    for n in choices:
-        opts.append(opt(f"{n:,} a day", str(n),
-                        default=cur == n))
-    title = "Replies a person a day" + (
-        "\n-# Counted across every server and DM together"
-        if place.kind == "defaults" else "")
-    return title, sel(cid("set", ptok(place), "pp"), opts,
-                      "Replies a person a day…")
-
-
-CONTROLS = {"r": ctl_replies, "ln": ctl_length, "med": ctl_media,
-            "df": ctl_dms, "pp": ctl_cap}
-
-
-def controls_for(R, place):
-    """[(title, select)] for the settings place shows."""
-    out = []
-    for code in PLACE_CONTROLS.get(place.kind, ()):
-        out.append(CONTROLS[code](R, place))
-    return out
-
-
-def head_lines(R, place):
-    lines = []
-    if place.kind == "channel":
-        gid = place.guild_id
-        lines.append(f"## {R.name(place)}")
-        lines.append(status_text(R, place))
-        sub = [f"In {R.gname(gid)}"]
-        if R.thread_note:
-            sub.append(f"threads follow {R.name(place)}")
-        if not R.can_see(gid, place.channel_id):
-            sub.append(f"I can't see {R.name(place)}, so I never reply "
-                       f"there")
-        elif value(R, place, "who.replies") == "off" \
-                and paused_at(R, place) is None:
-            sub.append("off for this channel or its category")
-        lines.append("-# " + " · ".join(sub))
-    elif place.kind == "server":
-        gid = place.guild_id
-        n = R.members(gid)
-        lines.append(f"## All of {R.gname(gid)}")
-        lines.append(status_text(R, place))
-        lines.append("-# Every channel without its own setting" + (
-            f" · {n:,} members" if n is not None else ""))
-    elif place.kind == "dms":
-        lines.append("## DMs with me")
-        lines.append(status_text(R, place))
-    else:
-        lines.append("## Everywhere")
-        lines.append(status_text(R, place))
-        lines.append("-# Every server and DM follows these unless it has "
-                     "its own setting.")
-    return lines
-
-
-def page_home(R, place):
-    """The screen: how the bot behaves at place, where (here, its server,
-    everywhere), a few settings, the server's style, pause, why, the
-    last change, and the DM footer."""
-    inner = [td("\n".join(head_lines(R, place))),
-             td("-# Applies to"), row(where_select(R, place)), sep()]
-    for title, s in controls_for(R, place):
-        head, _, note = title.partition("\n")
-        inner.append(td(f"**{head}**" + (f"\n{note}" if note else "")))
-        inner.append(row(s))
-    if place.kind in ("channel", "server"):
-        gid = place.guild_id
-        inner.append(sep())
-        inner.append(td(f"**Style for all of {R.gname(gid)}**\n"
-                        f"-# Applies to the whole server."))
-        inner.append(row(style_select(R, gid)))
-    draft = draft_changes(R, place)
-    if draft:
-        inner.append(td(f"-# You have {len(draft)} unsaved "
-                        f"{'change' if len(draft) == 1 else 'changes'} "
-                        f"here — Edit settings to save or drop them."))
-    inner += last_change_slot(R, place)
-    paused = paused_at(R, place) is not None
-    buttons = pause_buttons(R, place)
-    buttons.append(btn(f"Continue editing ({len(draft)})" if draft
-                       else "Edit settings", cid("ed", ptok(place)),
-                       PRIMARY))
-    if place.kind != "defaults":
-        buttons.append(btn("Why no reply?",
-                           cid("pg", ptok(place), "y")))
-    comps = [container(inner, GREY if paused else BLURPLE),
-             row(*buttons), td(FOOTER_DM if not R.guild_id
-                               else FOOTER_SERVER)]
-    return finish(R, comps)
-
-
-def page_edit(R, place, page="e"):
-    """An edit page: every control stages into the draft; Save applies
-    it as one change, Cancel throws it away. "e" is the basic page
-    (the home page's controls + notes + the server's style); "d" and
-    "f" are the detail pages (DETAIL_PAGES)."""
-    inner = [td("\n".join(head_lines(R, place))), draft_block(R, place),
-             sep()]
-    if page in DETAIL_PAGES:
-        ctrls = [DETAIL_CONTROLS[c](R, place)
-                 for c in DETAIL_PAGES[page].get(place.kind, ())]
-    else:
-        ctrls = [(t, [row(s)]) for t, s in controls_for(R, place)]
-        ctrls.append(ctl_notes(R, place))
-        if place.kind in ("channel", "server"):
-            gid = place.guild_id
-            ctrls.append((f"Style for all of {R.gname(gid)}\n"
-                          f"-# Applies to the whole server.",
-                          [row(style_select(R, gid))]))
-    for title, rows in ctrls:
-        head, _, note = title.partition("\n")
-        inner.append(td(f"**{head}**" + (f"\n{note}" if note else "")))
-        inner.extend(rows)
-    n = len(draft_changes(R, place) or [])
-    nav = [btn(EDIT_PAGE_LABELS[p], cid("pg", ptok(place), p))
-           for p in edit_pages(R, place) if p != page]
-    nav.append(btn("Back", cid("pg", ptok(place), "h")))
-    comps = [container(inner, AMBER),
-             row(btn(f"Save ({n})" if n else "Save",
-                     cid("sv", ptok(place)), SUCCESS),
-                 btn("Cancel", cid("cx", ptok(place)))),
-             row(*nav),
-             td("-# Nothing here applies until you press Save.")]
-    return finish(R, comps)
-
-
-# ---------------------------------------------------------------------------
-# Why didn't it reply?
-# ---------------------------------------------------------------------------
-REFUSED = ("skipped", "quarantined", "enqueue_failed")
-
-
-def msg_link(gid, channel_id, mid):
-    return (f"https://discord.com/channels/{gid or '@me'}/{channel_id}/"
-            f"{mid}")
-
-
-def _setter(R, sc, key):
-    """The Place whose layer decides key at scope sc (None: Defaults,
-    a category or the built-in value: nothing the UI can fix there)."""
-    _v, rows = R.st.trace(sc, key)
-    for _name, path, s, _val, _src in reversed(rows):
-        if not s:
-            continue
-        if path[0] in ("builtin", "builtin_all_servers", "alias"):
-            return None, path
-        return ms.place_of_path(path), path
-    return None, None
-
-
-def _outcome_scope(R, o):
-    gid = o.get("guild_id")
-    ch = str(o.get("parent_id") or o.get("channel_id") or "")
-    if not gid:
-        return ms.Scope.dm(), None
-    if (R.chan(gid, ch) or {}).get("type") == CATEGORY:
-        return ms.Scope.server(gid), None
-    place = ms.Place.channel(gid, ch, R.category_of(gid, ch)) \
-        if _ID.fullmatch(ch) else ms.Place.server(gid)
-    return place.scope("who.replies"), place
-
-
-def _may_fix(R, changes):
-    """The viewer may make these changes (an admin only through the
-    admin rule; a fix button is shown only then)."""
-    if R.owner:
-        return True
-    if not R.admin:
-        return False
-    try:
-        ms.admin_changes(R.st, R.admin_gid, changes, R.ctx)
-        return True
-    except Exception:
-        return False
-
-
-def is_category(R, place):
-    return place is not None and place.kind == "channel" and (
-        R.chan(place.guild_id, place.channel_id) or {}).get(
-        "type") == CATEGORY
-
-
-def setter_name(R, place):
-    if place is None:
-        return "every server"
-    if is_category(R, place):
-        return f"the {R.look(place.channel_id) or 'its'} category"
-    if place.kind == "server":
-        return f"all of {R.name(place)}"
-    return R.name(place)
-
-
-def _fix_button(R, label, place, key, op):
-    """A Why fix button (fx), shown only when the viewer may make the
-    changes it makes (fix_changes)."""
-    if place is None or is_category(R, place):
-        return None
-    try:
-        if not _may_fix(R, fix_changes(R, place, key, op) or []):
-            return None
-        return btn(label, cid("fx", ptok(place), kcode(key), op))
-    except (BadId, ms.SettingsError):
-        return None
-
-
-DM_ME = " Use Edit settings or config.yaml to change it."
-
-
-def explain_outcome(R, o):
-    """(copy, fix button or None, still holds?) for one refused message,
-    re-checked against the settings in force now."""
-    code = o.get("code") or "other"
-    aid = str(o.get("author_id") or "")
-    who_m = f"<@{aid}>" if _ID.fullmatch(aid) else (
-        f"@{esc(o['author'])}" if o.get("author") else "They")
-    short = R.person(aid) if aid else None
-    short = short or (esc(o["author"]) if o.get("author") else "them")
-    sc, place = _outcome_scope(R, o)
-    where = R.name(place) if place else "DMs"
-    detail = o.get("detail") if isinstance(o.get("detail"), dict) else {}
-    tip = DM_ME if R.owner else ""
-    if code in ("replies-off", "dm-off"):
-        cur = R.st.get("who.replies", sc)
-        if cur != "off":
-            return (f"I was off in {where} then.\n-# Not any more: "
-                    f"{REPLIES_WORDS.get(cur, 'I reply')} there now."), \
-                None, False
-        setter, path = _setter(R, sc, "who.replies")
-        if setter is None or setter.kind == "defaults":
-            return ("I'm paused in every server." if path and path[0] ==
-                    "all_servers" else f"I'm off in {where}."), None, True
-        s, _v, src = R.st.layer(path, "who.replies")
-        by = f" (by {who_text(R, src[1])})" if src and src[0] == \
-            "discord" else ""
-        return (f"I'm off in {setter_name(R, setter)}{by}.",
-                _fix_button(R, "Turn me back on", setter, "who.replies",
-                            "="), True)
-    if code == "bots-ignore":
-        cur = R.st.get("who.bots", sc)
-        if cur != "ignore":
-            return ("I ignored other bots then.\n-# Not any more: I answer "
-                    "bots that address me now."), None, False
-        setter, _p = _setter(R, sc, "who.bots")
-        return (f"I ignore other bots in {setter_name(R, setter)}.",
-                _fix_button(R, "Answer bots that @mention me", setter,
-                            "who.bots", "vwhen-addressed"), True)
-    if code in ("not-allowed", "dm-not-allowed") and _ID.fullmatch(aid):
-        ign = R.st.get("who.ignore", sc) or []
-        if aid in ign:
-            setter, path = _setter(R, sc, "who.ignore")
-            added = ""
-            if path:
-                _s, _v, src = R.st.layer(path, "who.ignore")
-                entry = R.st.overlay.get((path, "who.ignore"))
-                if src and src[0] == "discord":
-                    role = ", an admin" if ms.entry_role(entry) == "admin" \
-                        else ""
-                    added = (f" (added by {who_text(R, src[1])}{role}, "
-                             f"{short_date(src[2])})")
-                elif src and src[0] == "file":
-                    added = " (in config.yaml)"
-            fix = _fix_button(R, f"Stop ignoring {plain(short)}", setter,
-                              "who.ignore", f"-{aid}")
-            return (f"I ignore {who_m} in {setter_name(R, setter)}"
-                    f"{added}.", fix, True)
-        allow = R.st.get("who.allow", sc)
-        if isinstance(allow, list) and aid not in allow \
-                and aid not in R.ctx.owners:
-            setter, _p = _setter(R, sc, "who.allow")
-            fix = _fix_button(R, f"Let {plain(short)} talk to me", setter,
-                              "who.allow", f"+{aid}")
-            return (f"In {setter_name(R, setter)} I only answer people on "
-                    f"a list, and {who_m} isn't on it.", fix, True)
-        if code == "dm-not-allowed":
-            return person_check_text(R, aid, short)[0], None, True
-        return (f"{who_m} wasn't allowed then.\n-# Not any more: they can "
-                f"get replies now."), None, False
-    if code in ("not-allowed", "dm-not-allowed"):
-        return "They weren't on the list of people I answer.", None, True
-    if code == "cap":
-        key = detail.get("key")
-        n = detail.get("cap")
-        if key == "limits.per_person_per_day" and isinstance(n, int):
-            return (f"{who_m} hit the daily limit of {n:,} replies a "
-                    f"person.{tip}"), None, True
-        if key == "limits.per_day" and isinstance(n, int):
-            return (f"I hit the daily limit of {n:,} replies in total."
-                    f"{tip}"), None, True
-        return f"I hit a daily reply limit.{tip}", None, True
-    if code == "watch-cap":
-        n, per = detail.get("cap"), detail.get("per")
-        if per == "person" and isinstance(n, int):
-            return (f"{who_m} asked for a reminder or watch, but already "
-                    f"had {n:,} going, the most I keep for one person. I "
-                    f"told them to cancel one first."), None, True
-        if per == "budget":
-            return ("I didn't set the web watch they asked for: checking "
-                    "it that often would go past the web checks I do a "
-                    "day. I told them so."), None, True
-        return ("I didn't set the reminder or watch they asked for: I "
-                "already keep as many as I can. I told them so."), \
-            None, True
-    if code == "watch-held" and detail.get("why"):
-        return (f"A reminder or watch for {who_m} came due, but I couldn't "
-                f"deliver it where they asked ({esc(str(detail['why']))}). "
-                f"I keep trying for a day."), None, True
-    if code == "watch-held":
-        key, n = detail.get("key"), detail.get("cap")
-        which = (f"the daily limit of {n:,} replies a person"
-                 if key == "limits.per_person_per_day" and isinstance(n, int)
-                 else f"the daily limit of {n:,} replies in total"
-                 if isinstance(n, int) else "a daily reply limit")
-        return (f"A reminder or watch for {who_m} came due, but they had "
-                f"hit {which} (each one counts as a reply). It is held, "
-                f"and goes out once the limit allows.{tip}"), None, True
-    if code == "watch-not-allowed":
-        cur = R.st.get("abilities.reminders", sc)
-        if cur == "everyone":
-            return ("Only owners could set reminders and watches then.\n-# "
-                    "Not any more: everyone can now."), None, False
-        return (f"Only some people can set reminders and watches in "
-                f"{where}, and {who_m} isn't one of them. I told them "
-                f"so.{tip}"), None, True
-    if code == "bot-exchange":
-        lim = detail.get("limit")
-        return ("I'd already answered other bots "
-                + (f"{lim} times" if isinstance(lim, int) else "too often")
-                + f" in a row in {where}, so I stopped.{tip}"), None, True
-    if code == "suspicious-ignored":
-        cur = R.st.get("privacy.suspicious", sc)
-        if cur != "ignore":
-            return ("It looked like a prompt-injection attempt, so I "
-                    "dropped it.\n-# Not any more: I hold those for your "
-                    "review now."), None, False
-        setter, _p = _setter(R, sc, "privacy.suspicious")
-        return ("It looked like a prompt-injection attempt, so I dropped "
-                "it.", _fix_button(R, "Hold these for my review", setter,
-                                   "privacy.suspicious", "vhold-for-review"),
-                True)
-    if R.admin and code in ("quarantined", "never-share"):
-        return "I held it for my owners to look at.", None, True
-    text = {
-        "quarantined": "I held it for your review; look for my DM.",
-        "predates-join": "It was sent before I joined.",
-        "ownerless": "None of my owners is in this server, so I answer "
-                     "nobody here. An owner must turn replies on here.",
-        "no-send": f"I can't send messages in {where}; fix it in "
-                   f"Discord's channel permissions.",
-        "internal": "I hit an internal error; your Muse can find it in "
-                    "monitor.log.",
-        "worker-skipped": "I read it and chose not to answer.",
-        "send-failed": "Sending my reply failed; your Muse can find why "
-                       "in monitor.log.",
-        "never-share": "I held my reply: it contained a phrase you never "
-                       "share.",
-    }.get(code, "I didn't answer it.")
-    return text, None, True
-
-
-def page_why(R, place):
-    """The last refused messages that addressed the bot here."""
-    if place.kind == "dms":
-        return page_why_dms(R)
-    tok = ptok(place)
-    where = R.name(place)
-    inner = [td(f"## Why didn't it reply? · {where}\n-# The last "
-                f"{WHY_ENTRIES} messages here that addressed me and got no "
-                f"answer, newest first. Ordinary chatter isn't recorded."),
-             sep()]
-    try:
-        got = R.ctx.recent_outcomes(place, 50) or []
-    except Exception as e:
-        R.ctx.log(f"settings_ui: recent_outcomes: {e}")
-        got = []
-    shown = 0
-    fixes = set()
-    most = WHY_ENTRIES - (1 if R.banner else 0)
-    for o in got:
-        if not isinstance(o, dict) or o.get("status") not in REFUSED:
-            continue
-        if shown >= most:
-            break
-        if (o.get("guild_id") or place.guild_id) != place.guild_id:
-            continue
-        o = dict(o, guild_id=place.guild_id)
-        shown += 1
-        aid = str(o.get("author_id") or "")
-        who_m = f"<@{aid}>" if _ID.fullmatch(aid) else (
-            f"@{esc(o['author'])}" if o.get("author") else "Someone")
-        mid = str(o.get("message_id") or "")
-        link = msg_link(o.get("guild_id"), o.get("channel_id"), mid)
-        when = ago(R, o.get("at") or snowflake_time(mid))
-        text, fix, holds = explain_outcome(R, o)
-        if not aid:
-            fix = None   # an older entry: no fix
-        if fix is not None:
-            # Two refusals with the same cause have the same fix: one
-            # button (the newest entry's); a custom_id may appear only
-            # once in a message, or Discord refuses the whole page.
-            if fix["custom_id"] in fixes:
-                fix = None
+    def act(self, ctx, role, action, values):
+        """Synchronous engine/file work, called in a worker after deferring."""
+        place = self.place(ctx)
+        self.pending = self.pending if action in ("confirm", "back") else None
+        if action in ("category", "key"):
+            if action == "category":
+                if values[0] not in CATEGORIES:
+                    raise ms.SettingsError("不明な分類です。")
+                self.category = values[0]
             else:
-                fixes.add(fix["custom_id"])
-        body = f"**{who_m}** · [message]({link}) · {when}\n" + text
-        if R.fixed and R.fixed == aid and not holds:
-            body += "\n" + FIXED_NOTE.format(who=who_m)
-        inner.append(section(body, fix) if fix else td(body))
-    if not shown:
-        inner.append(td(f"Nothing was refused here lately. If someone "
-                        f"@mentioned me and got no answer, check that I "
-                        f"can see and send messages in {where}."))
-    return finish(R, [container(inner, BLURPLE),
-                      row(btn("Back", cid("pg", tok, "h")),
-                          btn("Refresh", cid("pg", tok, "y")))])
-
-
-def person_check_text(R, uid, short):
-    """(copy, changes that would let them DM it or None)."""
-    st = R.st
-    access = ms.dm_access(st)
-    who_m = f"<@{uid}>"
-    if uid in R.ctx.owners:
-        if access == "nobody":
-            return (f"{who_m} is an owner, but nobody can DM me right "
-                    f"now, owners included."), None
-        return f"{who_m} is an owner and can always DM me.", None
-    people = dm_people(R)
-    let = ms.dms_from_changes(st, "list", people + [uid])
-    if access == "nobody":
-        return f"{short} can't DM me: nobody can right now.", let
-    if access == "owners":
-        return f"{short} can't DM me: only you can.", let
-    if access == "list" and uid not in people:
-        return (f"{short} can't DM me: they aren't one of the people you "
-                f"picked."), let
-    r = st.resolve(ms.Scope.dm())
-    if uid in (r["who.ignore"] or []):
-        return f"{short} can't DM me: I ignore them in DMs.", None
-    allow = r["who.allow"]
-    if isinstance(allow, list) and uid not in allow:
-        return (f"{short} can't DM me: I only answer a list of people in "
-                f"DMs, and they aren't on it."), None
-    if access == "shared-servers":
-        return f"{short} can DM me if we share a server.", None
-    return f"{short} can DM me.", None
-
-
-def dm_people(R):
-    v = value(R, ms.Place.dms(), "who.dms_from")
-    return [p for p in v if p not in R.ctx.owners] \
-        if isinstance(v, list) else []
-
-
-def page_why_dms(R):
-    """DMs: strangers' DMs aren't recorded, so check a person."""
-    inner = [td("## Why didn't it reply? · DMs\n-# DMs from people who "
-                "may not DM me aren't recorded. Check a person instead."),
-             sep()]
-    if R.guild_id or DM_USER_SELECT_SEARCHES:
-        inner.append(row(picker(USER_SELECT, cid("wy", "d"),
-                                "Check a person…", 1, 1)))
-    else:
-        inner.append(row(btn("Check someone by ID", cid("mod", "d", "wy"),
-                             PRIMARY)))
-    if R.check:
-        uid = R.check
-        short = R.person(uid) or "They"
-        text, let = person_check_text(R, uid, short)
-        b = None
-        if let and R.owner:
-            try:
-                b = btn(f"Let {plain(R.person(uid) or 'them')} DM me",
-                        cid("fx", "d", "df", f"+{uid}"), PRIMARY)
-            except BadId:
-                b = None
-        inner.append(section(text, b) if b else td(text))
-    return finish(R, [container(inner, BLURPLE),
-                      row(btn("Back", cid("pg", "d", "h")),
-                          btn("Refresh", cid("pg", "d", "y")))])
-
-
-def why_card(R):
-    """The message context command's card for one message."""
-    data = R.data
-    tid = str(data.get("target_id") or "")
-    msg = ((data.get("resolved") or {}).get("messages") or {}).get(tid) \
-        or {}
-    gid = R.guild_id
-    if not (R.owner or (R.admin and gid == R.admin_gid)):
-        return notice(REFUSAL_WHY)
-    ch = str(msg.get("channel_id") or R.ix.get("channel_id") or "")
-    here, _thread = R.typed()
-    author = msg.get("author") or {}
-    aid = str(author.get("id") or "")
-    chan = None
-    if gid:
-        chan = here or ch
-        place = ms.Place.channel(gid, chan, R.category_of(gid, chan))
-    else:
-        place = ms.Place.dms()
-    where = R.name(place)
-    when = ago(R, snowflake_time(tid))
-    link = msg_link(gid, ch, tid)
-    who_m = f"<@{aid}>" if aid else "Someone"
-    inner = [td(f"## Why didn't it reply?\n-# {who_m}'s [message]({link}) "
-                f"in {where}, {when}"), sep()]
-    o = None
-    fn = getattr(R.ctx, "outcome", None)
-    try:
-        if callable(fn):
-            o = fn(tid)
-    except Exception as e:
-        R.ctx.log(f"settings_ui: outcome: {e}")
-    if isinstance(o, dict):
-        # Where the message is comes from the interaction, never from the
-        # ledger: an entry for another server (a forged or stale id), or a
-        # server message seen from a DM, counts as not recorded.
-        if (o.get("guild_id") or None) not in (None, gid) \
-                or (not gid and o.get("guild_id")):
-            o = None
-        elif gid:
-            o = dict(o, guild_id=gid, channel_id=ch, parent_id=chan)
+                if values[0] not in available(ctx, place, role):
+                    raise ms.SettingsError("この設定は選べません。")
+                self.key = values[0]
+        elif action in ("scope", "browse", "previous", "next"):
+            if self.draft:
+                raise ms.SettingsError(
+                    "適用先を変える前に、下書きを保存するか破棄してください。"
+                )
+            if action == "scope" and values[0] not in ("servers", "channels"):
+                new = ms.parse_place(values[0], ctx)
+                if role == "admin" and (
+                    new.guild_id != place.guild_id
+                    or new.kind not in ("server", "channel")
+                ):
+                    raise ms.SettingsError("管理しているサーバー以外は選べません。")
+                self.place_text = ms.format_place(new)
+                self.place(ctx)
+                self.browse = ""
+            elif action in ("previous", "next"):
+                self.page = max(0, self.page + (1 if action == "next" else -1))
+            else:
+                self.browse = values[0]
+                self.page = 0
+        elif action == "preset":
+            if role != "owner" or place.kind != "server":
+                raise ms.SettingsError(
+                    "プリセットは所有者がサーバー全体に設定できます。"
+                )
+            staged = ms.simulate(ctx.settings, self.changes(ctx))
+            for change in ms.preset_changes(staged, values[0], place, ctx):
+                self.stage(ctx, role, change.key, change.value)
+            return (
+                "プリセットを下書きに追加しました。保存前に変更内容を確認してください。"
+            )
+        elif action == "set":
+            self.stage(ctx, role, self.key, json.loads(values[0]))
+        elif action == "inherit":
+            self.stage(ctx, role, self.key, "inherit")
+        elif action == "people":
+            resolved_roles = values[1]
+            ids = [("role:" if v in resolved_roles else "") + v for v in values[0]]
+            self.stage(ctx, role, self.key, ids)
+        elif action == "input":
+            self.stage(
+                ctx, role, self.key, parse_input(ctx.settings.spec(self.key), values[0])
+            )
+        elif action == "discard":
+            self.clear()
+            return "下書きを破棄しました。"
+        elif action in ("save", "confirm"):
+            return self.save(ctx, role, confirmed=action == "confirm")
+        elif action == "undo":
+            if self.draft:
+                raise ms.SettingsError("先に下書きを保存するか破棄してください。")
+            children, admin = (
+                place.kind == "server",
+                place.guild_id if role == "admin" else None,
+            )
+            plan = ms.undo_plan(ctx.settings, place, children, admin)
+            _, current = ms.undo_preview(
+                ctx.settings, place, include_children=children, admin_gid=admin
+            )
+            if not current or current != self.undo_id:
+                raise ms.SettingsError(
+                    "設定の履歴が変わりました。画面を更新してからやり直してください。"
+                )
+            assessment = ms.assess(ctx.settings, plan, ctx) if role == "owner" else None
+            self.pending = {
+                "undo": current,
+                "warnings": assessment.warnings if assessment else [],
+            }
+        elif action == "back":
+            self.pending, self.browse = None, ""
+        elif action == "why":
+            self.browse = "why"
         else:
-            o = dict(o, guild_id=None, parent_id=None)
-    tail = None
-    if aid and aid == str(R.ctx.bot_id):
-        inner.append(td("That's my own message."))
-    elif o and o.get("status") == "replied":
-        inner.append(td("I replied."))
-    elif o and o.get("status") == "queued":
-        inner.append(td(f"I'm still working on it (since "
-                        f"{ago(R, o.get('at'))})."))
-    elif o and o.get("status") in REFUSED:
-        o = dict(o, author_id=aid or o.get("author_id"))
-        text, fix, holds = explain_outcome(R, o)
-        inner.append(section(text, fix) if fix else td(text))
-        if fix:
-            short = R.person(aid) or "them"
-            tail = (f"-# Fixing this doesn't answer this message; ask "
-                    f"{short} to send it again.")
-    else:
-        inner.append(td(not_recorded(R, msg, place)))
-    if tail:
-        inner.append(td(tail))
-    return [container(inner, BLURPLE),
-            row(btn("Open settings", cid("pg", ptok(place), "h")))]
+            raise ms.SettingsError(
+                "この操作は利用できません。/settingsを開き直してください。"
+            )
+        return ""
 
-
-def not_recorded(R, msg, place):
-    bot = str(R.ctx.bot_id)
-    mentions = [str((m or {}).get("id")) for m in msg.get("mentions") or []]
-    ref = (msg.get("referenced_message") or {}).get("author") or {}
-    addressed = bot in mentions or str(ref.get("id") or "") == bot
-    if place.kind == "dms":
-        return ("Not recorded: DMs from people who may not DM me aren't "
-                "kept. Use Why no reply? in /settings to check "
-                "them.")
-    where = R.name(place)
-    if addressed:
-        return ("Not recorded: I have no record of it, maybe because it's "
-                "older than what I keep.")
-    rep = value(R, place, "who.replies")
-    how = {"off": f"I'm off in {where}",
-           "when-addressed": f"in {where} I reply only when @mentioned",
-           "conversational": f"in {where} I reply to @mentions, replies "
-                             f"and follow-ups within 2 minutes"
-           }.get(rep, "")
-    return (f"Not recorded: it didn't @mention me or reply to me, and "
-            f"{how}.")
-
-
-# ---------------------------------------------------------------------------
-# Server admins: "Quiet the bot"
-# ---------------------------------------------------------------------------
-QUIETER = ("when-addressed", "off")
-QUIET_WORDS = {"when-addressed": "Only when @mentioned", "off": "Off"}
-
-
-def quieter_values(cur):
-    r = ("off", "when-addressed", "conversational")
-    if cur not in r:
-        return []
-    return [v for v in QUIETER if r.index(v) < r.index(cur)]
-
-
-def admin_ignore(R, gid):
-    """(the owners' own ignore list at the server's layer, the admins'
-    additions) for a server: an admin's entry holds only those two (the
-    engine adds what the owners set elsewhere)."""
-    path = ("servers", str(gid))
-    s_, pin, _src = ms.owners_view(R.st, gid).layer(path, "who.ignore")
-    pin = list(pin) if s_ and isinstance(pin, list) else []
-    e = R.st.overlay.get((path, "who.ignore"))
-    own = e.get("_norm") if isinstance(e, dict) \
-        and ms.entry_role(e) == "admin" else None
-    adds = [p for p in (own if isinstance(own, list) else [])
-            if p not in pin]
-    return pin, adds
-
-
-def quiet_row(R, place, where):
-    """"**In #general:** I chat freely" and its quieter buttons."""
-    cur = value(R, place, "who.replies")
-    words = REPLIES_WORDS.get(cur, "I chat freely")
-    bs = [btn(QUIET_WORDS[x], cid("val", ptok(place), "r", x),
-              DANGER if x == "off" else SECONDARY)
-          for x in quieter_values(cur)]
-    return [td(f"**{where}:** {words}"), row(*bs) if bs else None]
-
-
-def admin_turned_off(R, gid, key):
-    """An admin's entry turned key off for the whole server, and the
-    owners have it on there: an admin may turn it back on."""
-    e = R.st.overlay.get((("servers", str(gid)), key))
-    if ms.entry_role(e) != "admin" or e.get("_norm", e.get("value")) \
-            not in (False, "off"):
-        return False
-    try:
-        return bool(ms.owners_view(R.st, gid).get(key, ms.Scope.server(
-            gid)))
-    except Exception:
-        return False
-
-
-def page_quiet(R, gid):
-    """The admin panel for one server (here = where it was typed)."""
-    server = ms.Place.server(gid)
-    gname = R.gname(gid)
-    here = R.here() if R.in_guild(gid) else server
-    inner = [td(f"## Quiet the bot in {gname}\n-# You're an admin here, so "
-                f"you can make me quieter, never louder. My owners see "
-                f"every change."), sep()]
-    if here.kind == "channel":
-        inner += quiet_row(R, here, f"In {R.name(here)}")
-    inner += quiet_row(R, server, f"In all of {gname}")
-    inner.append(sep())
-    ign = value(R, server, "who.ignore") or []
-    _pin, adds = admin_ignore(R, gid)
-    parts = []
-    for p in ign[:10]:
-        m = f"<@&{p[5:]}>" if str(p).startswith("role:") else f"<@{p}>"
-        parts.append(m + (" (an admin)" if p in adds else " (the owners)"))
-    if len(ign) > 10:
-        parts.append(f"and {len(ign) - 10} more")
-    inner.append(td("**People I ignore here:** "
-                    + (", ".join(parts) if parts else "nobody")))
-    inner.append(row(picker(MENTIONABLE_SELECT, cid("ppl", f"s{gid}", "ig"),
-                            "Ignore someone…", 1, 25)))
-    if adds:
-        inner.append(row(sel(cid("rm", f"s{gid}", "ig"), [
-            opt((R.person(p[5:]) if str(p).startswith("role:")
-                 else R.person(p)) or "Someone an admin added", p)
-            for p in adds[:25]], "Stop ignoring…", 1,
-            min(25, len(adds)))))
-    offs, items = [], []
-    for key in ["media.enabled"]:
-        name = on_off_name(key)
-        if value(R, server, key):
-            items.append(f"{name} on")
-            offs.append(btn(f"Turn off {plain(name)}",
-                            cid("val", f"s{gid}", kcode(key), "off"),
-                            DANGER))
-        elif admin_turned_off(R, gid, key):
-            # "=": back to the owners' value (the engine's admin rule).
-            items.append(f"{name} off (an admin turned it off)")
-            offs.append(btn(f"Turn {plain(name)} back on",
-                            cid("val", f"s{gid}", kcode(key), "="),
-                            SUCCESS))
-    if offs:
-        inner.append(td(f"**In {gname}:** " + ", ".join(items)))
-        inner.append(row(*offs[:5]))
-    inner += last_change_slot(R, server)
-    return finish(R, [container(inner, AMBER),
-                      row(btn("Why no reply?",
-                              cid("pg", ptok(here), "y")))])
-
-
-# ---------------------------------------------------------------------------
-# Confirm card
-# ---------------------------------------------------------------------------
-def page_confirm(R, origin, lines, warnings, tok, undo=False):
-    """A risky outcome; Apply or Cancel (back to the origin page)."""
-    place, page = origin
-    head = "## Check before undoing" if undo else "## Check before applying"
-    body = "\n".join([head] + [clip(x, 300) for x in lines[:8]])
-    inner = [td(body), td("**What this means**\n" + "\n".join(
-        f"- {clip(w, 400)}" for w in warnings[:6]))]
-    return [container(inner, RED),
-            row(btn("Undo" if undo else "Apply",
-                    cid("ok", ptok(place), tok), DANGER),
-                btn("Cancel", cid("pg", ptok(place), page)))]
-
-
-# ---------------------------------------------------------------------------
-# Rendering
-# ---------------------------------------------------------------------------
-def render(R, place, page):
-    """The components of one page (owners; server admins get the panel,
-    or Why)."""
-    if page == "y" and place.kind in ("channel", "server", "dms"):
-        return page_why(R, place)
-    if R.admin:
-        return page_quiet(R, R.admin_gid)
-    if page in ("e", "d", "f", "p"):
-        return page_edit(R, place, page)
-    return page_home(R, place)
-
-
-def show(R, place, page, banner=None):
-    if banner is not None:
-        R.banner = banner
-    return message(R, render(R, place, page))
-
-
-def shown(R, fallback):
-    """(place, page) the clicked message showed, from its own controls:
-    the Why page has a Back (pg:<place>:h); the home page a Why button
-    (pg:<place>:y); an edit page has Save (sv) and a toggle to the
-    other edit page (pg:<place>:d on basic, pg:<place>:e on more).
-    (fallback, "h") when it can't tell."""
-    found = {}
-    edit = None
-    for c in _all((R.ix.get("message") or {}).get("components")):
-        parts = str(c.get("custom_id") or "").split(":")
-        if len(parts) == 4 and parts[:3] == [PREFIX, VERSION, "sv"]:
-            p = R.place(parts[3])
-            if p is not None:
-                edit = p
-        if len(parts) == 5 and parts[:3] == [PREFIX, VERSION, "pg"] \
-                and parts[4] in PAGES:
-            p = R.place(parts[3])
-            if p is not None:
-                found.setdefault(parts[4], p)
-    if edit is not None:
-        # An edit page links to every other edit page the place has,
-        # so the current one is the candidate missing from the links.
-        for cand in edit_pages(R, edit):
-            if cand not in found:
-                return edit, cand
-        return edit, "e"
-    if "h" in found:
-        return found["h"], "y"
-    if "y" in found:
-        return found["y"], "h"
-    return fallback, "h"
-
-
-# ---------------------------------------------------------------------------
-# Writes: every change goes through do_changes (or do_undo), which re-checks
-# who may do it, runs assess (owners: a risky outcome shows a confirm card
-# first) and writes one undo group with muse_settings.apply.
-# ---------------------------------------------------------------------------
-def plain_error(e):
-    text = str(e).strip()
-    return text[0].upper() + text[1:] if text else "That couldn't be saved."
-
-
-def written_place(res, fallback):
-    """The place whose Undo sees the group just written."""
-    places = {p.change.place for p in res.written}
-    if len(places) == 1:
-        return next(iter(places))
-    if all(p.kind in ("defaults", "dms") for p in places):
-        return ms.Place.defaults()
-    servers = {p.guild_id for p in places}
-    if len(servers) == 1 and None not in servers:
-        return ms.Place.server(next(iter(servers)))
-    return fallback
-
-
-def do_changes(R, origin, changes, confirmed=False, named=(), notes=(),
-               headline=None, stash_extra=None, drop_draft=None):
-    """Apply changes (one group) and show the origin page with a banner,
-    or a confirm card, or the error in the banner. headline: the
-    banner's words instead of each change (listed small below it).
-    stash_extra: extra fields for the confirm card's stash payload.
-    drop_draft: a place token whose edit draft this write settles; the
-    draft is dropped once the write lands (a confirm card keeps it
-    until Apply, through the stash payload)."""
-    place, page = origin
-
-    def _drop():
-        if drop_draft:
-            try:
-                R.ctx.session_drop(R.uid, DRAFT_PREFIX + drop_draft)
-            except Exception:
-                pass
-
-    if changes and not confirmed and R.owner:
-        changes = [c for c in changes if not ui_noop(R, c)]
+    def save(self, ctx, role, confirmed=False):
+        place = self.place(ctx)
+        if ctx.settings.overlay_error:
+            raise ms.SettingsError(
+                "config.discord.yamlを読めないため、保存を停止しています。"
+            )
+        if confirmed and not self.pending:
+            raise ms.SettingsError(
+                "確認内容の有効期限が切れました。保存し直してください。"
+            )
+        if confirmed and len(self.pending.get("warnings", [])) > 5:
+            raise ms.SettingsError(
+                "変更を少数ずつ保存して、すべての警告を確認してください。"
+            )
+        if confirmed and "undo" in self.pending:
+            expected = self.pending["undo"]
+            kw = {"children": place.kind == "server", "expect": expected}
+            if role == "admin":
+                kw["admin_gid"] = place.guild_id
+            plan = ms.undo_plan(
+                ctx.settings, place, kw["children"], kw.get("admin_gid")
+            )
+            assessment = ms.assess(ctx.settings, plan, ctx) if role == "owner" else None
+            if assessment and assessment.warnings != self.pending["warnings"]:
+                self.pending["warnings"] = assessment.warnings
+                return ""
+            planned = ms.plan_changes(ctx.settings, plan, role)
+            ctx.undo(place, self.uid, **kw)
+            self.pending = None
+            notify_admin(ctx, role, place, self.uid, planned)
+            return "直前の変更を取り消しました。"
+        changes = self.changes(ctx)
         if not changes:
-            _drop()
-            return show(R, place, page,
-                        [td("**No change:** it's already like that.")])
-    if not changes:
-        return show(R, place, page, [td("**No change.**")])
-    if R.st.overlay_error:
-        return show(R, place, page,
-                    banner_error(OVERLAY_BROKEN.lstrip("⚠ ")))
-    if R.owner:
-        try:
-            a = ms.assess(R.st, changes, R.ctx, R.look, named=named)
-        except ms.SettingsError as e:
-            return show(R, place, page, banner_error(plain_error(e)))
-        if a.risky and not confirmed:
+            return "変更はありません。"
+        for key, old in self.baseline.items():
+            path = ms.place_path(ctx.settings, place, key)
+            if old != (
+                ctx.settings.layer(path, key),
+                current_value(ctx.settings, place, key),
+            ):
+                raise ms.SettingsError(
+                    "編集中に設定が変更されました。下書きを破棄して最新の値からやり直してください。"
+                )
+        if role == "admin":
+            changes = ms.admin_changes(ctx.settings, place.guild_id, changes, ctx)
+        assessment = ms.assess(ctx.settings, changes, ctx) if role == "owner" else None
+        if assessment and assessment.risky:
+            # 確認中に条件が変わった場合は、新しい警告をもう一度表示する。
+            warnings = assessment.warnings
+            if not confirmed or self.pending.get("warnings") != warnings:
+                self.pending = {"warnings": warnings}
+                return ""
+        res = ctx.apply(
+            changes,
+            self.uid,
+            role,
+            admin_gid=place.guild_id if role == "admin" else None,
+        )
+        notify_admin(ctx, role, place, self.uid, res.written)
+        self.clear()
+        return "保存しました。次のメッセージから反映されます。"
+
+
+def notify_admin(ctx, role, place, uid, planned):
+    if role == "admin":
+        for entry in planned:
             try:
-                planned = ms.plan_changes(R.st, changes)
-            except ms.SettingsError as e:
-                return show(R, place, page, banner_error(plain_error(e)))
-            payload = {
-                "kind": "apply",
-                "changes": [dict(c.to_dict(), revert=c.revert)
-                            for c in changes],
-                "named": list(named), "notes": list(notes),
-                "headline": headline,
-                "origin": [ptok(place), page]}
-            if stash_extra:
-                payload.update(stash_extra)
-            tok = R.ctx.stash_put(R.uid, payload, STASH_TTL)
-            return message(R, page_confirm(
-                R, origin, [say_change(R, p.change.place, p.key, p.old,
-                                       p.new, p.path)
-                            for p in planned if not p.noop]
-                or ["No change"], a.warnings, tok))
-    try:
-        if R.admin:
-            res = R.ctx.apply(changes, R.uid, "admin",
-                              admin_gid=R.admin_gid)
-        elif R.owner:
-            res = R.ctx.apply(changes, R.uid, "owner")
-        else:
-            return notice(REFUSAL_SERVER)
-    except ms.SettingsError as e:
-        if R.admin:
-            return notice(ADMIN_ONLY_QUIETER)
-        return show(R, place, page, banner_error(plain_error(e)))
-    _drop()
-    R.reload()
-    if not res.changed:
-        return show(R, place, page,
-                    [td("**No change:** it's already like that.")])
-    if R.admin:
-        for p in res.written:
-            try:
-                R.ctx.notify_owners_admin_change(
-                    R.admin_gid, R.uid, p.keystr, p.old, p.new)
-            except Exception as e:
-                R.ctx.log(f"settings_ui: admin notice: {e}")
-    if headline:
-        text = headline + "\n-# " + " · ".join(
-            f"{ui_label(p.key)}: {ui_value(R, p.key, p.old)} → "
-            f"{ui_value(R, p.key, p.new)}" for p in res.written)
+                key = entry.keystr if hasattr(entry, "keystr") else entry.key
+                ctx.notify_owners_admin_change(
+                    place.guild_id,
+                    uid,
+                    key,
+                    getattr(entry, "old", None),
+                    getattr(entry, "new", None),
+                )
+            except Exception as exc:
+                ctx.log(f"admin notification: {exc}")
+
+
+def parse_input(spec, raw):
+    if spec.type == "number":
+        value = None if not raw.strip() and spec.none else json.loads(raw)
+    elif spec.type == "people" or spec.ids:
+        value = [v for v in re.split(r"[\s,]+", raw.strip()) if v]
     else:
-        text = "; ".join(say_change(R, p.change.place, p.key, p.old,
-                                    p.new, p.path) for p in res.written)
-    if notes:
-        text += "\n" + "\n".join(notes)
-    up = ms.Place.server(R.admin_gid) if R.admin \
-        else written_place(res, place)
-    return show(R, place, page, banner_done(R, text, up, res.group))
-
-
-def ui_noop(R, change):
-    """A change that would change nothing as this page sees it: the
-    place sets nothing and the value equals what it follows (the engine
-    cannot tell a channel with no category from an unknown one, so it
-    writes such a value; the page knows)."""
-    if change.path is not None or change.revert:
-        return False
-    try:
-        v = Val(R, change.place, change.key)
-    except ms.SettingsError:
-        return False
-    if v.set:
-        if change.value == "inherit":
-            return False
-        ok, norm = ms.normalize(v.spec, change.value)
-        return ok and norm == v.here and ms.entry_role(
-            R.st.overlay.get((v.path, change.key))) != "admin"
-    if change.value == "inherit":
-        return True
-    ok, norm = ms.normalize(v.spec, change.value)
+        value = raw
+    ok, value = spec.normalize(value)
     if not ok:
-        return False
-    if isinstance(norm, list) and isinstance(v.inherited, list):
-        return sorted(norm) == sorted(v.inherited)
-    return norm == v.inherited
+        raise ms.SettingsError(value)
+    return value
 
 
-def do_undo(R, place, expect=None, origin=None, confirmed=False):
-    origin = origin or (place, "h")
-    if R.st.overlay_error:
-        return show(R, *origin, banner_error(OVERLAY_BROKEN.lstrip("⚠ ")))
-    if R.admin:
-        if place.kind not in ("server", "channel") \
-                or place.guild_id != R.admin_gid:
-            return notice(ADMIN_ONLY_QUIETER)
-        up, children, admin_gid = ms.Place.server(R.admin_gid), True, \
-            R.admin_gid
+class Action(
+    ui.DynamicItem, template=r"mset:(?P<token>[A-Za-z0-9_-]{12}):(?P<action>[a-z]+)"
+):
+    """discord.py routes both buttons and selects; the session owns state."""
+
+    def __init__(self, item):
+        super().__init__(item)
+        match = self.template.fullmatch(item.custom_id)
+        self.token, self.action = match["token"], match["action"]
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match, /):
+        return cls(item)
+
+    async def callback(self, interaction):
+        try:
+            ctx = await asyncio.to_thread(interaction.client.settings_context)
+            screen = ctx.session_peek(str(interaction.user.id), self.token)
+            if not isinstance(screen, Screen):
+                raise ms.SettingsError(
+                    "この画面は期限切れです。/settingsを開き直してください。"
+                )
+            screen.authorize(interaction, ctx)
+            if self.action == "modal":
+                modal = ValueModal(screen, ctx)
+                check_output(interaction, modal.to_dict())
+                await interaction.response.send_modal(modal)
+                return
+            await interaction.response.defer()
+            async with screen.lock:
+                # 同じ画面で連続クリックしても、最新の設定・下書きから処理する。
+                ctx = await asyncio.to_thread(interaction.client.settings_context)
+                role = screen.authorize(interaction, ctx)
+                vals = (interaction.data or {}).get("values", [])
+                if self.action == "people":
+                    vals = [
+                        vals,
+                        (interaction.data.get("resolved") or {}).get("roles", {}),
+                    ]
+                banner = await asyncio.to_thread(
+                    screen.act, ctx, role, self.action, vals
+                )
+                await redraw(interaction, screen, banner)
+        except (ms.SettingsError, ValueError, KeyError, IndexError) as exc:
+            await error(interaction, str(exc))
+        except Exception as exc:
+            interaction.client.settings_log(
+                f"settings action failed: {type(exc).__name__}: {exc}"
+            )
+            await error(
+                interaction,
+                "設定画面でエラーが発生しました。/settingsを開き直してください。",
+            )
+
+
+class ValueModal(ui.Modal):
+    def __init__(self, screen, ctx):
+        self.screen, self.key = screen, screen.key
+        spec = ctx.settings.spec(self.key)
+        current = screen.draft.get(
+            self.key, current_value(ctx.settings, screen.place(ctx), self.key)
+        )
+        if (
+            self.key == "style.notes"
+            and screen.place(ctx).kind == "channel"
+            and self.key not in screen.draft
+        ):
+            path = ms.place_path(ctx.settings, screen.place(ctx), self.key)
+            supplied, local, _ = ctx.settings.layer(path, self.key)
+            current = local if supplied else ""
+        if current == "inherit":
+            current = ""
+        if (spec.type == "people" or spec.ids) and not isinstance(current, list):
+            current = []
+        default = (
+            ", ".join(current)
+            if isinstance(current, list)
+            else ""
+            if current is None
+            else str(current)
+        )
+        super().__init__(
+            title=TITLES.get(self.key, ms.label(self.key))[:45],
+            timeout=TTL,
+            custom_id=f"{PREFIX}{screen.token}:submit",
+        )
+        hint = (
+            "空欄で無制限"
+            if spec.type == "number" and spec.none
+            else (
+                "ユーザーID / role:ロールIDをカンマか改行で区切る"
+                if spec.type == "people" or spec.ids
+                else "設定する値"
+            )
+        )
+        if spec.type == "number":
+            hint = f"{spec.min}〜{spec.max}の整数。" + (
+                "空欄で無制限" if spec.none else ""
+            )
+        self.input = ui.TextInput(
+            style=discord.TextStyle.paragraph
+            if spec.type != "number"
+            else discord.TextStyle.short,
+            default=default[: spec.maxlen or 4000],
+            required=False,
+            max_length=spec.maxlen or 4000,
+        )
+        self.add_item(ui.Label(text="新しい値", description=hint, component=self.input))
+
+    async def on_submit(self, interaction):
+        await interaction.response.defer()
+        try:
+            async with self.screen.lock:
+                ctx = await asyncio.to_thread(interaction.client.settings_context)
+                active = ctx.session_peek(str(interaction.user.id), self.screen.token)
+                if active is not self.screen:
+                    raise ms.SettingsError(
+                        "画面の有効期限が切れました。/settingsを開き直してください。"
+                    )
+                role = self.screen.authorize(interaction, ctx)
+                if self.screen.key != self.key:
+                    raise ms.SettingsError(
+                        "編集中の設定項目が変わりました。入力画面を開き直してください。"
+                    )
+                await asyncio.to_thread(
+                    self.screen.act, ctx, role, "input", [self.input.value]
+                )
+                await redraw(
+                    interaction,
+                    self.screen,
+                    "下書きに追加しました。保存するまで反映されません。",
+                )
+        except (ms.SettingsError, ValueError) as exc:
+            await error(interaction, str(exc))
+
+    async def on_error(self, interaction, exc):
+        interaction.client.settings_log(
+            f"settings modal failed: {type(exc).__name__}: {exc}"
+        )
+        await error(
+            interaction, "入力を保存できませんでした。設定画面を開き直してください。"
+        )
+
+
+async def error(interaction, message):
+    kwargs = dict(
+        content=text(message, 1200),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions.none(),
+    )
+    check_output(interaction, kwargs)
+    if interaction.response.is_done():
+        await interaction.followup.send(**kwargs)
     else:
-        up, children, admin_gid = place, place.kind == "server", None
-    try:
-        text, gid = ms.undo_preview(R.st, up, include_children=children,
-                                    names=R.look, admin_gid=admin_gid)
-        plan = ms.undo_plan(R.st, up, children, admin_gid)
-    except ms.SettingsError as e:
-        return show(R, *origin, banner_error(plain_error(e)))
-    if not gid:
-        return show(R, *origin, [td("Nothing to undo here.")])
-    if not expect or expect != gid:
-        text = clip(f"Something changed since. Undo now would make: "
-                    f"{say_undo(R, plan)}", 900)
-        try:
-            R.banner = [section(text, btn("Undo that",
-                                          cid("un", ptok(up), gid)))]
-        except BadId:   # no Undo without its group (the stale check)
-            R.banner = [td(text)]
-        return show(R, *origin)
-    if R.owner and not confirmed:
-        try:
-            a = ms.assess(R.st, plan, R.ctx, R.look)
-        except ms.SettingsError:
-            a = None
-        if a is not None and a.risky:
-            tok = R.ctx.stash_put(R.uid, {
-                "kind": "undo", "place": ptok(up), "expect": gid,
-                "origin": [ptok(origin[0]), origin[1]]}, STASH_TTL)
-            lines = ["Undo would make: " + clip(say_undo(R, plan), 600)]
-            return message(R, page_confirm(R, origin, lines, a.warnings,
-                                           tok, undo=True))
-    text = say_undo(R, plan)
-    try:
-        kw = {"children": children, "expect": gid}
-        if admin_gid:
-            kw["admin_gid"] = admin_gid
-        keys = R.ctx.undo(up, R.uid, **kw)
-    except ms.SettingsError as e:
-        if R.admin:
-            return notice(ADMIN_ONLY_QUIETER)
-        return show(R, *origin, banner_error(plain_error(e)))
-    if not keys:
-        return show(R, *origin, [td("Nothing to undo here.")])
-    if R.admin:
-        before = R.st
-        R.reload()
-        for ch in plan:
-            try:
-                sc = ms._scope_for(ch.place, ch.key, ch.path)
-                R.ctx.notify_owners_admin_change(
-                    R.admin_gid, R.uid,
-                    ms.format_key(ms.change_path(before, ch), ch.key),
-                    before.get(ch.key, sc), R.st.get(ch.key, sc))
-            except Exception as e:
-                R.ctx.log(f"settings_ui: admin notice: {e}")
-    R.reload()
-    return show(R, *origin, [td(clip(f"↩ **Undone.** {text}", 900))])
-
-
-# ---------------------------------------------------------------------------
-# Building changes from a click
-# ---------------------------------------------------------------------------
-def people_from(R, values, place):
-    """([ids and "role:<id>"], roles dropped?) from a user / mentionable
-    select's values. Only ids Discord resolved count (a forged value is
-    dropped), and a role only for the server the interaction is in: a
-    role id means nothing in another server."""
-    res = R.data.get("resolved") or {}
-    users = {str(u) for u in (res.get("users") or {})} | \
-        {str(u) for u in (res.get("members") or {})}
-    roles = {str(r) for r in (res.get("roles") or {})}
-    own = place.guild_id is not None and R.in_guild(place.guild_id)
-    out, dropped = [], False
-    for v in values:
-        if v in roles:
-            if own:
-                out.append(f"role:{v}")
-            else:
-                dropped = True
-        elif v in users and _ID.fullmatch(v):
-            out.append(v)
-    return list(dict.fromkeys(out)), dropped
-
-
-def list_change(R, place, key, new):
-    """A Change setting a people list, or a reset when it matches what
-    the place would inherit anyway."""
-    v = Val(R, place, key)
-    if key == "who.allow" and not new:
-        return ms.Change(place, key, "inherit")
-    if key == "who.ignore" and not new and not v.inherited:
-        return ms.Change(place, key, "inherit")
-    if isinstance(v.inherited, list) and sorted(v.inherited) == sorted(new):
-        return ms.Change(place, key, "inherit")
-    return ms.Change(place, key, new)
-
-
-def owners_set(R):
-    return {str(o) for o in R.ctx.owners}
-
-
-def fix_changes(R, place, key, op):
-    """The changes a Why fix makes (None: malformed)."""
-    if op == "=":
-        return [ms.Change(place, key, "inherit")]
-    if op.startswith("v") and len(op) > 1:
-        return [ms.Change(place, key, op[1:])]
-    if op[:1] in "+-" and _ID.fullmatch(op[1:]):
-        uid = op[1:]
-        if key == "who.dms_from":
-            if place.kind != "dms" or op[0] != "+":
-                return None
-            return ms.dms_from_changes(R.st, "list", dm_people(R) + [uid])
-        spec = R.st.spec(key)
-        if spec is None or spec.type != "people":
-            return None
-        if R.admin and key == "who.ignore" and op[0] == "-" \
-                and place.kind == "server":
-            pin, adds = admin_ignore(R, place.guild_id)
-            left = pin + [p for p in adds if p != uid]
-            return [ms.Change(place, key, left if left != pin or not adds
-                              else "inherit")]
-        cur = value(R, place, key)
-        cur = list(cur) if isinstance(cur, list) else []
-        new = cur + [uid] if op[0] == "+" else [p for p in cur if p != uid]
-        return [list_change(R, place, key, list(dict.fromkeys(new)))]
-    return None
-
-
-def parse_ids(text):
-    return list(dict.fromkeys(re.findall(r"\d{15,25}", str(text or ""))))
-
-
-# ---------------------------------------------------------------------------
-# Edit pages: stage into a draft, then Save applies it as one change.
-# A draft is a Ctx session (15 minutes) holding serialized Changes for
-# one place; every edit-page control folds into it instead of writing.
-# ---------------------------------------------------------------------------
-DRAFT_PREFIX = "draft:"
-
-# The detail codes each kind of place offers on the two "more
-# settings" edit pages: "d" is people & replies, "f" is limits &
-# features (the basic edit page "e" reuses PLACE_CONTROLS + notes).
-# Split in two because one page of pickers would break Discord's
-# 40-component limit.
-DETAIL_PAGES = {
-    "p": {"channel": (), "server": ("oc",), "dms": (),
-          "defaults": ("oc", "ea")},
-    "d": {"channel": (),
-          "server": ("al", "ig", "b", "bx", "rw"),
-          "dms": ("al", "ig", "b", "rw"),
-          "defaults": ("al", "ig", "b", "bx", "rw")},
-    "f": {"channel": ("pe",),
-          "server": ("pd", "m", "su", "pe", "mp"),
-          "dms": ("pd", "m", "su", "pe"),
-          "defaults": ("pd", "m", "su", "pe", "pf", "un", "p1", "p7")},
-}
-DETAIL_CODES = {kind: tuple(dict.fromkeys(
-    DETAIL_PAGES["d"][kind] + DETAIL_PAGES["f"][kind] + DETAIL_PAGES["p"][kind]))
-    for kind in DETAIL_PAGES["d"]}
-EDIT_PAGE_LABELS = {"e": "Basic settings", "d": "People & replies",
-                    "f": "Limits & features", "p": "Permissions"}
-
-
-def edit_pages(R, place):
-    """The edit pages place has: always the basic page, plus each
-    detail page that has a control for this kind of place."""
-    out = ["e"]
-    for p in ("d", "f", "p"):
-        if DETAIL_PAGES[p].get(place.kind):
-            out.append(p)
-    return out
-
-
-def draft_changes(R, place):
-    """The draft's staged changes for place (Change objects), [] for
-    an open-but-empty draft, None when there is no draft."""
-    try:
-        payload = R.ctx.session_peek(R.uid, DRAFT_PREFIX + ptok(place))
-    except Exception:
-        return None
-    if not isinstance(payload, dict) or payload.get("kind") != "draft":
-        return None
-    out = []
-    for d in payload.get("changes") or []:
-        try:
-            out.append(ms.Change.from_dict(d, R.ctx))
-        except ms.SettingsError:
-            pass
-    return out
-
-
-def draft_store(R, place, changes):
-    if changes:
-        R.ctx.session_put(R.uid, DRAFT_PREFIX + ptok(place), {
-            "kind": "draft",
-            "changes": [c.to_dict() for c in changes]}, STASH_TTL)
-    else:
-        R.ctx.session_drop(R.uid, DRAFT_PREFIX + ptok(place))
-
-
-def stage(R, place, page, changes, banner=None):
-    """Fold changes into place's draft (a later pick for the same
-    setting replaces the earlier one) and re-show the edit page."""
-    cur = draft_changes(R, place) or []
-    ids = {(ms.format_place(c.place), c.key) for c in changes}
-    cur = [c for c in cur if (ms.format_place(c.place), c.key) not in ids]
-    draft_store(R, place, cur + list(changes))
-    return show(R, place, page, banner)
-
-
-def draft_block(R, place):
-    """The "waiting to be saved" summary on an edit page."""
-    changes = draft_changes(R, place)
-    if changes is None:
-        return td("-# Editing. Nothing below applies until you press "
-                  "Save.")
-    if not changes:
-        return td("-# No changes yet. Change anything below and it "
-                  "waits here until you press Save.")
-    try:
-        planned = ms.plan_changes(R.st, changes)
-        lines = [say_change(R, p.change.place, p.key, p.old, p.new,
-                            p.path) for p in planned if not p.noop]
-    except ms.SettingsError:
-        lines = []
-    if not lines:
-        return td("**Waiting to be saved**\n-# Every change matches "
-                  "how it already is; saving changes nothing.")
-    body = "\n".join(f"- {clip(x, 300)}" for x in lines[:10])
-    if len(lines) > 10:
-        body += f"\n-# …and {len(lines) - 10} more"
-    return td(f"**Waiting to be saved ({len(lines)})**\n{body}")
-
-
-def inherit_opt(R, place, key):
-    """The "=" option of a detail select: stop setting it here and
-    follow the value the place would inherit."""
-    v = Val(R, place, key)
-    if place.kind == "channel":
-        o = follow_option(R, place, key, ui_value(R, key, v.inherited))
-        if not v.set:
-            o["default"] = True
-        return o
-    label = "Reset to the built-in value" if place.kind == "defaults" \
-        else "Use the setting above"
-    return opt(label, "=", f"Currently: {ui_value(R, key, v.inherited)}",
-               default=not v.set)
-
-
-def ctl_choice(R, place, code, key, choices, title):
-    v = Val(R, place, key)
-    opts = [inherit_opt(R, place, key)]
-    for val_, label, d in choices:
-        opts.append(opt(label, val_, d,
-                        default=v.set and v.here == val_))
-    return title, [row(sel(cid("set", ptok(place), code), opts,
-                           title.partition("\n")[0] + "…"))]
-
-
-def ctl_number(R, place, code, key, title, choices, none_label="No limit",
-               none_ok=True):
-    v = Val(R, place, key)
-    opts = [inherit_opt(R, place, key)]
-    if none_ok:
-        opts.append(opt(none_label, "none",
-                        default=v.set and v.here is None))
-    nums = list(choices)
-    if v.set and isinstance(v.here, int) and v.here not in nums:
-        nums = sorted(nums + [v.here])
-    for n in nums:
-        opts.append(opt(f"{n:,}", str(n), default=v.set and v.here == n))
-    return title, [row(sel(cid("set", ptok(place), code), opts,
-                           title.partition("\n")[0] + "…"))]
-
-
-def ctl_people(R, place, code, key, title, everyone=False, owners=False,
-               min_values=0):
-    btns = []
-    if everyone:
-        btns.append(btn("Everyone", cid("tg", ptok(place), code,
-                                        "everyone")))
-    if owners:
-        btns.append(btn(only_you(R), cid("tg", ptok(place), code,
-                                         "owners")))
-    btns.append(btn("Use the setting above",
-                    cid("tg", ptok(place), code, "=")))
-    rows = [row(picker(MENTIONABLE_SELECT, cid("pk", ptok(place), code),
-                       "Pick people or roles…", min_values, 25)),
-            row(*btns)]
-    return f"{title}\n-# Now: {ui_value(R, key, value(R, place, key))}", \
-        rows
-
-
-def ctl_notes(R, place):
-    cur = value(R, place, "style.notes")
-    note = f"\n-# Now: {clip(str(cur), 120)}" if cur else "\n-# None set"
-    return "Notes for how I reply" + note, [
-        row(btn("Edit notes…", cid("mod", ptok(place), "n")))]
-
-
-DETAIL_CONTROLS = {
-    "oc": lambda R, p: ctl_choice(R, p, "oc", "abilities.owner_commands", (
-        ("on", "Allow", "Owners may request Discord operations"),
-        ("off", "Deny", "Disable owner Discord operations here")), "Owner commands"),
-    "ea": lambda R, p: ctl_choice(R, p, "ea", "abilities.external_apps", (
-        ("off", "Disabled", "No external app calls"),
-        ("read-only", "Read only", "Allow reads; deny writes"),
-        ("confirm", "Confirm writes", "Writes require signed approval"),
-        ("write", "Scoped automatic writes", "Only configured targets skip approval"),
-        ("unconditional", "Unconditional approval", "Registered writes and dangerous actions skip approval")),
-        "External apps (everywhere)\nApp-specific limits still apply; send a new owner DM after changing."),
-    "al": lambda R, p: ctl_people(R, p, "al", "who.allow",
-                                  "Who I answer", everyone=True,
-                                  min_values=1),
-    "ig": lambda R, p: ctl_people(R, p, "ig", "who.ignore",
-                                  "Who I ignore"),
-    "rw": lambda R, p: ctl_people(R, p, "rw", "abilities.reminders",
-                                  "Who can set reminders & watches",
-                                  everyone=True, owners=True),
-    "b": lambda R, p: ctl_choice(R, p, "b", "who.bots", (
-        ("ignore", "Ignore other bots", "Never answer another bot"),
-        ("when-addressed", "Answer when they address me",
-         "Bots can talk to me when they @mention me or reply to me")),
-        "Other bots"),
-    "bx": lambda R, p: ctl_number(R, p, "bx", "who.bot_exchange_limit",
-                                  "Replies in a row with one bot",
-                                  (1, 2, 3, 5, 10),
-                                  none_label="No limit"),
-    "pd": lambda R, p: ctl_number(R, p, "pd", "limits.per_day",
-                                  "Replies a day here", CAP_CHOICES),
-    "m": lambda R, p: ctl_choice(R, p, "m", "privacy.memory", (
-        ("everything", "Everything about you", "Private facts too; "
-         "only sensible in small, trusted servers"),
-        ("public-only", "Public facts only", "Things said in public "
-         "channels, never DMs or private facts"),
-        ("nothing", "Nothing", "I use nothing I remember about people "
-         "here")), "What I remember about people"),
-    "su": lambda R, p: ctl_choice(R, p, "su", "privacy.suspicious", (
-        ("hold-for-review", "Hold for review", "Messages that look "
-         "like prompt injection wait for an owner's OK"),
-        ("ignore", "Just ignore them", "Such messages get no reply")),
-        "Messages that look like attacks"),
-    "pe": lambda R, p: ctl_choice(R, p, "pe", "proactive.enabled", (
-        ("on", "On", "I may reach out on my own: check-ins, nudges"),
-        ("off", "Off", "I only ever answer")), "Reaching out on my own"),
-    "pf": lambda R, p: ctl_choice(R, p, "pf", "proactive.frequency", (
-        ("rarely", "Rarely", "Up to 2 a day"),
-        ("sometimes", "Sometimes", "Up to 5 a day"),
-        ("often", "Often", "Up to 10 a day")),
-        "How often I reach out (everywhere)"),
-    "un": lambda R, p: ctl_choice(R, p, "un", "updates.notify", (
-        ("on", "On", "Owners hear about muse-discord updates"),
-        ("off", "Off", "No update notices")), "Update notices"),
-    "mp": lambda R, p: ctl_number(R, p, "mp", "media.per_day",
-                                  "Images & video a day", (5, 10, 20, 50)),
-    "p1": lambda R, p: ctl_number(R, p, "p1",
-                                  "proactive.per_person_per_day",
-                                  "Check-ins per person a day",
-                                  (0, 1, 2, 3, 5), none_ok=False),
-    "p7": lambda R, p: ctl_number(R, p, "p7",
-                                  "proactive.per_person_per_week",
-                                  "Check-ins per person a week",
-                                  (0, 1, 3, 5, 10, 20), none_ok=False),
-}
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-def handle(interaction, ctx):
-    """The full interaction callback body ({"type": 4|7|9, "data": ...})
-    for /settings, the "Why no reply?" message command, or a component /
-    modal submit whose custom_id starts with "mdset:". Never raises: an
-    error is logged and answered with an ephemeral apology. No network."""
-    try:
-        return _handle(interaction, ctx)
-    except Exception as e:
-        try:
-            ctx.log(f"settings_ui: {type(e).__name__}: {e}\n"
-                    + traceback.format_exc())
-        except Exception:
-            pass
-        return notice(APOLOGY)
-
-
-def not_there(R, gid):
-    """The bot is not in server gid (when the server list is known)."""
-    gs = R.guilds()
-    return bool(gs) and str(gid) not in gs
-
-
-def refusal(R):
-    return notice(REFUSAL_SERVER if R.guild_id else REFUSAL_DM)
-
-
-def _handle(ix, ctx):
-    R = Req(ix, ctx)
-    data = R.data
-    t = ix.get("type")
-    if t == 2:
-        R.new = True
-        if data.get("type") == 3 or data.get("name") in WHY_COMMANDS:
-            if data.get("name") not in WHY_COMMANDS:
-                return notice(OUT_OF_DATE)
-            got = why_card(R)
-            return got if isinstance(got, dict) else message(R, got)
-        if data.get("name") != COMMAND:
-            return notice(OUT_OF_DATE)
-        return on_command(R)
-    if t not in (3, 5):
-        return notice(OUT_OF_DATE)
-    custom = str(data.get("custom_id") or "")
-    parts = custom.split(":")
-    if parts[0] != PREFIX or len(parts) < 2 or len(custom) > CUSTOM_ID_MAX:
-        return notice(OUT_OF_DATE)
-    if parts[1] == "open":
-        # The join DM's Configure button (kept: join DMs are durable).
-        if len(parts) != 4 or parts[2] != "server" \
-                or not _ID.fullmatch(parts[3]):
-            return notice(OUT_OF_DATE)
-        if not R.owner:
-            return refusal(R)
-        if not_there(R, parts[3]):
-            return notice(NOT_THERE)
-        R.new = True
-        return show(R, ms.Place.server(parts[3]), "h")
-    if parts[1] != VERSION or len(parts) < 4:
-        return notice(OUT_OF_DATE)
-    if R.role is None:
-        return refusal(R)
-    verb, args = parts[2], parts[3:]
-    place = R.place(args[0])
-    if place is None:
-        return notice(OUT_OF_DATE)
-    if R.admin and not admin_may(R, verb, place, args):
-        return notice(ADMIN_ONLY_QUIETER)
-    fn = VERBS.get(verb)
-    if fn is None:
-        return notice(OUT_OF_DATE)
-    values = [str(v) for v in data.get("values") or []]
-    return fn(R, place, args[1:], values)
-
-
-def admin_may(R, verb, place, args):
-    """What a server admin may even try (the engine's admin rule checks
-    every write again): their own server's panel, Why, and quieter
-    writes there."""
-    if place.kind not in ("server", "channel") \
-            or place.guild_id != R.admin_gid:
-        return False
-    if place.kind == "channel" and R.chan(place.guild_id,
-                                          place.channel_id) is None:
-        return False
-    if verb == "pg":
-        return len(args) == 2 and args[1] in PAGES
-    return verb in ("val", "ppl", "rm", "un", "fx", "pz", "ok")
-
-
-def on_command(R):
-    """/settings: owners get the place they typed it in; server admins
-    the "Quiet the bot" panel; anyone else a refusal."""
-    if R.role is None:
-        return refusal(R)
-    if R.admin:
-        return message(R, page_quiet(R, R.admin_gid))
-    R.thread_note = R.typed()[1]
-    return show(R, R.here(), "h")
-
-
-def gone(R, place):
-    """The page to show instead when place no longer exists (a deleted
-    channel, a server the bot left), else None."""
-    if place.kind == "channel":
-        chans = R.channels(place.guild_id)
-        if chans and place.channel_id not in chans \
-                and place.channel_id not in R.st.channels_listed(
-                    place.guild_id):
-            return show(R, ms.Place.server(place.guild_id), "h",
-                        [td("That channel no longer exists.")])
-    if place.kind in ("server", "channel"):
-        gs = R.guilds()
-        if gs and place.guild_id not in gs \
-                and place.guild_id not in R.st.servers_listed():
-            return show(R, R.here(), "h",
-                        [td("I'm not in that server any more.")])
-    return None
-
-
-def _key(R, code):
-    key = kdecode(code)
-    if key is None or R.st.spec(key) is None:
-        return None
-    return key
-
-
-def v_pg(R, place, args, values):
-    if len(args) != 1 or args[0] not in PAGES:
-        return notice(OUT_OF_DATE)
-    return gone(R, place) or show(R, place, args[0])
-
-
-def v_wh(R, place, args, values):
-    """The Where select: here, its server, or everywhere."""
-    if not R.owner:
-        return refusal(R)
-    if args or len(values) != 1:
-        return notice(OUT_OF_DATE)
-    target = R.place(values[0])
-    if target is None or target not in where_options(R, place):
-        return notice(OUT_OF_DATE)
-    if target.guild_id and not_there(R, target.guild_id):
-        return notice(NOT_THERE)
-    return gone(R, target) or show(R, target, "h")
-
-
-def set_changes(R, place, code, v):
-    """The changes one of the page's selects makes, None (not a value
-    it offers), or a str (nothing to change: the banner's words)."""
-    kind = place.kind
-    if code == "r":
-        if v == "=" and kind == "channel":
-            return [ms.Change(place, "who.replies", "inherit")]
-        if v in ("conversational", "when-addressed"):
-            return [ms.Change(place, "who.replies", v)]
-        return None
-    if code == "ln":
-        if v in ("brief", "normal", "detailed"):
-            return [ms.Change(place, "style.length", v)]
-        return None
-    if code == "med":
-        if kind in ("channel", "dms"):
-            if v == "=" and kind == "channel":
-                return [ms.Change(place, "media.enabled", "inherit")]
-            if v in ("on", "off"):
-                return [ms.Change(place, "media.enabled", v)]
-            return None
-        if v == "off":
-            return [ms.Change(place, "media.enabled", "off")]
-        if v in ("owners", "everyone"):
-            return [ms.Change(place, "media.enabled", "on"),
-                    ms.Change(place, "media.who", v)]
-        if v == "list":
-            return "You already picked who can. Use Edit settings to change who."
-        return None
-    if code == "df":
-        if v in ("owners", "shared-servers", "anyone", "nobody"):
-            return ms.dms_from_changes(R.st, v)
-        if v == "list":
-            return "You already picked who can DM me. Use Edit settings to change who."
-        return None
-    if code == "pp":
-        if v == "none":
-            return [ms.Change(place, "limits.per_person_per_day", None)]
-        if _ID.fullmatch(v):
-            ok, _n = ms.normalize(R.st.spec("limits.per_person_per_day"), int(v))
-            return [ms.Change(place, "limits.per_person_per_day",
-                              int(v))] if ok else None
-        return None
-    # The detail controls (edit pages). "=" is the inherit fallthrough
-    # at the end; a people key's list values come through pk instead.
-    if code in ("b", "m", "su", "pe", "pf", "un", "rw", "oc", "ea"):
-        key = kdecode(code)
-        vals = {"oc": ("on", "off"),
-                "ea": ("off", "read-only", "confirm", "write", "unconditional"),
-                "b": ("ignore", "when-addressed"),
-                "m": ("everything", "public-only", "nothing"),
-                "su": ("hold-for-review", "ignore"),
-                "pe": ("on", "off"), "un": ("on", "off"),
-                "pf": ("rarely", "sometimes", "often"),
-                "rw": ("owners", "everyone")}[code]
-        if v in vals:
-            return [ms.Change(place, key, v)]
-    if code in ("bx", "pd", "mp", "p1", "p7"):
-        key = kdecode(code)
-        spec = R.st.spec(key)
-        if v == "none":
-            return [ms.Change(place, key, None)] \
-                if spec is not None and spec.none else None
-        if _ID.fullmatch(v):
-            ok, _n = ms.normalize(spec, int(v))
-            return [ms.Change(place, key, int(v))] if ok else None
-        return None
-    if v == "=" and code != "df":
-        key = kdecode(code)
-        if key is not None:
-            return [ms.Change(place, key, "inherit")]
-    return None
-
-
-def v_set(R, place, args, values):
-    """One of the page's settings selects. On an edit page the pick is
-    staged into the draft; on the home page it applies at once (the
-    detail codes exist only on edit pages)."""
-    if not R.owner:
-        return refusal(R)
-    if len(args) != 1 or len(values) != 1:
-        return notice(OUT_OF_DATE)
-    code = args[0]
-    origin = shown(R, place)
-    editing = origin[1] in ("e", "d", "f", "p")
-    basic = code in PLACE_CONTROLS.get(place.kind, ())
-    detail = code in DETAIL_CODES.get(place.kind, ())
-    if not basic and not (detail and editing):
-        return notice(OUT_OF_DATE)
-    changes = set_changes(R, place, code, values[0])
-    if changes is None:
-        return notice(OUT_OF_DATE)
-    if isinstance(changes, str):
-        return show(R, *origin, [td(f"**No change:** {changes}")])
-    if editing:
-        return stage(R, place, origin[1], changes)
-    return do_changes(R, origin, changes)
-
-
-# The keys an owner's val button may set (the page's own controls).
-OWNER_VAL_KEYS = ("who.replies", "media.enabled")
-
-
-def v_val(R, place, args, values):
-    if len(args) != 2:
-        return notice(OUT_OF_DATE)
-    key = _key(R, args[0])
-    if key is None or (R.owner and key not in OWNER_VAL_KEYS):
-        return notice(OUT_OF_DATE)
-    write = "inherit" if args[1] == "=" else args[1]
-    if write != "inherit":
-        ok, _norm = ms.normalize(R.st.spec(key), write)
-        if not ok:
-            return notice(OUT_OF_DATE)
-    return do_changes(R, shown(R, place), [ms.Change(place, key, write)])
-
-
-def v_pre(R, place, args, values):
-    if not R.owner:
-        return refusal(R)
-    if args or place.kind != "server" or not values:
-        return notice(OUT_OF_DATE)
-    if values[0] == CUSTOMIZED:     # the "Customized" option: nothing
-        return show(R, *shown(R, place))
-    if values[0] not in ms.PRESETS:
-        return notice(OUT_OF_DATE)
-    name = values[0]
-    try:
-        changes = ms.preset_changes(R.st, name, place, R.ctx, big="skip")
-    except ms.SettingsError as e:
-        return show(R, *shown(R, place), banner_error(plain_error(e)))
-    title = ms.PRESETS[name][0]
-    notes = []
-    members = R.members(place.guild_id)
-    if title == "Friends" and members is not None \
-            and members > ms.BIG_FOR_MEMORY:
-        gname = R.gname(place.guild_id)
-        notes.append(f"-# I still keep to public facts: {gname} has more "
-                     f"than {ms.BIG_FOR_MEMORY} members. Use Edit settings "
-                     f"to change this explicitly.")
-    if not changes:
-        if notes:   # Friends, held back only by the big-server rule
-            R.banner = [td(f"**No change:** {R.gname(place.guild_id)} has "
-                           f"more than {ms.BIG_FOR_MEMORY} members, too "
-                           f"many for Friends' sharing of private facts, "
-                           f"so I keep to public facts there. Everything "
-                           f"else already matches Friends.")]
+        await interaction.response.send_message(**kwargs)
+
+
+async def redraw(interaction, screen, banner=""):
+    ctx = await asyncio.to_thread(interaction.client.settings_context)
+    role = screen.authorize(interaction, ctx)
+    view = Panel(screen, ctx, role, banner, interaction.guild_id)
+    check_output(interaction, view.to_components())
+    ctx.session_put(screen.uid, screen.token, screen, ttl=TTL)
+    await interaction.edit_original_response(
+        view=view, allowed_mentions=discord.AllowedMentions.none()
+    )
+
+
+class Panel(ui.LayoutView):
+    def __init__(self, screen, ctx, role, banner="", interaction_gid=None):
+        super().__init__(timeout=None)
+        self.screen, self.ctx, self.role = screen, ctx, role
+        self.place = screen.place(ctx)
+        self.interaction_gid = str(interaction_gid) if interaction_gid else None
+        self.body = ui.Container(accent_colour=discord.Colour.blurple())
+        self.add_item(self.body)
+        self.body.add_item(
+            ui.TextDisplay(
+                f"## Museの設定 · {text(ms.place_name(self.place, ctx.names), 100)}"
+            )
+        )
+        self.body.add_item(
+            ui.TextDisplay(
+                "変更は下書きに保存されます。最後に「保存」を押してください。"
+                if role == "owner"
+                else "サーバー管理者は、返信を控える方向の変更だけ行えます。"
+            )
+        )
+        if banner:
+            self.body.add_item(ui.TextDisplay(text(banner, 600)))
+        if ctx.settings.overlay_error:
+            self.body.add_item(
+                ui.TextDisplay(
+                    "⚠ config.discord.yamlを読めません。ファイルを修正するまで保存できません。"
+                )
+            )
+        if screen.pending is not None:
+            self.confirmation()
+        elif screen.browse in ("servers", "channels"):
+            self.browse()
+        elif screen.browse == "why":
+            self.diagnostics()
         else:
-            R.banner = [td(f"**No change:** {R.gname(place.guild_id)} "
-                           f"already has the {title} style.")]
-        return show(R, *shown(R, place))
-    _p, _page = shown(R, place)
-    if _page in ("e", "d", "f", "p"):
-        return stage(R, place, _page, changes)
-    return do_changes(R, shown(R, place), changes, notes=notes,
-                      headline=f"{R.gname(place.guild_id)} now has the "
-                               f"{title} style.")
+            self.editor()
+
+    def button(
+        self, label, action, *, disabled=False, style=discord.ButtonStyle.secondary
+    ):
+        return Action(
+            ui.Button(
+                label=label,
+                style=style,
+                disabled=disabled,
+                custom_id=f"{PREFIX}{self.screen.token}:{action}",
+            )
+        )
+
+    def select(self, action, options, placeholder):
+        self.body.add_item(
+            ui.ActionRow(
+                Action(
+                    ui.Select(
+                        custom_id=f"{PREFIX}{self.screen.token}:{action}",
+                        options=options,
+                        placeholder=placeholder,
+                    )
+                )
+            )
+        )
+
+    def options(self, values, current=None):
+        return [
+            discord.SelectOption(
+                label=ms.clip(label, 100), value=val, default=val == current
+            )
+            for label, val in values
+        ]
+
+    def editor(self):
+        s, ctx, p = self.screen, self.ctx, self.place
+        scopes = [("全体の初期設定", "defaults"), ("DM", "dms")]
+        if p.guild_id:
+            scopes += [
+                (
+                    ms.place_name(ms.Place.server(p.guild_id), ctx.names),
+                    f"server:{p.guild_id}",
+                ),
+                ("このサーバーのチャンネルを選ぶ…", "channels"),
+            ]
+        if p.kind == "channel":
+            scopes += [(ms.place_name(p, ctx.names), s.place_text)]
+        if self.role == "owner":
+            scopes += [("別のサーバーを選ぶ…", "servers")]
+        else:
+            scopes = [
+                (label, val)
+                for label, val in scopes
+                if val == "channels" or val.startswith(("server:", "channel:"))
+            ]
+        self.select("scope", self.options(scopes, s.place_text), "① 適用先")
+        keys = available(ctx, p, self.role)
+        cats = [
+            (label, cat)
+            for cat, (label, items) in CATEGORIES.items()
+            if any(k in keys for k in items)
+        ]
+        if s.category not in dict((v, k) for k, v in cats):
+            s.category = cats[0][1]
+        self.select("category", self.options(cats, s.category), "② 分類")
+        choices = [k for k in CATEGORIES[s.category][1] if k in keys]
+        if s.key not in choices:
+            s.key = choices[0]
+        self.select(
+            "key", self.options([(TITLES[k], k) for k in choices], s.key), "③ 設定項目"
+        )
+        if self.role == "owner" and p.kind == "server" and s.category == "reply":
+            self.select(
+                "preset",
+                self.options(
+                    [
+                        ("友人向け", "friends"),
+                        ("コミュニティ向け", "community"),
+                        ("仕事向け", "work"),
+                    ]
+                ),
+                "サーバー全体のプリセット（任意）",
+            )
+        key, st = s.key, ctx.settings
+        path = ms.place_path(st, p, key)
+        if key in ms.TOP:
+            current = st.top(key)
+            source = (
+                "設定ファイル / Discord"
+                if st.layer(path, key)[0]
+                else "組み込みの初期値"
+            )
+        else:
+            current, trace = st.trace(p.scope(key), key)
+            source_path = next(
+                (path_ for _, path_, supplied, _, _ in reversed(trace) if supplied),
+                ("builtin",),
+            )
+            source_place = ms.place_of_path(source_path)
+            source = (
+                ms.place_name(source_place, ctx.names)
+                if source_place
+                else "組み込み / サーバー共通の初期値"
+            )
+        inherited = st.value_without(p.scope(key), key, path)
+        if path == ("all_servers",):
+            self.body.add_item(
+                ui.TextDisplay(
+                    "サーバー共通の初期設定です。DMは適用先「DM」で変更します。"
+                )
+            )
+        self.body.add_item(ui.Separator())
+        self.body.add_item(
+            ui.TextDisplay(
+                f"### {TITLES[key]}\n現在：**{value_text(current)}**\n-# 設定元：{text(source, 180)}\n継承する値：{value_text(inherited)}"
+            )
+        )
+        if key in s.draft:
+            new = (
+                "上の設定を継承"
+                if s.draft[key] == "inherit"
+                else value_text(s.draft[key])
+            )
+            self.body.add_item(ui.TextDisplay(f"✎ 保存後：**{new}**"))
+        self.control(key)
+        buttons = [self.button("上の設定を継承", "inherit")]
+        if p.kind != "defaults":
+            buttons.append(self.button("返信しなかった理由", "why"))
+        self.body.add_item(ui.ActionRow(*buttons))
+        if s.draft:
+            lines = [
+                f"• {TITLES[k]} → {'継承' if v == 'inherit' else value_text(v)}"
+                for k, v in s.draft.items()
+            ]
+            self.body.add_item(
+                ui.TextDisplay(
+                    f"**未保存の変更：{len(lines)}件**\n"
+                    + ms.clip("\n".join(lines), 700)
+                )
+            )
+        _, s.undo_id = ms.undo_preview(
+            st,
+            p,
+            include_children=p.kind == "server",
+            admin_gid=p.guild_id if self.role == "admin" else None,
+        )
+        self.body.add_item(
+            ui.ActionRow(
+                self.button(
+                    f"保存（{len(s.draft)}件）",
+                    "save",
+                    disabled=not s.draft or bool(st.overlay_error),
+                    style=discord.ButtonStyle.success,
+                ),
+                self.button("下書きを破棄", "discard", disabled=not s.draft),
+                self.button(
+                    "直前の変更を取り消す",
+                    "undo",
+                    disabled=not s.undo_id or bool(s.draft) or bool(st.overlay_error),
+                ),
+            )
+        )
+
+    def control(self, key):
+        spec = self.ctx.settings.spec(key)
+        val = self.screen.draft.get(
+            key, current_value(self.ctx.settings, self.place, key)
+        )
+        if spec.type in ("choice", "on-off", "people"):
+            vals = (True, False) if spec.type == "on-off" else spec.values
+            if self.role == "admin":
+                vals = (
+                    ("when-addressed", "off")
+                    if key == "who.replies"
+                    else (False,)
+                    if spec.type == "on-off"
+                    else ()
+                )
+            if vals:
+                self.select(
+                    "set",
+                    [
+                        discord.SelectOption(
+                            label=ms.clip(value_text(v), 100),
+                            value=json.dumps(v),
+                            default=v == val,
+                        )
+                        for v in vals
+                    ],
+                    "新しい値を選択",
+                )
+        if spec.type in ("number", "text", "people") or spec.ids:
+            self.body.add_item(
+                ui.ActionRow(
+                    self.button(
+                        "値を入力…"
+                        if spec.type in ("number", "text")
+                        else "IDのリストを編集…",
+                        "modal",
+                        style=discord.ButtonStyle.primary,
+                    )
+                )
+            )
+        if (
+            spec.type == "people" or spec.ids
+        ) and self.place.guild_id == self.interaction_gid:
+            picker = ui.UserSelect if spec.ids else ui.MentionableSelect
+            self.body.add_item(
+                ui.ActionRow(
+                    Action(
+                        picker(
+                            custom_id=f"{PREFIX}{self.screen.token}:people",
+                            placeholder="相手を選んでリストを置換（最大25件）",
+                            min_values=0,
+                            max_values=25,
+                        )
+                    )
+                )
+            )
+
+    def confirmation(self):
+        s = self.screen
+        self.body.add_item(ui.TextDisplay("### 変更内容の確認"))
+        if "undo" in s.pending:
+            plan = ms.undo_plan(
+                self.ctx.settings,
+                self.place,
+                self.place.kind == "server",
+                self.place.guild_id if self.role == "admin" else None,
+            )
+            lines = ms.undo_lines(self.ctx.settings, plan, self.ctx.names)
+        else:
+            lines = [
+                f"{TITLES[k]} → {'継承' if v == 'inherit' else value_text(v)}"
+                for k, v in s.draft.items()
+            ]
+        self.body.add_item(
+            ui.TextDisplay(ms.clip("\n".join(f"• {line}" for line in lines), 1200))
+        )
+        warnings = s.pending.get("warnings", [])
+        for warning in warnings[:5]:
+            self.body.add_item(ui.TextDisplay("⚠ " + text(warning, 350)))
+        if len(warnings) > 5:
+            self.body.add_item(
+                ui.TextDisplay("警告が多いため、変更を少数ずつ保存してください。")
+            )
+        self.body.add_item(
+            ui.ActionRow(
+                self.button(
+                    "確認して適用",
+                    "confirm",
+                    disabled=len(warnings) > 5,
+                    style=discord.ButtonStyle.danger,
+                ),
+                self.button("編集に戻る", "back"),
+            )
+        )
+
+    def browse(self):
+        s, p = self.screen, self.place
+        if s.browse == "servers":
+            entries = [(g["name"], f"server:{g['id']}") for g in self.ctx.guilds()]
+        else:
+            entries = [
+                ("#" + c["name"], f"channel:{p.guild_id}:{c['id']}")
+                for c in self.ctx.channels(p.guild_id)
+                if c.get("type") != 4 and c.get("readable", True)
+            ]
+        entries.sort(key=lambda x: (x[0], x[1]))
+        pages = max(1, (len(entries) + 24) // 25)
+        s.page = min(s.page, pages - 1)
+        if entries:
+            self.select(
+                "scope",
+                self.options(entries[s.page * 25 : (s.page + 1) * 25]),
+                f"適用先を選択 · {s.page + 1}/{pages}",
+            )
+        else:
+            self.body.add_item(ui.TextDisplay("選択できる適用先がありません。"))
+        # Two navigation actions need distinct custom_ids in the same view.
+        self.body.add_item(
+            ui.ActionRow(
+                self.button("前へ", "previous", disabled=s.page == 0),
+                self.button("次へ", "next", disabled=s.page == pages - 1),
+                self.button("戻る", "back"),
+            )
+        )
+
+    def diagnostics(self):
+        self.body.add_item(
+            ui.TextDisplay(
+                "### 返信しなかった理由\n記録された当時の理由です。設定変更後も過去のメッセージへ自動返信はしません。"
+            )
+        )
+        if self.place.kind == "dms":
+            self.body.add_item(
+                ui.TextDisplay(
+                    "許可されていない相手からのDMは記録しません。「利用者・権限」でDMの許可設定を確認してください。"
+                )
+            )
+        outcomes = self.ctx.recent_outcomes(self.place, 50)
+        refused = [
+            o
+            for o in outcomes
+            if o.get("status") in ("skipped", "quarantined", "enqueue_failed")
+        ][:5]
+        for o in refused:
+            self.body.add_item(ui.TextDisplay(text(outcome_text(o), 450)))
+        if not refused:
+            self.body.add_item(
+                ui.TextDisplay(
+                    "最近の記録はありません。Discordの閲覧・送信権限も確認してください。"
+                )
+            )
+        self.body.add_item(ui.ActionRow(self.button("設定に戻る", "back")))
 
 
-def v_ed(R, place, args, values):
-    """Open the edit pages for place, starting a draft if none is
-    open (an existing draft is kept: this is also "continue")."""
-    if not R.owner:
-        return refusal(R)
-    if args:
-        return notice(OUT_OF_DATE)
-    if draft_changes(R, place) is None:
-        try:
-            R.ctx.session_put(R.uid, DRAFT_PREFIX + ptok(place),
-                              {"kind": "draft", "changes": []}, STASH_TTL)
-        except Exception:
-            pass
-    return show(R, place, "e")
+def outcome_text(outcome):
+    status = outcome.get("status")
+    if status == "replied":
+        return "返信済みです。"
+    if status == "queued":
+        return "返信を処理中です。"
+    reason = REASONS.get(
+        outcome.get("code"), "返信しなかった理由の詳細はmonitor.logを確認してください。"
+    )
+    return f"{outcome.get('author') or '投稿者不明'}：{reason}"
 
 
-def v_sv(R, place, args, values):
-    """Save: apply the whole draft as one change (the assess / confirm
-    path may still ask first; the draft then stays open until Apply,
-    and Cancel on the card leaves it untouched)."""
-    if not R.owner:
-        return refusal(R)
-    if args:
-        return notice(OUT_OF_DATE)
-    changes = draft_changes(R, place)
-    if not changes:
-        return show(R, place, "e",
-                    [td("**No changes to save.** Pick a setting first, "
-                        "then Save.")])
-    return do_changes(R, (place, "h"), changes,
-                      stash_extra={"draft": ptok(place)},
-                      drop_draft=ptok(place))
-
-
-def v_cx(R, place, args, values):
-    """Cancel: throw the draft away and go back to the home page."""
-    if not R.owner:
-        return refusal(R)
-    if args:
-        return notice(OUT_OF_DATE)
+async def open_settings(interaction, ctx, place=None):
+    """Native command entry; all filesystem work follows an acknowledgement."""
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True, thinking=True)
     try:
-        R.ctx.session_drop(R.uid, DRAFT_PREFIX + ptok(place))
-    except Exception:
-        pass
-    return show(R, place, "h",
-                [td("**Discarded.** The unsaved changes were thrown "
-                    "away; nothing was changed.")])
+        role = role_for(interaction, ctx)
+        if place is None:
+            if role == "admin":
+                place = ms.Place.server(str(interaction.guild_id))
+            elif interaction.guild_id:
+                channel = interaction.channel
+                cid = str(
+                    channel.parent_id
+                    if isinstance(channel, discord.Thread)
+                    else interaction.channel_id
+                )
+                place = ms.parse_place(f"channel:{interaction.guild_id}:{cid}", ctx)
+            else:
+                place = ms.Place.dms()
+        screen = Screen(str(interaction.user.id), ms.format_place(place))
+        screen.authorize(interaction, ctx)
+        await redraw(interaction, screen)
+    except ms.SettingsError as exc:
+        await interaction.edit_original_response(
+            content=text(exc), allowed_mentions=discord.AllowedMentions.none()
+        )
 
 
-def v_tg(R, place, args, values):
-    """A detail control's button on an edit page: stage an absolute
-    people value ("everyone" / "owners") or "inherit" ("=")."""
-    if not R.owner:
-        return refusal(R)
-    if len(args) != 2:
-        return notice(OUT_OF_DATE)
-    key = _key(R, args[0])
-    origin = shown(R, place)
-    if key is None or origin[1] not in ("e", "d", "f", "p") \
-            or args[0] not in DETAIL_CODES.get(place.kind, ()):
-        return notice(OUT_OF_DATE)
-    v = args[1]
-    if v == "=":
-        change = ms.Change(place, key, "inherit")
-    elif v == "everyone" and key in ("who.allow", "abilities.reminders"):
-        change = ms.Change(place, key, "everyone")
-    elif v == "owners" and key == "abilities.reminders":
-        change = ms.Change(place, key, "owners")
-    else:
-        return notice(OUT_OF_DATE)
-    return stage(R, place, origin[1], [change])
-
-
-def v_pk(R, place, args, values):
-    """A people picker on an edit page: stage the picked users and
-    roles as the setting's new list."""
-    if not R.owner:
-        return refusal(R)
-    if len(args) != 1:
-        return notice(OUT_OF_DATE)
-    key = _key(R, args[0])
-    origin = shown(R, place)
-    if key not in ("who.allow", "who.ignore", "abilities.reminders") \
-            or origin[1] not in ("e", "d", "f", "p") \
-            or args[0] not in DETAIL_CODES.get(place.kind, ()):
-        return notice(OUT_OF_DATE)
-    picked, dropped = people_from(R, values, place)
-    banner = [td(ROLES_ELSEWHERE)] if dropped else None
-    return stage(R, place, origin[1],
-                 [list_change(R, place, key, picked)], banner)
-
-
-def v_ppl(R, place, args, values):
-    """Admins: add people or roles to the server's ignore list."""
-    if not R.admin or args != ["ig"] or place.kind != "server":
-        return notice(ADMIN_ONLY_QUIETER if R.admin else OUT_OF_DATE)
-    picked, dropped = people_from(R, values, place)
-    if not picked:
-        return notice(OUT_OF_DATE)
-    owners = owners_set(R)
-    kept = [p for p in picked if p not in owners]
-    notes = ["Owners can't be ignored."] if len(kept) < len(picked) else []
-    if dropped:
-        notes.append(ROLES_ELSEWHERE)
-    pin, adds = admin_ignore(R, place.guild_id)
-    new = list(dict.fromkeys(pin + adds + kept))
-    return do_changes(R, (place, "h"), [ms.Change(place, "who.ignore", new)],
-                      notes=notes)
-
-
-def v_rm(R, place, args, values):
-    """Admins: take their own additions off the ignore list."""
-    if not R.admin or args != ["ig"] or place.kind != "server" \
-            or not values:
-        return notice(ADMIN_ONLY_QUIETER if R.admin else OUT_OF_DATE)
-    pin, adds = admin_ignore(R, place.guild_id)
-    if set(values) - set(adds):
-        return notice(ADMIN_ONLY_QUIETER)
-    left = pin + [p for p in adds if p not in set(values)]
-    return do_changes(R, (place, "h"), [ms.Change(
-        place, "who.ignore", left if left != pin or not adds
-        else "inherit")])
-
-
-def v_mod(R, place, args, values):
-    if not R.owner:
-        return refusal(R)
-    if args == ["n"]:
-        cur = value(R, place, "style.notes")
-        return modal(cid("sub", ptok(place), "n"), "Notes for how I reply",
-                     [labelled("Notes", text_input(
-                         "notes", 2, ms.NOTES_MAX, cur or None,
-                         "How I should sound here…"), "Staged like "
-                         "everything else: the edit page's Save applies "
-                         "it.")])
-    if args != ["wy"] or place.kind != "dms":
-        return notice(OUT_OF_DATE)
-    return modal(cid("sub", "d", "wy"), "Check a person", [
-        td("In Discord: Settings › Advanced › Developer Mode, then "
-           "right-click a person › Copy User ID."),
-        labelled("User ID", text_input("ids", 1, 600, None, None, True),
-                 "One ID or @mention.")])
-
-
-def v_sub(R, place, args, values):
-    if not R.owner:
-        return refusal(R)
-    if R.ix.get("type") != 5:
-        return notice(OUT_OF_DATE)
-    if args == ["n"]:
-        text = ""
-        for c in _all(R.data.get("components") or []):
-            if c.get("custom_id") == "notes":
-                text = str(c.get("value") or "")
-        return stage(R, place, "e",
-                     [ms.Change(place, "style.notes", text)])
-    if args != ["wy"] or place.kind != "dms":
-        return notice(OUT_OF_DATE)
-    comps = []
-    for c in _all(R.data.get("components") or []):
-        if c.get("custom_id") == "ids":
-            comps.append(str(c.get("value") or ""))
-    ids = parse_ids(" ".join(comps))
-    if not ids:
-        R.banner = banner_error("No user ID found. Copy one with Developer "
-                                "Mode on.")
-    else:
-        R.check = ids[0]
-    return show(R, place, "y")
-
-
-def v_ok(R, place, args, values):
-    if len(args) != 1:
-        return notice(OUT_OF_DATE)
+async def why_message(interaction, ctx):
+    if not interaction.response.is_done():
+        await interaction.response.defer(ephemeral=True, thinking=True)
     try:
-        payload = R.ctx.stash_take(R.uid, args[0])
-    except PermissionError:
-        return notice(WRONG_USER)
-    if not R.owner:
-        return refusal(R) if not R.admin else notice(ADMIN_ONLY_QUIETER)
-    if not isinstance(payload, dict) or payload.get("kind") not in (
-            "apply", "undo"):
-        return message(R, [container([td(EXPIRED)], BLURPLE),
-                           row(btn("Open settings",
-                                   cid("pg", ptok(place), "h")))])
-    otok, opage = (payload.get("origin") or [ptok(place), "h"])[:2]
-    oplace = R.place(otok) or place
-    opage = opage if opage in PAGES else "h"
-    if payload["kind"] == "undo":
-        up = R.place(payload.get("place") or "")
-        if up is None:
-            return notice(OUT_OF_DATE)
-        return do_undo(R, up, payload.get("expect"), (oplace, opage),
-                       confirmed=True)
-    try:
-        changes = []
-        for d in payload.get("changes") or []:
-            c = ms.Change.from_dict(d, R.ctx)
-            c.revert = bool(d.get("revert"))
-            changes.append(c)
-    except ms.SettingsError:
-        return notice(OUT_OF_DATE)
-    return do_changes(R, (oplace, opage), changes, confirmed=True,
-                      named=payload.get("named") or (),
-                      notes=payload.get("notes") or (),
-                      headline=payload.get("headline"),
-                      drop_draft=payload.get("draft"))
-
-
-def v_un(R, place, args, values):
-    # un:<place>:<group>: the group the button was made for, always; an
-    # Undo without it would skip the stale check.
-    if len(args) != 1 or not args[0]:
-        return notice(OUT_OF_DATE)
-    return do_undo(R, place, args[0], shown(R, place))
-
-
-def v_pz(R, place, args, values, resume=False):
-    if args:
-        return notice(OUT_OF_DATE)
-    origin = shown(R, place)
-    if resume:
-        changes = ms.resume_changes(R.st, place)
-        if not changes:
-            return show(R, *origin,
-                        [td("**No change:** it isn't paused there.")])
-    else:
-        changes = ms.pause_changes(place)
-    return do_changes(R, origin, changes)
-
-
-def v_rs(R, place, args, values):
-    if R.admin:
-        return notice(ADMIN_ONLY_QUIETER)
-    return v_pz(R, place, args, values, resume=True)
-
-
-def v_fx(R, place, args, values):
-    if len(args) != 2:
-        return notice(OUT_OF_DATE)
-    key = _key(R, args[0])
-    if key is None:
-        return notice(OUT_OF_DATE)
-    if R.admin and key == "who.ignore" and args[1].startswith("-") \
-            and args[1][1:] not in admin_ignore(R, place.guild_id)[1]:
-        return notice(ADMIN_ONLY_QUIETER)
-    try:
-        changes = fix_changes(R, place, key, args[1])
-    except ms.SettingsError:    # not a setting of that place
-        changes = None
-    if not changes:
-        return notice(OUT_OF_DATE)
-    if args[1][:1] in "+-":
-        R.fixed = args[1][1:]
-    if place.kind == "dms" and key == "who.dms_from":
-        R.check = args[1][1:]
-        return do_changes(R, (ms.Place.dms(), "y"), changes,
-                          named=[args[1][1:]])
-    origin, page = shown(R, place)
-    return do_changes(R, (origin, "y"), changes)
-
-
-def v_wy(R, place, args, values):
-    if not R.owner:
-        return refusal(R)
-    if place.kind != "dms" or len(args) > 1:
-        return notice(OUT_OF_DATE)
-    uid = args[0] if args else (values[0] if values else None)
-    if not uid or not _ID.fullmatch(uid):
-        return notice(OUT_OF_DATE)
-    R.check = uid
-    return show(R, place, "y")
-
-
-VERBS = {"pg": v_pg, "wh": v_wh, "set": v_set, "val": v_val, "pre": v_pre,
-         "ed": v_ed, "sv": v_sv, "cx": v_cx, "tg": v_tg, "pk": v_pk,
-         "ppl": v_ppl, "rm": v_rm, "mod": v_mod, "sub": v_sub, "ok": v_ok,
-         "un": v_un, "pz": v_pz, "rs": v_rs, "fx": v_fx, "wy": v_wy}
+        role_for(interaction, ctx)
+        data = interaction.data or {}
+        mid = str(data.get("target_id", ""))
+        outcome = await asyncio.to_thread(ctx.outcome, mid)
+        if outcome and (outcome.get("guild_id") or None) == (
+            str(interaction.guild_id) if interaction.guild_id else None
+        ):
+            body = outcome_text(outcome)
+        else:
+            body = "このメッセージの処理記録はありません。/settingsで返信条件やDiscordの権限を確認してください。"
+        check_output(interaction, body)
+        await interaction.edit_original_response(
+            content=text(body, 1500), allowed_mentions=discord.AllowedMentions.none()
+        )
+    except ms.SettingsError as exc:
+        await interaction.edit_original_response(
+            content=text(exc), allowed_mentions=discord.AllowedMentions.none()
+        )

@@ -1,8 +1,6 @@
-"""Run monitor.main() with a process_outbox that blocks (up to 3 s)
-until the interactions are acked, then stops main(); inject a /settings
-command, a mdset: button click and a mdset: modal submit mid-block, and
-time each callback. Prints one JSON line.
-Usage: [MUT_DIR=<tree>] python3 main_scenario.py"""
+"""Keep the legacy approval interaction worker responsive during a slow
+main-loop tick. Native settings callbacks run on discord.py's event loop.
+"""
 import contextlib
 import io
 import json
@@ -11,7 +9,6 @@ import signal
 import sys
 import threading
 import time
-import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
@@ -54,7 +51,8 @@ def handle(ix, ctx):
                      "seen_guilds": [g["id"] for g in ctx.guilds()]}}
 
 
-mod._SETTINGS_UI["mod"] = types.SimpleNamespace(handle=handle)
+for key in ("/test-settings", "test-settings"):
+    mod.register_interaction(key, lambda ix, rest, uid, record: handle(ix, mod.SettingsCtx()), owner_only=False)
 
 
 def cb(i, resp):
@@ -72,9 +70,9 @@ res["put_at"] = {}
 def fake_gw(token, inbox, status):
     in_outbox.wait(5)
     for n, (t, data) in enumerate([
-            (2, {"name": "settings", "type": 1}),
-            (3, {"custom_id": "mdset:p:e", "component_type": 2}),
-            (5, {"custom_id": "mdset:m:x", "components": []})]):
+            (2, {"name": "test-settings", "type": 1}),
+            (3, {"custom_id": "test-settings:p:e", "component_type": 2}),
+            (5, {"custom_id": "test-settings:m:x", "components": []})]):
         iid = f"90{n}"
         res["put_at"][iid] = time.time()
         status["interactions"].put({

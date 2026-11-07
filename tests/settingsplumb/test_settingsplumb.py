@@ -1,23 +1,18 @@
-"""/settings plumbing (settings PR 2), offline: command registration,
-interaction routing to settings_ui.handle (a stub here), the 3s path
-under a slow main loop, SettingsCtx (overlay writes, undo under the
-lock, thread safety, the stash, outcomes kept to their place), the
-admin-change digest, the join notice's Configure button, and a missing
-settings_ui.
-
-Usage: [MUT_DIR=<tree>] python3 tests/settingsplumb/test_settingsplumb.py"""
+"""Settings integration: global command registration, legacy approval worker,
+SettingsCtx writes/undo/thread safety, scoped outcomes, and admin digests.
+Native discord.py routing is covered in test_connection.py.
+"""
 import json
 import os
 import subprocess
 import sys
 import threading
-import types
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 from settings_harness import (CH, G1, G2, MS, OWNER, U1,  # noqa: E402
-                              HTTPErr, load_monitor, quiet, state, tmpdir)
+                              HTTPErr, load_monitor, quiet, state)
 
 import yaml  # noqa: E402
 
@@ -52,27 +47,6 @@ def comp_ix(custom_id, user=OWNER, t=3):
         data["components"] = []
     return {"id": "2", "token": "t", "type": t, "data": data,
             "user": {"id": user}}
-
-
-class Stub:
-    """A stand-in settings_ui: records calls, answers a fixed body."""
-
-    def __init__(self, body=None):
-        self.calls = []
-        self.body = body
-
-    def handle(self, ix, ctx):
-        self.calls.append((ix, ctx, threading.current_thread().name))
-        if self.body is not None:
-            return self.body
-        return {"type": 4 if ix["type"] == 2 else 7,
-                "data": {"content": "page", "flags": 64}}
-
-
-def with_stub(mod, stub=None):
-    stub = stub or Stub()
-    mod._SETTINGS_UI["mod"] = stub
-    return stub
 
 
 # ---------------------------------------------------------------- register
@@ -245,100 +219,9 @@ class Registration(unittest.TestCase):
         self.assertTrue(self.mod._COMMAND_REG["done"])
 
 # ----------------------------------------------------------------- routing
-class Routing(unittest.TestCase):
-    def setUp(self):
-        self.mod = load_monitor(CFG)
-        self.stub = with_stub(self.mod)
-        self.recs = []
-
-    def dispatch(self, ix):
-        with quiet() as out:
-            r = self.mod.dispatch_interaction(ix, self.recs.append)
-        self.out = out.getvalue()
-        return r
-
-    def test_command_component_modal_reach_handle(self):
-        why = cmd_ix()
-        why["data"] = {"name": "Why no reply?", "type": 3,
-                       "target_id": "1"}
-        why2 = cmd_ix(guild=G1)
-        why2["data"] = {"name": "Why no reply", "type": 3,
-                        "target_id": "1"}
-        for ix in (cmd_ix(), cmd_ix(guild=G1, user=U1), why, why2,
-                   comp_ix("mdset:open:server:" + G1),
-                   comp_ix("mdset:2:pg:x:b"),
-                   comp_ix("mdset:m:abc", t=5)):
-            r = self.dispatch(ix)
-            got, ctx, _ = self.stub.calls[-1]
-            self.assertIs(got, ix)
-            self.assertIsInstance(ctx, self.mod.SettingsCtx)
-            self.assertEqual(r["type"], 4 if ix["type"] == 2 else 7)
-        # Permissions are settings_ui's: strangers reach it too.
-        n = len(self.stub.calls)
-        self.dispatch(cmd_ix(user=U1))
-        self.dispatch(comp_ix("mdset:x", user=U1))
-        self.assertEqual(len(self.stub.calls), n + 2)
-
-    def test_other_prefixes_and_commands_untouched(self):
-        r = self.dispatch(comp_ix("mdsetx:1"))
-        self.assertEqual(r["data"]["flags"], 64)
-        ix = cmd_ix()
-        ix["data"]["name"] = "other"
-        self.dispatch(ix)
-        self.assertEqual(self.stub.calls, [])
-        # Autocomplete (4) is not answered.
-        self.assertIsNone(self.dispatch({"id": "1", "token": "t",
-                                         "type": 4, "data": {}}))
-
-    def test_bodies_forwarded_verbatim(self):
-        """A Components V2 page (flags 64|32768, no content) reaches
-        Discord as settings_ui made it, for a new message and an edit."""
-        for t, flags in ((4, 64 | 32768), (7, 32768)):
-            body = {"type": t, "data": {
-                "flags": flags, "allowed_mentions": {"parse": []},
-                "components": [{"type": 17, "accent_color": 0x5865F2,
-                                "components": [{"type": 10,
-                                                "content": "## Page"}]}]}}
-            self.stub.body = body
-            r = self.dispatch(comp_ix("mdset:2:pg:x:b"))
-            self.assertEqual(r, body)
-            self.assertNotIn("content", r["data"])
-        body = {"type": 9, "data": {"custom_id": "mdset:m:1",
-                                    "title": "Edit", "components": []}}
-        self.stub.body = body
-        self.assertEqual(self.dispatch(comp_ix("mdset:b")), body)
-
-    def test_bad_body_and_crash_get_ephemeral(self):
-        self.stub.body = "nope"
-        r = self.dispatch(cmd_ix())
-        self.assertEqual(r["type"], 4)
-        self.assertEqual(r["data"]["flags"], 64)
-
-        def boom(ix, ctx):
-            raise RuntimeError("kaput")
-        self.mod._SETTINGS_UI["mod"] = types.SimpleNamespace(handle=boom)
-        r = self.dispatch(cmd_ix())
-        self.assertEqual(r["data"]["flags"], 64)
-        self.assertNotIn("kaput", r["data"]["content"])   # no internals
-
-
-class MissingUI(unittest.TestCase):
-    def test_missing_ui_gets_an_ephemeral_answer(self):
-        mod = load_monitor(CFG)
-        from unittest.mock import patch
-        mod.CODE_DIR = tmpdir("noui_")
-        with patch.dict(sys.modules, {"muse_discord.settings_ui": None}):
-            with quiet():
-                r1 = mod.dispatch_interaction(cmd_ix(), lambda r: None)
-                r2 = mod.dispatch_interaction(comp_ix("mdset:x"),
-                                              lambda r: None)
-        for r in (r1, r2):
-            self.assertEqual(r["type"], 4)
-            self.assertEqual(r["data"]["flags"], 64)
-
 # ------------------------------------------------------------- main loop
 class MainLoop(unittest.TestCase):
-    def test_settings_ack_not_behind_slow_tick(self):
+    def test_legacy_approval_ack_not_behind_slow_tick(self):
         p = subprocess.run([sys.executable,
                             os.path.join(HERE, "main_scenario.py")],
                            capture_output=True, text=True, timeout=60,
@@ -589,24 +472,17 @@ class UIData(unittest.TestCase):
         self.assertEqual([o["message_id"] for o in self.ctx.recent_outcomes(
             MS.Place.dms(), 10)], ["3003"])
 
-    def test_stash_single_use_and_bound_to_its_user(self):
-        c = self.ctx
-        tok = c.stash_put(OWNER, {"kind": "apply", "n": 1})
-        self.assertEqual(len(tok), 10)
-        self.assertNotIn(":", tok)
-        with self.assertRaises(PermissionError):
-            c.stash_take(U1, tok)
-        # another interaction's Ctx sees the same stash
-        with quiet():
-            other = self.mod.SettingsCtx()
-        self.assertEqual(other.stash_take(OWNER, tok),
-                         {"kind": "apply", "n": 1})
-        self.assertIsNone(c.stash_take(OWNER, tok))     # used
-        tok = c.stash_put(OWNER, {"x": 1}, ttl=-1)
-        self.assertIsNone(c.stash_take(OWNER, tok))     # expired
-        self.assertIsNone(c.stash_take(OWNER, "nope"))
+    def test_private_sessions_are_user_bound_and_expire(self):
+        import time
+        marker = object()
+        self.ctx.session_put(OWNER, "screen", marker, ttl=900)
+        self.assertIs(self.ctx.session_peek(OWNER, "screen"), marker)
+        self.assertIsNone(self.ctx.session_peek(U1, "screen"))
+        with self.mod._SESSIONS_LOCK:
+            self.mod._SESSIONS[(OWNER, "screen")] = (marker, time.time() - 1)
+        self.assertIsNone(self.ctx.session_peek(OWNER, "screen"))
 
-# ---------------------------------------------------------- admin digest
+
 class AdminDigest(unittest.TestCase):
     def setUp(self):
         self.mod = load_monitor(CFG)
@@ -686,13 +562,8 @@ class JoinNotice(unittest.TestCase):
         self.assertEqual(btn["type"], 2)
         self.assertEqual(btn["custom_id"], f"mdset:open:server:{G2}")
         self.assertLessEqual(len(btn["custom_id"]), 100)
-        # The click is routed to settings_ui.
-        stub = with_stub(mod)
-        with quiet():
-            mod.dispatch_interaction(comp_ix(btn["custom_id"]),
-                                     lambda r: None)
-        self.assertEqual(stub.calls[0][0]["data"]["custom_id"],
-                         f"mdset:open:server:{G2}")
+        from muse_discord.discord_connection import Connection
+        self.assertTrue(Connection.native_settings(comp_ix(btn["custom_id"])))
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)
