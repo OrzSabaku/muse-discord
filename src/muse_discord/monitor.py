@@ -831,12 +831,10 @@ INJECTION_PATTERNS = [
 ]
 
 
-def headers():
-    return {
-        "Authorization": f"Bot {TOKEN}",
-        "User-Agent": "DiscordBot (muse-discord, 1.0)",
-        "Content-Type": "application/json",
-    }
+def discord_request(method, path, data=None, *, files=(), timeout=20, anonymous=False):
+    from muse_discord.discord_rest import transport
+    return transport(None if anonymous else TOKEN, API).request(
+        method, path, data, files=files, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -952,12 +950,7 @@ READ_TIMEOUT_SECS = 8
 
 
 def api_get(path):
-    req = urllib.request.Request(API + path, headers=headers())
-
-    def _do():
-        with urllib.request.urlopen(req, timeout=READ_TIMEOUT_SECS) as r:
-            return json.load(r)
-    return _api_call(_do)
+    return _api_call(lambda: discord_request("GET", path, timeout=READ_TIMEOUT_SECS))
 
 
 # ---------------------------------------------------------------------------
@@ -1059,14 +1052,8 @@ def _secret_alert(where):
 
 
 def _api_send(method, path, data):
-    body = json.dumps(guard_outgoing(data, path)).encode()
-    req = urllib.request.Request(API + path, data=body, headers=headers(),
-                                 method=method)
-
-    def _do():
-        with urllib.request.urlopen(req, timeout=20) as r:
-            return json.load(r)
-    return _api_call(_do)
+    data = guard_outgoing(data, path)
+    return _api_call(lambda: discord_request(method, path, data))
 
 
 def api_post(path, data):
@@ -2349,20 +2336,11 @@ def dispatch_interaction(ix, record):
 
 
 def interaction_callback(ix, response):
-    """POST the interaction response. Deliberately not api_post: the
-    interaction token authorizes this call (a 401 is an expired
-    interaction, not a revoked bot token), it is outside the REST
-    rate-limit backoff, and it answers 204 with no body."""
+    """Anonymous interaction token auth, independent of Bot-token failures."""
     path = (f"/interactions/{urllib.parse.quote(str(ix['id']), safe='')}/"
             f"{urllib.parse.quote(str(ix['token']), safe='')}/callback")
     response = guard_outgoing(response, "an interaction response")
-    req = urllib.request.Request(
-        API + path, data=json.dumps(response).encode(),
-        headers={"User-Agent": "DiscordBot (muse-discord, 1.0)",
-                 "Content-Type": "application/json"})
-    with urllib.request.urlopen(req,
-                                timeout=INTERACTION_CALLBACK_TIMEOUT) as r:
-        r.read()
+    discord_request("POST", path, response, timeout=INTERACTION_CALLBACK_TIMEOUT, anonymous=True)
 
 
 def _interaction_thread_main(ix_inbox, record):
@@ -4219,12 +4197,7 @@ def add_reaction(channel_id, message_id, emoji):
     encoded = urllib.parse.quote(emoji, safe="")  # "/" stays in the segment
     try:
         guard_outgoing({"content": emoji}, channel_id)
-        req = urllib.request.Request(
-            API + f"/channels/{channel_id}/messages/{message_id}"
-                 f"/reactions/{encoded}/@me",
-            data=b"", headers=headers(), method="PUT")
-        with urllib.request.urlopen(req, timeout=20):
-            pass
+        _api_call(lambda: discord_request("PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded}/@me"))
         return True
     except Exception as e:
         print(f"Reaction {emoji!r} failed on {message_id}: {e}", flush=True)
@@ -4316,54 +4289,24 @@ def send_fragmented(channel_id, parts, reply_to=None, attachments=(),
     return sent
 
 
-ATTACH_CTYPES = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".webp": "image/webp", ".gif": "image/gif", ".mp4": "video/mp4",
-}
-
-
 def send_reply_with_files(channel_id, text, files, reply_to=None,
                           nonce=None, mentions=None):
     """Send a message with file attachments via multipart/form-data.
     files: list of (local_path, filename)."""
-    boundary = "----MuseDiscord%d" % int(time.time() * 1000)
-    guard_outgoing({"content": text,
-                    "files": [fname for _, fname in files]}, channel_id)
+    guard_outgoing({"content": text, "files": [name for _, name in files]}, channel_id)
     blobs = []
-    for path, _ in files:
+    for path, name in files:
         with open(path, "rb") as f:
-            blobs.append(f.read())
-    # And what the files hold (a worker can write a secret into one),
-    # with the text and names: joined, a secret split across them shows.
-    guard_outgoing({"content": text,
-                    "data": [b.decode("latin-1") for b in blobs],
-                    "files": [fname for _, fname in files]}, channel_id)
-    payload = {"content": text,
-               "allowed_mentions": mentions or SEND_ALLOWED_MENTIONS}
+            blobs.append((name, f.read()))
+    guard_outgoing({"content": text, "data": [blob.decode("latin-1") for _, blob in blobs],
+                    "files": [name for name, _ in blobs]}, channel_id)
+    payload = {"content": text, "allowed_mentions": mentions or SEND_ALLOWED_MENTIONS}
     if reply_to:
         payload["message_reference"] = reply_reference(reply_to)
     if nonce:
-        payload["nonce"] = nonce
-        payload["enforce_nonce"] = True
-    body = b""
-    body += (f'--{boundary}\r\nContent-Disposition: form-data; name="payload_json"\r\n'
-             f'Content-Type: application/json\r\n\r\n').encode()
-    body += json.dumps(payload).encode() + b"\r\n"
-    for i, ((_, fname), data) in enumerate(zip(files, blobs)):
-        ext = os.path.splitext(fname)[1].lower()
-        ctype = ATTACH_CTYPES.get(ext, "application/octet-stream")
-        body += (f'--{boundary}\r\nContent-Disposition: form-data; '
-                 f'name="files[{i}]"; filename="{fname}"\r\n'
-                 f'Content-Type: {ctype}\r\n\r\n').encode()
-        body += data + b"\r\n"
-    body += f'--{boundary}--\r\n'.encode()
-    req = urllib.request.Request(
-        f"{API}/channels/{channel_id}/messages", data=body,
-        headers={"Authorization": f"Bot {TOKEN}",
-                 "Content-Type": f"multipart/form-data; boundary={boundary}",
-                 "User-Agent": headers()["User-Agent"]})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.load(r)
+        payload.update(nonce=nonce, enforce_nonce=True)
+    return _api_call(lambda: discord_request("POST", f"/channels/{channel_id}/messages",
+                                           payload, files=blobs, timeout=60))
 
 
 def fit_for_discord(path):
@@ -4600,7 +4543,7 @@ def _fetch_complete(url, max_bytes, timeout, kind):
     picks these URLs, and a fetch must not become a probe of the LAN or
     the cloud metadata service.
     """
-    ua = headers()["User-Agent"]
+    ua = "DiscordBot (muse-discord, 1.0)"
     # Path 1: curl (proven reliable on this network). No -L: redirects
     # are followed here one hop at a time, so each hop gets the same
     # checks as the first URL, and --resolve pins curl to the addresses

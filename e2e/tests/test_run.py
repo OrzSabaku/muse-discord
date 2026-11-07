@@ -427,14 +427,11 @@ if (cfg.get("testing") or {}).get("crash"):
     sys.exit(2)
 print("Bot user id: 1", flush=True)
 print("muse-discord monitor starting. Polling 1 channels.", flush=True)
-try:
-    import websockets  # noqa: F401
-    print("Gateway READY: realtime ingest live.", flush=True)
-except ImportError as e:
-    if "e2e harness" in str(e):
-        print(f"GATEWAY DISABLED (thread died: {e})", flush=True)
-    else:  # not installed here: pretend the gateway came up
-        print("Gateway READY: realtime ingest live.", flush=True)
+import discord
+if discord.Client.connect.__name__ == "_gateway_disabled":
+    print("GATEWAY DISABLED (thread died: Gateway disabled by the e2e harness)", flush=True)
+else:
+    print("Gateway READY: realtime ingest live (discord.py).", flush=True)
 while True:
     time.sleep(0.2)
 '''
@@ -487,6 +484,17 @@ class SUTTests(unittest.TestCase):
         self.assertNotIn(FAKE_TOKEN, json.dumps(cfg))
         self.s.cleanup()
         self.assertFalse(os.path.exists(self.s.token_file))
+
+    def test_gateway_off_keeps_the_sdk_http_transport_available(self):
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join([
+            self.s._stub_dir, os.path.join(REPO, "src")]))
+        code = ("import asyncio, discord; from muse_discord.discord_rest import Rest; "
+                "assert Rest is not None; asyncio.run(discord.Client.connect(None))")
+        p = subprocess.run([sys.executable, "-c", code], env=env,
+                           capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("Gateway disabled by the e2e harness", p.stderr)
+        self.assertNotIn("ImportError", p.stderr)
 
     def test_lifecycle_gateway_off_and_death(self):
         s = self.s
