@@ -2,6 +2,7 @@
 
 Discordや外部サービスを使わず、API・Gatewayを偽物へ置き換えて検証します。書き込み先は一時ディレクトリです。
 設定画面は実際のdiscord.py部品と設定エンジンを使い、Discordとの送受信だけを模擬します。
+Discord HTTP通信はローカルサーバーと実際のdiscord.pyで検証します（`discordrest/`）。レート制限・時間切れ・添付・再試行時の重複防止を対象にします。
 実Discordの試験は [e2e/README.md](../e2e/README.md) を参照してください。
 
 ## 実行
@@ -14,7 +15,7 @@ MUT_DIR=/path/to/tree python3 tests/locking/test_locking.py
 bash tests/run_all.sh onboarding
 ```
 
-Python 3.10以上、PyYAML、Pydantic v2、discord.py 2.6以上、bash、git、jq、unshareが必要です。
+Python 3.10以上、PyYAML、Pydantic v2、discord.py 2.7系（2.7.1以上）、bash、git、jq、unshareが必要です。
 watchdog系はユーザー・PID名前空間を使います。UbuntuのAppArmor設定で制限される場合は名前空間の許可が必要です。
 動画テストはffmpegがないとスキップします。遅いスイートには `SLOW` があります。
 
