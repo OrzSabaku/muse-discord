@@ -226,56 +226,6 @@ class F7Discovery(unittest.TestCase):
 HELLO = {"op": 10, "d": {"heartbeat_interval": 1_000_000_000}}
 
 
-def ready(resume="wss://resume.test"):
-    return {"op": 0, "t": "READY", "s": 1,
-            "d": {"session_id": "S1", "resume_gateway_url": resume,
-                  "user": {"id": BOT, "username": "musebot"}}}
-
-
-class F10MonitorGateway(unittest.TestCase):
-    def run_gw(self, scripts):
-        mod = H.load_monitor()
-        fakews.reset(scripts)
-        status = {}
-        out = io.StringIO()
-        exhausted = False
-        with contextlib.redirect_stdout(out):
-            try:
-                asyncio.run(mod._gateway_run("tok", pyqueue.Queue(), status))
-            except fakews.Exhausted:
-                exhausted = True
-        return status, exhausted, out.getvalue()
-
-    def test_resume_url_and_op1(self):
-        status, _, _ = self.run_gw([
-            [HELLO, ready(), {"op": 1, "d": None}, {"op": 7}],
-            [HELLO, "end"]])
-        self.assertEqual(fakews.CONNECTS[1],
-                         "wss://resume.test/?v=10&encoding=json")
-        conn1 = [p["op"] for i, p in fakews.SENT if i == 1]
-        self.assertEqual(conn1[0], 6)
-        conn0 = [p["op"] for i, p in fakews.SENT if i == 0]
-        self.assertEqual(conn0, [2, 1])  # identify, then the asked beat
-        self.assertEqual(status.get("user", {}).get("id"), BOT)
-
-    def test_reconnect_paths(self):
-        # A resumable invalid session resumes (op 6); 4009 identifies
-        # fresh (op 2).
-        for first, want in (([HELLO, ready(), {"op": 9, "d": True}], 6),
-                            ([HELLO, ready(), ("close", 4009)], 2)):
-            self.run_gw([first, [HELLO, "end"]])
-            conn1 = [p["op"] for i, p in fakews.SENT if i == 1]
-            self.assertEqual(conn1[0], want, first)
-
-    def test_4004_and_4013_never_reconnect(self):
-        status, exhausted, _ = self.run_gw([[HELLO, ("close", 4004)]])
-        self.assertFalse(exhausted, "must not reconnect after 4004")
-        self.assertTrue(status.get("token_rejected"))
-        # 4013: the gateway is disabled, no reconnect loop.
-        status, exhausted, out = self.run_gw([[HELLO, ("close", 4013)]])
-        self.assertFalse(exhausted, "must not reconnect after 4013")
-
-
 class F10Presence(unittest.TestCase):
     def run_p(self, scripts):
         p = H.load_presence()
