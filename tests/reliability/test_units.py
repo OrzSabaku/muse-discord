@@ -254,15 +254,13 @@ class SendDeletedReplyTarget(unittest.TestCase):
             f.write(b"\x89PNG")
         seen = []
 
-        def fake_urlopen(req, timeout=None):
-            seen.append(req.data)
-            return _FakeResp()
-        with mock.patch.object(mod.urllib.request, "urlopen", fake_urlopen):
+        def send(method, path, data=None, **kwargs):
+            seen.append(data)
+            return {"id": "1"}
+        with mock.patch.object(mod, "discord_request", send):
             mod.send_reply_with_files("123456789012345678", "hi",
                                       [(path, "a.png")], reply_to, "n2")
-        body = seen[-1]
-        start = body.index(b"\r\n\r\n") + 4
-        return json.loads(body[start:body.index(b"\r\n", start)])
+        return seen[-1]
 
     def test_reply_reference_tolerates_missing_target(self):
         mod = H.load_monitor()
@@ -305,11 +303,11 @@ class SendDeletedReplyTarget(unittest.TestCase):
                 "author": "u", "channel_name": "general"})], f)
         reacts = []
 
-        def gone(req, timeout=None):
-            reacts.append(req.full_url)
+        def gone(method, path, data=None, **kwargs):
+            reacts.append(path)
             raise HTTPErr(404)
         out = io.StringIO()
-        with mock.patch.object(mod.urllib.request, "urlopen", gone), \
+        with mock.patch.object(mod, "discord_request", gone), \
                 contextlib.redirect_stdout(out):
             for _ in range(3):
                 mod.process_outbox(st)

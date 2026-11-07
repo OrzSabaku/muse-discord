@@ -61,14 +61,11 @@ MUSE_DISCORD_CONFIG), read through muse_settings.py. The token is never printed.
 """
 import hmac
 import json
-import mimetypes
 import os
 import re
 import sqlite3
 import sys
 import urllib.parse
-import urllib.request
-import urllib.error
 import uuid
 
 PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -326,27 +323,17 @@ def bot_id():
     return BOT_ID
 
 
-def _request(method, path, body, ctype):
-    req = urllib.request.Request(API + path, data=body, method=method)
-    req.add_header("Authorization", f"Bot {TOKEN}")
-    # Cloudflare's bad-browser check (error 1010) rejects bare urllib
-    # requests: a User-Agent and Content-Type are required, even for
-    # bodyless PUTs like reactions.
-    req.add_header("User-Agent", "DiscordBot (muse-discord-cli, 1.0)")
-    req.add_header("Content-Type", ctype)
-    req.add_header("Content-Length", str(len(body)))
+def _request(method, path, data=None, files=()):
+    from muse_discord.discord_rest import transport, DiscordError
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            raw = r.read()
-            return json.loads(raw) if raw else {"ok": True, "status": r.status}
-    except urllib.error.HTTPError as e:
-        detail = e.read()[:300].decode("utf-8", "replace")
-        raise SystemExit(f"Discord API {e.code} on {method} {path}: {detail}")
+        result = transport(TOKEN, API).request(method, path, data, files=files, timeout=TIMEOUT)
+        return result if result not in (None, "") else {"ok": True, "status": 204}
+    except (DiscordError, OSError, TimeoutError) as exc:
+        raise SystemExit(str(exc)) from None
 
 
 def api(method, path, data=None):
-    body = json.dumps(data).encode() if data is not None else b""
-    return _request(method, path, body, "application/json")
+    return _request(method, path, data)
 
 
 def api_multipart(path, payload, file_path):
@@ -356,28 +343,12 @@ def api_multipart(path, payload, file_path):
     used by forum-thread creation so the starter post carries the image
     itself instead of an external link.
     """
-    boundary = "----musediscord" + uuid.uuid4().hex
     filename = os.path.basename(file_path)
-    ctype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     with open(file_path, "rb") as f:
-        file_bytes = f.read()
-    payload = dict(payload)
-    payload["message"] = dict(payload["message"])
-    payload["message"]["attachments"] = [{"id": 0, "filename": filename}]
-    chunks = [
-        (f"--{boundary}\r\n"
-         "Content-Disposition: form-data; name=\"payload_json\"\r\n"
-         "Content-Type: application/json\r\n\r\n").encode()
-        + json.dumps(payload).encode() + b"\r\n",
-        (f"--{boundary}\r\n"
-         f"Content-Disposition: form-data; name=\"files[0]\"; "
-         f"filename=\"{filename}\"\r\n"
-         f"Content-Type: {ctype}\r\n\r\n").encode()
-        + file_bytes + b"\r\n",
-        f"--{boundary}--\r\n".encode(),
-    ]
-    return _request("POST", path, b"".join(chunks),
-                    f"multipart/form-data; boundary={boundary}")
+        blob = f.read()
+    scrub(filename)
+    scrub(str(payload.get("name", "")) + str(payload.get("message", {}).get("content", "")) + blob.decode("latin-1"))
+    return _request("POST", path, payload, files=[(filename, blob)])
 
 
 def cmd_resolve_channel(args):

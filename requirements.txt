@@ -2,7 +2,7 @@
 # Python 3.10+ required.
 PyYAML>=6.0
 pydantic>=2.10,<3
-discord.py>=2.6,<3
+discord.py>=2.7.1,<2.8
 
 # Optional, used by the monitor when present on PATH (not Python deps):
 #   ffmpeg + ffprobe  - video frame extraction, oversize attachment

@@ -299,32 +299,18 @@ class Interactions(unittest.TestCase):
         mod = self.mod
         seen = {}
 
-        class Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-            def read(self):
-                return b""
-
-        def fake_urlopen(req, timeout=None):
-            seen.update(url=req.full_url, data=req.data, timeout=timeout,
-                        headers={k.lower(): v for k, v in req.header_items()},
-                        method=req.get_method())
-            return Resp()
-        orig = mod.urllib.request.urlopen
-        mod.urllib.request.urlopen = fake_urlopen
+        def request(method, path, data=None, **kwargs):
+            seen.update(method=method, path=path, data=data, **kwargs)
+        orig = mod.discord_request
+        mod.discord_request = request
         try:
             mod.interaction_callback(ix("x"), {"type": 7, "data": {}})
         finally:
-            mod.urllib.request.urlopen = orig
-        self.assertEqual(seen["url"], "https://discord.com/api/v10/"
-                         "interactions/9001/tok-en_1/callback")
+            mod.discord_request = orig
+        self.assertEqual(seen["path"], "/interactions/9001/tok-en_1/callback")
         self.assertEqual(seen["method"], "POST")
-        self.assertEqual(json.loads(seen["data"]), {"type": 7, "data": {}})
-        self.assertNotIn("authorization", seen["headers"])
+        self.assertEqual(seen["data"], {"type": 7, "data": {}})
+        self.assertTrue(seen["anonymous"])
         self.assertLess(seen["timeout"], 3)
 
 
