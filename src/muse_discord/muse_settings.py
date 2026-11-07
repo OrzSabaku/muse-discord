@@ -135,7 +135,7 @@ def _show(v):
 
 # Keys: overlay form 'servers."1".channels."2".replies'
 # ---------------------------------------------------------------------------
-def parse_key(s):
+def parse_key(s) -> tuple[tuple[str, ...], str]:
     """('scope path tuple', 'canonical key') for an overlay key, or raise
     ValueError. Scope paths: ("top",) ("everywhere",) ("dms",)
     ("all_servers",) ("servers", sid) ("servers", sid, "channels", cid)."""
@@ -179,7 +179,7 @@ def _canon(rest, channel):
     return key
 
 
-def format_key(path, key):
+def format_key(path: tuple[str, ...], key: str) -> str:
     if path == ("top",):
         return key
     if path[0] == "servers":
@@ -395,7 +395,8 @@ class Settings:
 
     def __init__(self):
         self.path = None
-        self.overlay_path = None
+        self.overlay_path: str | None = None
+        self.overlay_error: str | None = None
         self.raw = {}
         self.server_files = {}
         self.file_values = {}
@@ -474,7 +475,10 @@ class Settings:
     def chain(self, scope):
         """The layer paths for a scope, least specific first, each with a
         display name."""
-        out = [(("builtin",), "built-in"), (("everywhere",), "everywhere")]
+        out: list[tuple[tuple[str, ...], str]] = [
+            (("builtin",), "built-in"),
+            (("everywhere",), "everywhere"),
+        ]
         if scope.kind == "everywhere":
             return out
         if scope.kind == "dms":
@@ -1076,7 +1080,7 @@ def _apply_overlay(st):
             path, key = parse_key(keystr)
         except ValueError as e:
             path, key, reason = None, None, f"not a settings key ({e})"
-        if reason is None:
+        if reason is None and path is not None:
             spec = st.spec(key)
             kind = _scope_kind(path)
             if spec is None:
@@ -2041,6 +2045,7 @@ def source_tag(st, place, key, names=None):
         path = _layer_path(st, place, key)
     except SettingsError:
         path = None
+    rows: list[tuple[str, tuple[str, ...], bool, object, tuple]]
     if key in TOP:
         s, _v, src = st.layer(("top",), key)
         rows = [("top", ("top",), s, _v, src)]
@@ -2055,14 +2060,14 @@ def source_tag(st, place, key, names=None):
                 return "● set here in config.yaml"
             by = src[1] if len(src) > 1 else None
             who = person_name(by, look) if _id_str(by) else (by or "someone")
-            return f"● changed here by {who} on {_date(src[2])}"
+            return f"● changed here by {who} on {_date(src[2] if len(src) > 2 else '')}"
         if p[0] in ("builtin", "builtin_all_servers"):
             return "Built-in default" if place.kind == "defaults" else "Same as Defaults"
         owner = place_of_path(p)
         if owner is None:
             return f'Same as server "{p[1]}" (old config)'
         if owner.kind == "channel" and owner.channel_id != place.channel_id:
-            n = look(owner.channel_id)
+            n = look(owner.channel_id) if owner.channel_id is not None else None
             return f"Same as category {n or owner.channel_id}"
         return f"Same as {place_name(owner, names)}"
     return "Built-in default"
@@ -2554,7 +2559,7 @@ def undo_preview(st, prefix, include_children=False, names=None, admin_gid=None)
         include_children
         and pp is not None
         and pp.kind == "server"
-        and any(ch.place.kind == "channel" for ch in plan)
+        and any(ch.place is not None and ch.place.kind == "channel" for ch in plan)
     ):
         text += " (this includes a change in a channel of this server)"
     return text, _undo_ident(doc, picks)
@@ -3077,7 +3082,7 @@ def assess(st, changes, info=None, names=None, named=()):
         for c in st.channels_listed(g):
             channels[(g, c)] = Scope.server(g, channel_id=c, category_id=inf.category_of(g, c))
     for ch in changes:
-        if ch.place.kind == "channel":
+        if ch.place is not None and ch.place.kind == "channel":
             channels[(ch.place.guild_id, ch.place.channel_id)] = ch.place.scope(ch.key)
     later = Scope("all_servers")  # servers it joins later / not listed
     total = sum(inf.members(g) or 0 for g in inf.guilds())
@@ -3149,7 +3154,7 @@ def assess(st, changes, info=None, names=None, named=()):
         )
 
     # Image and video generation.
-    scopes = {(g,): sc for g, sc in servers.items()}
+    scopes: dict[tuple[str, ...], Scope] = {(g,): sc for g, sc in servers.items()}
     scopes[("DMs",)] = Scope.dm()
     scopes[("later",)] = later
     for (g, c), sc in channels.items():

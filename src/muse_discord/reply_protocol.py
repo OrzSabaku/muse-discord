@@ -5,12 +5,27 @@ verification and permission checks still belong to each caller.
 """
 
 import re
+from typing import TypedDict, cast
+
+
+class Reply(TypedDict, total=False):
+    """Fields used after shape validation; nonce authorization is separate."""
+
+    channel_id: str | int
+    reply_to: str | int | None
+    item: str | int | None
+    text: str | None
+    parts: list[str] | None
+    reactions: list[str] | None
+    attachments: list[str] | None
+    remember: list[str] | None
+    silent: bool
 
 
 ID_FIELDS = ("channel_id", "reply_to", "item")
 
 
-def is_snowflake(value):
+def is_snowflake(value: object) -> bool:
     # IDs enter API paths: reject booleans, leading zeroes and path fragments.
     return (
         isinstance(value, (str, int))
@@ -19,11 +34,12 @@ def is_snowflake(value):
     )
 
 
-def shape_problems(item):
+def shape_problems(item: object) -> list[str]:
     """Return structural errors without mutating the worker's payload."""
     if not isinstance(item, dict):
         return ["not a JSON object"]
-    errors = []
+    item = cast(dict[object, object], item)
+    errors: list[str] = []
     for field in ID_FIELDS:
         value = item.get(field)
         if field != "channel_id" and value in (None, ""):
@@ -35,7 +51,7 @@ def shape_problems(item):
     for field in ("parts", "reactions", "attachments", "remember"):
         value = item.get(field)
         if value is not None and not (
-            isinstance(value, list) and all(isinstance(v, str) for v in value)
+            isinstance(value, list) and all(isinstance(v, str) for v in cast(list[object], value))
         ):
             errors.append(f"{field} is not a list of strings")
     for field, kind in (("_retry", dict), ("_hold", str)):
@@ -46,7 +62,7 @@ def shape_problems(item):
     return errors
 
 
-def content_problem(item, *, has_text=None):
+def content_problem(item: Reply, *, has_text: bool | None = None) -> str | None:
     """Check delivery intent after shape validation.
 
     The monitor supplies whether any text survives its length budget;

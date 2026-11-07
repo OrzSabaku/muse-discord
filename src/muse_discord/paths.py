@@ -3,7 +3,7 @@
 from pathlib import Path
 
 
-def project_root(filename):
+def project_root(filename: str | Path) -> Path:
     # All package modules, including subpackages, share src/ as their anchor.
     return next(
         parent.parent for parent in Path(filename).resolve().parents if parent.name == "src"

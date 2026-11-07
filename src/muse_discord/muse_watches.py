@@ -58,7 +58,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 VERSION = 1
 KINDS = ("remind", "watch")  # an `add`'s kind (a web watch is a
@@ -151,7 +151,7 @@ def parse_utc(value):
         v = v[:-1] + "+00:00"
     try:
         dt = datetime.fromisoformat(v)
-        if dt.tzinfo is None or dt.utcoffset().total_seconds() != 0:
+        if dt.tzinfo is None or dt.utcoffset() != timedelta(0):
             return None
         ts = dt.timestamp()
     except ValueError, OverflowError, OSError, TypeError:
@@ -244,18 +244,27 @@ class _Match(_Shape):
     every: bool = False
 
 
-class _DiscordWatch(_Add):
+class _Until(_Add):
+    until: UTC | None = None
+
+    @field_validator("until", mode="before")
+    @classmethod
+    def no_null(cls, value):
+        if value is None:
+            raise ValueError("until cannot be null")
+        return value
+
+
+class _DiscordWatch(_Until):
     kind: Literal["watch"]
     match: _Match
-    until: UTC = Field(default=None)  # omitted is allowed; an explicit null is not
 
 
-class _WebWatch(_Add):
+class _WebWatch(_Until):
     kind: Literal["watch"]
     check: Literal["web"]
     what: Annotated[str, Field(min_length=1, max_length=WHAT_MAX)]
     every: Annotated[int, Field(ge=WEB_EVERY_MIN, le=WEB_EVERY_MAX)]
-    until: UTC = Field(default=None)
     repeat: bool = False
 
     @field_validator("what")
@@ -318,7 +327,7 @@ class _ScheduledReply(_Shape):
 
     @model_validator(mode="after")
     def no_other_actions(self):
-        bad = set(self.model_extra) & set(NOT_ON_SCHEDULE_ITEMS)
+        bad = set(self.model_extra or {}) & set(NOT_ON_SCHEDULE_ITEMS)
         if bad:
             raise ValueError("a schedule item carries no " + ", ".join(sorted(bad)))
         return self
@@ -575,13 +584,15 @@ def decide(data, req, changes, now=None):
         }
         if kind == "remind":
             due = parse_utc(c["at"]) if "at" in c else req.message_time + c["after"]
+            if due is None:
+                raise Refused(LINES["time"])
             delay = due - req.message_time
             if delay < REMIND_MIN_SECS or delay > REMIND_MAX_SECS or due - now > REMIND_MAX_SECS:
                 raise Refused(LINES["time"])
             rec["due"] = due
         elif kind == "watch-web":
             until = parse_utc(c["until"]) if "until" in c else now + WATCH_DEFAULT_SECS
-            if until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
+            if until is None or until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
                 raise Refused(LINES["watch-time"])
             rec.update(
                 {
@@ -599,7 +610,7 @@ def decide(data, req, changes, now=None):
         else:
             m = c["match"]
             until = parse_utc(c["until"]) if "until" in c else now + WATCH_DEFAULT_SECS
-            if until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
+            if until is None or until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
                 raise Refused(LINES["watch-time"])
             scope, scope_name = req.resolve(m["in"])
             rec.update(
@@ -929,7 +940,14 @@ class _Report(_Shape):
     nonce: Annotated[str, Field(pattern=r"^[0-9a-f]{32,64}$")]
     result: Literal["met", "not-met", "unknown", "refused"]
     summary: Annotated[str, Field(max_length=SUMMARY_MAX)]
-    at: Annotated[float, Field(ge=0)] = Field(default=None)  # local report-tool timestamp
+    at: Annotated[float, Field(ge=0)] | None = None  # local report-tool timestamp
+
+    @field_validator("at", mode="before")
+    @classmethod
+    def no_null_at(cls, value):
+        if value is None:
+            raise ValueError("at cannot be null")
+        return value
 
     @field_validator("summary")
     @classmethod
@@ -1025,7 +1043,7 @@ def fire_entry(i, r, now, matched=None):
                 "ends": iso(r.get("until", now)) if r.get("repeat") and res == "met" else "now",
             }
         )
-        if (matched or {}).get("summary"):
+        if matched and matched.get("summary"):
             e["summary"] = matched["summary"]
     else:
         e.update({"words": r.get("words"), "in": r.get("scope_name")})

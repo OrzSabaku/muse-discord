@@ -17,6 +17,8 @@ Nothing more elaborate: a determined encoder gets past any filter, and
 this one must never alter text it lets through.
 """
 
+from collections.abc import Iterable
+
 import base64
 import re
 
@@ -25,13 +27,13 @@ _TOKEN_SHAPE = re.compile(
     r"\.([A-Za-z0-9_-]{20,})"
 )
 _NOT_ALNUM = re.compile(r"[^A-Za-z0-9]")
-_FORMS = {}  # token -> (squashed, [base64 cores], hex)
+_FORMS: dict[str, tuple[str, list[str], str]] = {}  # token -> (squashed, [base64 cores], hex)
 
 
-def _token_forms(token):
+def _token_forms(token: str) -> tuple[str, list[str], str]:
     if token not in _FORMS:
         raw = token.encode()
-        cores = []
+        cores: list[str] = []
         for i in range(3):
             full = base64.b64encode(b"\0" * i + raw).decode()
             # Only the characters every encoding of the token shares,
@@ -43,7 +45,7 @@ def _token_forms(token):
     return _FORMS[token]
 
 
-def token_shaped(text):
+def token_shaped(text: str) -> bool:
     for m in _TOKEN_SHAPE.finditer(text):
         seg = m.group(1)
         try:
@@ -55,7 +57,7 @@ def token_shaped(text):
     return False
 
 
-def find(text, token=None, nonces=()):
+def find(text: object, token: str | None = None, nonces: Iterable[str] = ()) -> str | None:
     """What secret text carries ("the bot token", "a live nonce",
     "something shaped like a Discord token"), or None."""
     if not isinstance(text, str) or not text:

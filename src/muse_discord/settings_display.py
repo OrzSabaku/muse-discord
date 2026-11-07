@@ -4,7 +4,11 @@ This module reads schema metadata and caller-supplied server information.
 It does not load, resolve or write configuration files.
 """
 
+from collections.abc import Callable, Mapping
+
 from muse_discord.settings_schema import CORE, TOP
+
+type Names = Mapping[str, str] | Callable[[str], str | None] | None
 
 
 # -- words --------------------------------------------------------------------
@@ -74,12 +78,12 @@ VALUE_LABELS = {
 CATEGORY_TYPE = 4
 
 
-def label(key):
+def label(key: str) -> str:
     """A setting's name in plain words (raw key only for unknown ones)."""
     return LABELS.get(key, key)
 
 
-def name_lookup(names):
+def name_lookup(names: Names) -> Callable[[str], str | None]:
     if names is None:
         return lambda _i: None
     if callable(names):
@@ -143,7 +147,7 @@ def value_label(key, value, names=None):
     return str(value)
 
 
-def place_name(place, names=None):
+def place_name(place, names: Names = None) -> str:
     """ "Defaults", "DMs", the server's name, "#channel"."""
     look = name_lookup(names)
     if place.kind == "defaults":

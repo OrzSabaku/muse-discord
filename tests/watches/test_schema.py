@@ -116,6 +116,31 @@ class WatchSchema(unittest.TestCase):
         ):
             self.assertTrue(W.report_problems(dict(report, **extra)))
 
+    def test_optional_deadlines_allow_omission_but_not_null(self):
+        changes = [
+            {"op": "add", "kind": "watch", "match": {"words": ["hello"], "in": "here"}},
+            {
+                "op": "add",
+                "kind": "watch",
+                "check": "web",
+                "what": "a release",
+                "every": W.WEB_EVERY_MIN,
+            },
+        ]
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertEqual(W.shape_problems(item(change)), [])
+                self.assertTrue(W.shape_problems(item(dict(change, until=None))))
+                self.assertEqual(
+                    W.shape_problems(item(dict(change, until="2027-01-01T00:00:00Z"))), []
+                )
+
+    def test_report_timestamp_allows_omission_but_not_null(self):
+        report = {"id": "wabcde", "nonce": "a" * 32, "result": "met", "summary": "yes"}
+        self.assertEqual(W.report_problems(report), [])
+        self.assertEqual(W.report_problems(dict(report, at=0)), [])
+        self.assertTrue(W.report_problems(dict(report, at=None)))
+
 
 if __name__ == "__main__":
     unittest.main()
