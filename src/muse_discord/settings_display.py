@@ -281,5 +281,3 @@ def names_from(info=None, st=None, extra=None):
     out.update(ServerInfo(info).names())
     out.update({str(k): str(v) for k, v in (extra or {}).items()})
     return out
-
-
