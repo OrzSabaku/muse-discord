@@ -7,7 +7,9 @@ Legacy approval/update buttons still use the monitor's interaction worker.
 
 import asyncio
 import json
+import os
 import time
+import urllib.request
 
 import discord
 from discord.ext import tasks
@@ -18,7 +20,19 @@ from muse_discord import settings_ui
 
 class Connection(discord.Client):
     def __init__(self, inbox, status, context_factory, guard, intents):
+        # discord.py does not read the proxy environment; hosts whose
+        # egress goes through a proxy must hand it over, or the Gateway
+        # (and REST) connection is attempted directly and fails.
+        proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+        # Honor NO_PROXY/no_proxy so Discord endpoints can stay direct when
+        # operators intentionally bypass the proxy for them.
+        if proxy and any(
+            urllib.request.proxy_bypass_environment(host)
+            for host in ("discord.com", "gateway.discord.gg")
+        ):
+            proxy = None
         super().__init__(
+            proxy=proxy,
             intents=discord.Intents(intents),
             status=discord.Status.invisible,
             enable_debug_events=True,

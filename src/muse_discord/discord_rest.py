@@ -10,9 +10,11 @@ import asyncio
 import atexit
 import io
 import logging
+import os
 import re
 import secrets
 import threading
+import urllib.request
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from urllib.parse import parse_qsl, unquote, urlsplit
 
@@ -28,6 +30,21 @@ if not (2, 7, 1) <= discord.version_info[:3] < (2, 8, 0):
     )
 logging.getLogger("discord.http").disabled = True
 API = "https://discord.com/api/v10"
+
+
+def _proxy_for(base):
+    # discord.py does not read the proxy environment; on a host whose
+    # egress goes through a proxy every call would otherwise be
+    # attempted directly and fail. Loopback API overrides (tests,
+    # local relays) are never proxied, and NO_PROXY is honored for
+    # the API host just like in the Gateway handoff.
+    host = urlsplit(base).hostname
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return None
+    if host and urllib.request.proxy_bypass_environment(host):
+        return None
+    return os.environ.get("HTTPS_PROXY") \
+        or os.environ.get("https_proxy") or None
 
 
 class DiscordError(RuntimeError):
@@ -169,7 +186,8 @@ class Rest:
                 trace = aiohttp.TraceConfig()
                 trace.on_request_end.append(_no_ambiguous_retry)
                 http = self._http = _Session(
-                    asyncio.get_running_loop(), http_trace=trace
+                    asyncio.get_running_loop(), http_trace=trace,
+                    proxy=_proxy_for(self.base),
                 )
                 await http.open(self.token)
 

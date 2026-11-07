@@ -15,7 +15,9 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
 import common  # noqa: F401 (initialize paths and safe test environment)
-from muse_discord.discord_rest import Rest, DiscordError, route_for
+from unittest.mock import patch
+
+from muse_discord.discord_rest import Rest, DiscordError, route_for, _proxy_for
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -235,6 +237,41 @@ class Transport(unittest.TestCase):
         payload = sent[-1]
         self.assertTrue(payload["nonce"])
         self.assertTrue(payload["enforce_nonce"])
+
+
+class ProxyFor(unittest.TestCase):
+    # discord.py never reads the proxy environment; on a host whose
+    # egress goes through a proxy the transport must hand it over,
+    # but a loopback API override (tests, local relays) is direct.
+    def test_environment_proxy_reaches_remote_api_only(self):
+        with patch.dict(
+            os.environ, {"HTTPS_PROXY": "http://proxy.example:3128"}
+        ):
+            self.assertEqual(
+                _proxy_for("https://discord.com/api/v10"),
+                "http://proxy.example:3128",
+            )
+            self.assertIsNone(_proxy_for("http://127.0.0.1:9"))
+            self.assertIsNone(_proxy_for("http://localhost:9"))
+
+    def test_no_proxy_bypasses_the_api_host(self):
+        with patch.dict(
+            os.environ,
+            {
+                "HTTPS_PROXY": "http://proxy.example:3128",
+                # proxy_bypass_environment prefers the lowercase name;
+                # set both so the test does not depend on the host env.
+                "no_proxy": "discord.com",
+                "NO_PROXY": "discord.com",
+            },
+        ):
+            self.assertIsNone(_proxy_for("https://discord.com/api/v10"))
+
+    def test_no_environment_means_no_proxy(self):
+        with patch.dict(os.environ):
+            os.environ.pop("HTTPS_PROXY", None)
+            os.environ.pop("https_proxy", None)
+            self.assertIsNone(_proxy_for("https://discord.com/api/v10"))
 
 
 if __name__ == "__main__":
