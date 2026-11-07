@@ -248,6 +248,12 @@ if ! python3 -c "from pydantic import TypeAdapter" 2>/dev/null; then
     log "Pydantic reinstall failed (monitor cannot validate config without it)"
 fi
 
+if ! python3 -c "from discord.ui import LayoutView" 2>/dev/null; then
+  log "discord.py missing; reinstalling"
+  python3 -m pip install ${PIP_FLAGS[@]+"${PIP_FLAGS[@]}"} -q 'discord.py>=2.6,<3' >>"$LOG" 2>&1 || \
+    log "discord.py reinstall failed (monitor cannot connect without it)"
+fi
+
 # ---------------- monitor ----------------
 MONITOR_HUNG=""
 DEGRADED_SIG=""
