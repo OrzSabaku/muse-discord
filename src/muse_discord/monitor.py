@@ -153,7 +153,6 @@ from muse_discord.worker_context import WorkerContext
 
 CONFIG_PATH_ARGUMENT = 2
 MEMBER_CACHE_LIMIT = 2000
-EMPTY_OUTBOX_MAX_BYTES = 4  # JSON [] with optional whitespace/newline
 
 
 BASE_DIR = str(project_root(__file__))
@@ -524,19 +523,7 @@ def _deliver_outbox_item(batch, item):
         opt_action=PRO.actions.opt_action,
         max_reply_chars=_SETTINGS.engine.max_reply_chars,
     )
-    OutboxDelivery(batch, item, policy, effects, _OUTBOX_CURRENT).process()
-
-
-def _outbox_processor():
-    return OutboxProcessor(
-        _outbox_files(),
-        queue_index,
-        save_state,
-        _CAPABILITIES.publish,
-        _deliver_outbox_item,
-        _OUTBOX_CURRENT,
-        _OUTBOX_POISON,
-    )
+    OutboxDelivery(batch, item, policy, effects, batch.current).process()
 
 
 def load_queue():
@@ -1146,13 +1133,8 @@ def _settle(state, item, outcome):
     return _reply_state().settle(state, item, outcome)
 
 
-# Progress belongs to this running monitor; outbox_store owns recovery rules.
-_OUTBOX_CURRENT: dict[str, str | None] = {"key": None}
-_OUTBOX_POISON = {}
-
-
-def outbox_pass(state):
-    return _outbox_processor().pass_once(state, process_outbox)
+# Processing progress and poison-item counts belong to OutboxProcessor.
+_OUTBOX: OutboxProcessor
 
 
 STALE_PROMPT_FILE = os.path.join(BASE_DIR, "prompt_outdated.json")
@@ -1164,10 +1146,6 @@ def _reply_binding():
         lambda item: PRO.delivery.names_slot(item),
         StalePrompt(STALE_PROMPT_FILE, notify_owners, time.time, lambda: time.strftime("%Y-%m-%d")),
     )
-
-
-def process_outbox(state):
-    return _outbox_processor().process(state)
 
 
 # ---------------------------------------------------------------------------
@@ -1365,19 +1343,6 @@ def _adopt_identity(me, how=""):
     print(f"Bot user id: {BOT_ID}{how}", flush=True)
 
 
-def outbox_waiting(since):
-    """True when reply_outbox.json holds a reply written after since (the
-    last outbox pass): a cheap stat, as the monitor leaves the file as
-    "[]". A file the last pass could not take (mid-write, or a pass that
-    failed) does not count, so it cannot make the loop spin."""
-    try:
-        st = os.stat(OUTBOX_FILE)
-    except OSError:
-        return False
-    # (50ms of slack: file times can trail time.time() slightly.)
-    return st.st_size > EMPTY_OUTBOX_MAX_BYTES and st.st_mtime > since - 0.05
-
-
 def _drain_live_messages(state, _gateway_inbox):
     # Gateway fast path first: messages pushed in realtime are
     # classified (and triggers staged) like polled ones. Anything
@@ -1455,12 +1420,12 @@ def _wait_for_work(state, gateway_status, scheduler, outbox_pass_at):
     # A reply the worker writes goes out within ~0.25s, even when it
     # lands mid-wait: the wait is cut into 0.25s steps that stat the
     # outbox.
-    until = now + (0.0 if outbox_waiting(outbox_pass_at) else wait_for)
+    until = now + (0.0 if _OUTBOX.waiting(outbox_pass_at) else wait_for)
     while True:
         left = until - time.time()
         if left <= 0 or gateway_status["wake"].wait(timeout=min(0.25, left)):
             break
-        if outbox_waiting(outbox_pass_at):
+        if _OUTBOX.waiting(outbox_pass_at):
             break
     gateway_status["wake"].clear()
 
@@ -1500,7 +1465,7 @@ def _settings_upkeep(status):
 
 
 def _send_outbox(state):
-    outbox_pass(state)
+    _OUTBOX.pass_once(state)
     save_state(state)
 
 
@@ -1602,6 +1567,7 @@ def _start_monitor():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
+    global _OUTBOX
     global _SENDER, _PARTS, _TYPING
     global _CAPABILITIES, _OWNER_AUTH
     global _OWNER_MESSAGES, _OWNER_PRESENCE, _REVIEW, _UPDATE_NOTICES
@@ -1680,6 +1646,13 @@ def _initialize_services():
         CommandTargets(_DIRECTORY.channels, _DIRECTORY.guild_channels),
         lambda: load_queue(),
         lambda text: notify_owners(text),
+    )
+    _OUTBOX = OutboxProcessor(
+        _outbox_files,
+        lambda state: queue_index(state),
+        lambda state: save_state(state),
+        _CAPABILITIES.publish,
+        _deliver_outbox_item,
     )
     _REVIEW = ReplyReview(settings, _OWNER_MESSAGES, _DIRECT_MESSAGES.users, _settle)
     _UPDATE_NOTICES = UpdateNotices(

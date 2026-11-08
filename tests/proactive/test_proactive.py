@@ -202,7 +202,7 @@ class Base(unittest.TestCase):
         with open(self.m.OUTBOX_FILE, "w") as f:
             json.dump(list(items), f)
         with quiet() as buf:
-            self.m.process_outbox(self.st)
+            self.m._OUTBOX.process(self.st)
         self.out += buf.getvalue()
 
     def rejected(self):

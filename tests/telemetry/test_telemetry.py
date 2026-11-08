@@ -261,7 +261,7 @@ class NeverIdentifying(Base):
                 f,
             )
         with quiet():
-            m.process_outbox(self.st)
+            m._OUTBOX.process(self.st)
         self.assertTrue(m.api.channel_posts(CH))
 
         # Settings changes: /settings (an owner, by id), a preset, a DM

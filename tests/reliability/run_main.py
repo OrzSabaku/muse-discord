@@ -112,7 +112,7 @@ elif scenario == "phases":
     def broken_outbox(state):
         raise RuntimeError("corrupt outbox")
 
-    mod.process_outbox = broken_outbox
+    mod._OUTBOX.process = broken_outbox
     until = lambda: calls["sweep_media"]  # noqa: E731  (a full cycle)
 elif scenario == "identity_pending":
     # Non-401 identity failure; REST otherwise fine.

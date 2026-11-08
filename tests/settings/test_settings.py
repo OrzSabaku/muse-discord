@@ -562,7 +562,7 @@ class MonitorBase(unittest.TestCase):
         with open(self.m.OUTBOX_FILE, "w") as f:
             json.dump([out], f)
         with quiet() as buf:
-            self.m.process_outbox(self.st)
+            self.m._OUTBOX.process(self.st)
         return buf.getvalue()
 
     def kind(self, msg, guild=G1):
@@ -737,7 +737,7 @@ class NeverShare(MonitorBase):
         self.assertEqual(resp["type"], 7)
         with quiet():
             m.apply_record(self.st, recs[0])
-            m.process_outbox(self.st)
+            m._OUTBOX.process(self.st)
         posted = m.api.channel_posts(CH)
         self.assertEqual(len(posted), 1)
         self.assertIn("Project Falcon", posted[0]["content"])

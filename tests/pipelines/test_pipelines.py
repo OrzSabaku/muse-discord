@@ -296,7 +296,7 @@ class Persistence(unittest.TestCase):
                 queue.edit(add=[{"message_id": "400"}])
 
             processor = OutboxProcessor(
-                files,
+                lambda: files,
                 lambda _: {"frags": {}},
                 Mock(),
                 publish,

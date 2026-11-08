@@ -42,7 +42,7 @@ def slow_outbox(state):
     raise Stop()
 
 
-mod.process_outbox = slow_outbox
+mod._OUTBOX.process = slow_outbox
 res = {"acks": [], "handled_on": []}
 
 

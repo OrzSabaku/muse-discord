@@ -19,6 +19,7 @@ from muse_discord.reply_protocol import item_key as _outbox_key
 from muse_discord.storage import SharedLockTimeout, atomic_write
 from muse_discord.storage import read_json as _read_json
 
+EMPTY_OUTBOX_MAX_BYTES = 4  # JSON [] with optional whitespace/newline
 OUTBOX_SETTLE_SECS = 10
 OUTBOX_POISON_TRIES = 3
 _NONCE_LIKE = re.compile(r"[0-9a-f]{32,64}")
@@ -192,7 +193,7 @@ def _restore_outbox_retries(state, items):
 
 @dataclass
 class OutboxProcessor:
-    files: OutboxFiles
+    files_source: Callable[[], OutboxFiles]
     queue_index: Callable[[dict], dict]
     checkpoint: Callable[[dict], None]
     publish: Callable[[dict], None]
@@ -200,33 +201,41 @@ class OutboxProcessor:
     current: dict = field(default_factory=lambda: {"key": None})
     poison: dict = field(default_factory=dict)
 
+    def waiting(self, since):
+        """Cheap arrival check, excluding empty files and work an earlier pass deferred."""
+        try:
+            info = os.stat(self.files_source().pending)
+        except OSError:
+            return False
+        # File timestamps can trail the clock slightly.
+        return info.st_size > EMPTY_OUTBOX_MAX_BYTES and info.st_mtime > since - 0.05
+
     def process(self, state):
         """Send replies drafted by the worker, with output guardrails + dedup.
 
         Under the shared lock, the items are taken out of reply_outbox.json
-        into self.files.processing (merged back on the next pass if the
+        into files.processing (merged back on the next pass if the
         monitor dies mid-send). They are sent with no lock held, since a
         multi-part send takes several seconds. Then, under the lock again,
         only the items still retrying go back, ahead of whatever the worker
         appended meanwhile: writing back the copy read before the sends
         deleted those appends. Settled items (sent, silent, or skipped) also
         leave the queue here, so the worker never has to rewrite it."""
+        files = self.files_source()
         # An unreadable outbox is not idle: OutboxFiles.load sets it aside.
-        idle = _read_json(self.files.pending, list) == []
-        if idle and not os.path.exists(self.files.processing) and not state.get("released"):
+        idle = _read_json(files.pending, list) == []
+        if idle and not os.path.exists(files.processing) and not state.get("released"):
             return
         picked = time.time()
-        with self.files.queue.lock():
-            fresh = self.files.load(self.files.pending)
+        with files.queue.lock():
+            fresh = files.load(files.pending)
             if fresh is None:
                 return  # mid-write; the next pass gets it
             # Held replies an owner chose to send ride along (see owner.review.ReplyReview).
-            outbox = (
-                (self.files.load(self.files.processing) or []) + fresh + state.pop("released", [])
-            )
+            outbox = (files.load(files.processing) or []) + fresh + state.pop("released", [])
             _restore_outbox_retries(state, outbox)
-            atomic_write(self.files.processing, outbox)
-            atomic_write(self.files.pending, [])
+            atomic_write(files.processing, outbox)
+            atomic_write(files.pending, [])
             if state.pop("outbox_retries", None) is not None:
                 self.checkpoint(state)  # restored progress is now in the locked processing file
 
@@ -234,7 +243,7 @@ class OutboxProcessor:
             state,
             picked,
             self.queue_index(state),
-            self.files,
+            files,
             self.checkpoint,
             self.publish,
             self.current,
@@ -248,14 +257,14 @@ class OutboxProcessor:
             batch.defer_retries(originals)
             raise
 
-    def pass_once(self, state, work=None):
+    def pass_once(self, state):
         """process_outbox for the main loop: when it raises while handling
         an item, that item's failure is counted, and after
         OUTBOX_POISON_TRIES it is taken out of the outbox files and set
         aside in reply_outbox.rejected.json; then the error is raised on."""
         self.current["key"] = None
         try:
-            (work or self.process)(state)
+            self.process(state)
         except SharedLockTimeout:
             self.current["key"] = None
             raise  # contention is not a malformed outbox item
@@ -269,10 +278,11 @@ class OutboxProcessor:
             raise
 
     def set_aside_poison(self, key, exc):
+        files = self.files_source()
         gone = []
-        with self.files.queue.lock():
-            for path in (self.files.processing, self.files.pending):
-                items = self.files.load(path)
+        with files.queue.lock():
+            for path in (files.processing, files.pending):
+                items = files.load(path)
                 if not items:
                     continue
                 keep = [i for i in items if _outbox_key(i) != key]
@@ -283,4 +293,4 @@ class OutboxProcessor:
         if gone:
             why = f"processing it failed {OUTBOX_POISON_TRIES} times ({exc.__class__.__name__})"
             print(f"Set aside an outbox item: {why}.", flush=True)
-            self.files.reject([(redact_nonces(i), why) for i in gone[:1]])
+            files.reject([(redact_nonces(i), why) for i in gone[:1]])

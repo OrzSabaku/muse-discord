@@ -126,7 +126,7 @@ class Base(unittest.TestCase):
 
     def process(self):
         with quiet() as buf:
-            self.mod.process_outbox(self.st)
+            self.mod._OUTBOX.process(self.st)
         self.out += buf.getvalue()
         return buf.getvalue()
 

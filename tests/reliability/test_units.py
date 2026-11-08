@@ -372,7 +372,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
         out = io.StringIO()
         with mock.patch.object(mod._DISCORD, "request", gone), contextlib.redirect_stdout(out):
             for _ in range(3):
-                mod.process_outbox(st)
+                mod._OUTBOX.process(st)
         texts = [d for p, d in mod.api.posts if p.endswith("/messages")]
         self.assertEqual(len(texts), 1, out.getvalue())
         self.assertEqual(texts[0]["message_reference"]["message_id"], rid)

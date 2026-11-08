@@ -97,14 +97,14 @@ def test_worker_append_during_slow_send_not_lost():
             ],
         )
         with capture():
-            m.process_outbox(st)
+            m._OUTBOX.process(st)
         assert sent_texts() == ["one", "two", "three"], sent_texts()
         out = read(m.OUTBOX_FILE)
         assert [i["item"] for i in out] == [b], out  # NOT lost
         assert not os.path.exists(m.OUTBOX_PROCESSING_FILE)
         assert [q["message_id"] for q in read(m.QUEUE_FILE)] == [b]
         with capture():
-            m.process_outbox(st)
+            m._OUTBOX.process(st)
         assert sent_texts()[-1] == "for b"
         assert read(m.QUEUE_FILE) == [] and read(m.OUTBOX_FILE) == []
     finally:
@@ -131,7 +131,7 @@ def test_concurrent_appends_stress_each_sent_once():
 
         def loop():
             while not stop.is_set():
-                m.process_outbox(st)
+                m._OUTBOX.process(st)
                 time.sleep(0.01)
 
         t = threading.Thread(target=loop)
@@ -304,7 +304,7 @@ def test_monitor_removes_answered_items():
         ],
     )
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert [q["message_id"] for q in read(m.QUEUE_FILE)] == [unnamed], read(m.QUEUE_FILE)
     assert sent_texts() == ["hello", "a post", "burst reply"], sent_texts()
     assert len(read(m.OUTBOX_REJECTED_FILE)) == 3
@@ -314,7 +314,7 @@ def test_monitor_removes_answered_items():
     # a second worker drafts the same item: suppressed
     write(m.OUTBOX_FILE, [S(st, {"item": plain, "channel_id": "101", "text": "a post again"})])
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert len(sent_texts()) == 3
 
 
@@ -342,7 +342,7 @@ def test_malformed_items_rejected_without_blocking():
         ],
     )
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert sent_texts() == ["the good one"], sent_texts()
     rej = read(m.OUTBOX_REJECTED_FILE)
     assert len(rej) == 7, [r["reason"] for r in rej]
@@ -359,13 +359,13 @@ def test_corrupt_outbox_file():
     with open(m.OUTBOX_FILE, "w") as f:
         f.write('[{"channel_id": "101", "te')  # mid-write
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     with open(m.OUTBOX_FILE) as f:
         assert f.read().startswith('[{"channel_id"'), "young unparseable file must be left alone"
     old = time.time() - 60
     os.utime(m.OUTBOX_FILE, (old, old))
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert read(m.OUTBOX_FILE) == []
     assert len(read(m.OUTBOX_REJECTED_FILE)) == 1  # kept, set aside
 
@@ -389,7 +389,7 @@ def test_retry_merges_with_appends():
     m.api_post = failing
     try:
         with capture():
-            m.process_outbox(st)
+            m._OUTBOX.process(st)
     finally:
         m.api_post = orig
     out = read(m.OUTBOX_FILE)
@@ -401,7 +401,7 @@ def test_retry_merges_with_appends():
     out[0]["_retry"]["next"] = 0
     write(m.OUTBOX_FILE, out)
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert sent_texts() == ["leftover", "flaky", "b"], sent_texts()
     assert read(m.QUEUE_FILE) == []
 
@@ -479,7 +479,7 @@ def test_typing_thread_lifecycle():
             m.OUTBOX_FILE, [S(st, {"item": a, "channel_id": "101", "reply_to": a, "text": "done"})]
         )
         with capture():
-            m.process_outbox(st)
+            m._OUTBOX.process(st)
         m._TYPING.refresh(st)
         n0 = pings()
         clock.step(3 * TYPING_EVERY_SECS)

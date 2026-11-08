@@ -33,7 +33,7 @@ class LockTimeout(unittest.TestCase):
         self.timeout = patch.object(m, "LOCK_WAIT_SECS", 0)
         self.timeout.start()
         self.addCleanup(self.timeout.stop)
-        m._OUTBOX_POISON.clear()
+        m._OUTBOX.poison.clear()
 
     def test_queue_is_unchanged_until_lock_released_and_retry_preserves_worker_append(self):
         first, worker, incoming = [{"message_id": snowflake()} for _ in range(3)]
@@ -60,10 +60,10 @@ class LockTimeout(unittest.TestCase):
         item = {"item": snowflake(), "channel_id": "101", "text": "waiting"}
         write(m.OUTBOX_FILE, [item])
         with held_lock(), self.assertRaises(m.SharedLockTimeout):
-            m.outbox_pass(state)
+            m._OUTBOX.pass_once(state)
         self.assertEqual(read(m.OUTBOX_FILE), [item])
         self.assertFalse(os.path.exists(m.OUTBOX_PROCESSING_FILE))
-        self.assertEqual(m._OUTBOX_POISON, {})
+        self.assertEqual(m._OUTBOX.poison, {})
         self.assertEqual(sent_texts(), [])
 
     def test_failed_settlement_keeps_nonce_and_retry_does_not_send_twice(self):
@@ -85,17 +85,17 @@ class LockTimeout(unittest.TestCase):
                 capture(),
                 self.assertRaises(m.SharedLockTimeout),
             ):
-                m.outbox_pass(state)
+                m._OUTBOX.pass_once(state)
             self.assertEqual(state["reply_nonces"][mid]["nonce"], nonce)
             self.assertEqual(len(read(m.QUEUE_FILE)), 1)
             self.assertEqual(read(m.OUTBOX_PROCESSING_FILE), [item])
         with capture():
-            m.outbox_pass(state)
+            m._OUTBOX.pass_once(state)
         self.assertEqual(sent_texts(), ["hi"])
         self.assertEqual(read(m.QUEUE_FILE), [])
         self.assertNotIn(mid, state["reply_nonces"])
         self.assertFalse(os.path.exists(m.OUTBOX_PROCESSING_FILE))
-        self.assertEqual(m._OUTBOX_POISON, {})
+        self.assertEqual(m._OUTBOX.poison, {})
 
     def test_retry_progress_survives_repeated_settlement_contention_and_reload(self):
         state, mid = new_state(), snowflake()
@@ -113,7 +113,7 @@ class LockTimeout(unittest.TestCase):
             with patch.object(m, "api_post", side_effect=fail_send) as send, capture():
                 for attempt in (1, 2):
                     with self.assertRaises(m.SharedLockTimeout):
-                        m.outbox_pass(state)
+                        m._OUTBOX.pass_once(state)
                     checkpoint = read(m.STATE_FILE)
                     retry = next(iter(checkpoint["outbox_retries"].values()))
                     self.assertEqual(retry["n"], attempt)
@@ -125,13 +125,13 @@ class LockTimeout(unittest.TestCase):
                     self.assertEqual(send.call_count, attempt)
                     state = checkpoint  # restart with progress loaded from state.json
                     fcntl.flock(holder, fcntl.LOCK_UN)
-                    m.outbox_pass(state)  # still before the saved backoff deadline
+                    m._OUTBOX.pass_once(state)  # still before the saved backoff deadline
                     self.assertEqual(send.call_count, attempt)
                     self.assertEqual(read(m.OUTBOX_FILE)[0]["_retry"], retry)
                     self.assertNotIn("outbox_retries", read(m.STATE_FILE))
                     clock[0] = retry["next"] + 0.1
                 clock[0] = first + SEND_RETRY_SECS + 1
-                m.outbox_pass(state)
+                m._OUTBOX.pass_once(state)
                 self.assertEqual(send.call_count, 2)  # expired replies are never sent again
         self.assertEqual(read(m.OUTBOX_FILE), [])
         self.assertEqual(read(m.QUEUE_FILE), [])
@@ -150,7 +150,7 @@ class LockTimeout(unittest.TestCase):
             return original_publish(current)
 
         with patch.object(m._CAPABILITIES, "write_replies", publish), capture():
-            m.outbox_pass(state)
+            m._OUTBOX.pass_once(state)
         self.assertEqual(sent_texts(), ["hi"])
         self.assertEqual(read(m.QUEUE_FILE), [])
 
@@ -183,12 +183,12 @@ class LockTimeout(unittest.TestCase):
         with patch.object(m.OutboxDelivery, "actions", side_effect=m.SharedLockTimeout("busy")):
             for _ in range(OUTBOX_POISON_TRIES):
                 with self.assertRaises(m.SharedLockTimeout):
-                    m.outbox_pass(state)
-        self.assertEqual(m._OUTBOX_POISON, {})
+                    m._OUTBOX.pass_once(state)
+        self.assertEqual(m._OUTBOX.poison, {})
         self.assertEqual(read(m.OUTBOX_PROCESSING_FILE), [item])
         self.assertFalse(os.path.exists(m.OUTBOX_REJECTED_FILE))
         with capture():
-            m.outbox_pass(state)
+            m._OUTBOX.pass_once(state)
         self.assertEqual(sent_texts(), ["hi"])
 
     def test_startup_continues_with_pending_burst_when_queue_is_locked(self):

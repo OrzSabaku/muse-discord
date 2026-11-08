@@ -305,7 +305,7 @@ def f1_dm_image_not_attached_to_public_reply_old_layout():
     # The worker saved X's image straight into generated/ (old layout).
     make_file(os.path.join(M.GENERATED_DIR, "cat.png"))
     outbox([{"channel_id": GEN_CH, "text": "hi all", "reply_to": y["id"]}])
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     sent = [f for s in FILE_SENDS for f in s["files"]]
     assert not sent, f"public reply carried generated files: {sent}"
 
@@ -326,7 +326,7 @@ def f1_dm_image_bound_to_its_item():
             },
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     pub = [s for s in FILE_SENDS if s["channel"] == GEN_CH]
     dm = [s for s in FILE_SENDS if s["channel"] == DM_CH]
     assert not pub, f"public reply carried files: {pub}"
@@ -344,7 +344,7 @@ def f1_no_unbound_fallback_without_approval():
     img = make_file(os.path.join(M.GENERATED_DIR, "fresh.png"))
     make_file(os.path.join(M.GENERATED_DIR, z["id"], "fresh.png"))
     outbox([{"channel_id": GEN_CH, "text": "look", "reply_to": z["id"], "attachments": [img]}])
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not FILE_SENDS, f"unapproved item got files: {FILE_SENDS}"
 
 
@@ -361,7 +361,7 @@ def f1_reply_cannot_claim_other_item_or_channel():
             {"channel_id": GEN_CH, "text": "b", "reply_to": x["id"], "standalone": True},
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not FILE_SENDS, f"files leaked: {FILE_SENDS}"
 
 
@@ -386,7 +386,7 @@ def f1_symlink_and_traversal_rejected():
             }
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not FILE_SENDS, f"files leaked: {FILE_SENDS}"
 
 
@@ -411,7 +411,7 @@ def f2_burst_reply_under_last_fragment_gets_image():
             }
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert FILE_SENDS and FILE_SENDS[0]["files"] == [os.path.realpath(img)], (
         f"burst reply missed its image: {FILE_SENDS}"
     )
@@ -435,7 +435,7 @@ def f2_failed_send_retries_with_image_and_counts_once():
         ]
     )
     SEND_FILES_FAIL[0] = 1
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not FILE_SENDS
     assert media_counts(state)["sent_today"] == 0, "media.per_day counted a failed send"
     assert x["id"] in state.get("gen_approved", {}), "approval popped early"
@@ -444,7 +444,7 @@ def f2_failed_send_retries_with_image_and_counts_once():
     assert len(ob) == 1 and ob[0].get("_retry"), ob
     ob[0]["_retry"]["next"] = 0
     outbox(ob)
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert FILE_SENDS and FILE_SENDS[0]["files"] == [os.path.realpath(img)], (
         f"retry went out without the image: {FILE_SENDS}"
     )
@@ -472,12 +472,12 @@ def f2_tampered_retry_attachments_rejected():
         ]
     )
     SEND_FILES_FAIL[0] = 1
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     ob = read_outbox()
     ob[0]["_retry"]["next"] = 0
     ob[0]["_retry"]["attachments"] = [[TOKEN_FILE, TOKEN_FILE]]
     outbox(ob)
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     sent = [f for s in FILE_SENDS for f in s["files"]]
     assert TOKEN_FILE not in sent and os.path.realpath(TOKEN_FILE) not in sent, (
         f"token file sent: {sent}"
@@ -610,7 +610,7 @@ def f4_monitor_outbox_rejects_malformed_ids():
             {"channel_id": GEN_CH, "text": "y", "reply_to": "1/../../x"},
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not API_POSTS, f"malformed ids reached the API: {API_POSTS}"
 
 
@@ -815,7 +815,7 @@ def f7_role_mention_not_allowed():
             }
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     msgs = [d for p, d in API_POSTS if p.endswith("/messages")]
     assert msgs and msgs[0].get("allowed_mentions") == {"parse": ["users"], "replied_user": True}, (
         msgs
@@ -865,7 +865,7 @@ def f7_overlong_parts_clamped():
         state["replied_to"] = []
         M._SETTINGS.engine = M._SETTINGS.engine.model_copy(update={"max_reply_chars": cap})
         outbox([{"channel_id": GEN_CH, "text": text, "reply_to": queued_in(state)}])
-        M.process_outbox(state)
+        M._OUTBOX.process(state)
         msgs = [d for p, d in API_POSTS if p.endswith("/messages")]
         assert msgs and all(len(d["content"]) <= 2000 for d in msgs), [
             len(d["content"]) for d in msgs

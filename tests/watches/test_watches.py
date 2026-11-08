@@ -164,7 +164,7 @@ class Base(unittest.TestCase):
         with open(self.mod.OUTBOX_FILE, "w") as f:
             json.dump(list(items), f)
         with quiet() as buf:
-            self.mod.process_outbox(self.st)
+            self.mod._OUTBOX.process(self.st)
         self.out += buf.getvalue()
 
     def tick(self, ahead=0.0):
@@ -396,7 +396,7 @@ class Robustness(Base):
         with patch.object(reply_policy, "normalize_parts", boom):
             for _ in range(OUTBOX_POISON_TRIES):
                 with quiet(), self.assertRaises(ValueError):
-                    m.outbox_pass(self.st)
+                    m._OUTBOX.pass_once(self.st)
         self.assertEqual(self.rejected()[-1]["item"]["text"], "poison")
         self.outbox(self.reply(good, text="hello"))  # flows again
         self.assertEqual([d["content"] for _, d in self.new_sends()], ["hello"])
