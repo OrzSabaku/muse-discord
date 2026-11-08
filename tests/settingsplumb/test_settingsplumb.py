@@ -558,7 +558,7 @@ class UIData(unittest.TestCase):
             "author": "kai",
             "updated": 1.0,
         }
-        m._ledger_save(d)
+        m._message_ledger().save(d)
         self.assertEqual(self.ctx.recent_outcomes(MS.Place.dms(), 10), [])
         # A DM channel the monitor polls is one.
         m._DIRECT_MESSAGES.names["400000000000000077"] = "owner"

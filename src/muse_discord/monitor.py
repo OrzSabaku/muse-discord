@@ -94,6 +94,7 @@ from muse_discord.directory.scopes import DirectoryScopes
 from muse_discord.directory.snapshot import DirectorySnapshot
 from muse_discord.ingest import MessageEnqueuer
 from muse_discord.interactions import ephemeral, interaction_user_id
+from muse_discord.message_ledger import MessageLedger, ledger_code
 from muse_discord.message_models import (
     LEDGER_TERMINAL,
     LedgerContext,
@@ -129,11 +130,11 @@ from muse_discord.paths import project_root
 from muse_discord.receiving.cursor import ReceiveCursor
 from muse_discord.receiving.direct import DirectChannels
 from muse_discord.receiving.gateway import GatewayEvents, GatewayIngress
-from muse_discord.receiving.messages import CONVERSATION_TYPES, ReceivedMessages, ReceptionEffects
+from muse_discord.receiving.messages import ReceivedMessages, ReceptionEffects
+from muse_discord.receiving.reconciliation import MentionReconciler, RecoveryWindow
 from muse_discord.reply_delivery import OutboxDelivery
 from muse_discord.response_policy import (
     ResponsePolicy,
-    predates_join,
 )
 from muse_discord.response_policy import _iso_ts as _iso_ts
 from muse_discord.rest_scheduler import (
@@ -943,126 +944,22 @@ def quarantine(msg, channel_name, matched_pattern, fragments=()):
 # ---------------------------------------------------------------------------
 
 
+def _message_ledger():
+    return MessageLedger(
+        LEDGER_FILE, CHANNELS, _DIRECT_MESSAGES, TM.ledger, remember_name, time.time
+    )
+
+
 def _ledger_load():
-    d = _read_json(LEDGER_FILE)
-    if d and isinstance(d.get("entries"), dict):
-        return d
-    return {"entries": {}}
-
-
-def _ledger_save(d):
-    items = sorted(d["entries"].items(), key=lambda kv: kv[1].get("updated", 0))
-    d["entries"] = dict(items[-1000:])
-    atomic_write(LEDGER_FILE, d)
+    return _message_ledger().load()
 
 
 def ledger_record(mid, status, reason="", context=None):
-    ledger_record_many([mid], status, reason, context)
+    return _message_ledger().record(mid, status, reason, context)
 
 
 def ledger_record_many(mids, status, reason="", context=None):
-    """ledger_record for several ids in one write: a burst's trigger and
-    its fragments always share one outcome. Each entry also keeps the
-    author's id and a reason code (ledger_code; "Why no reply?" in
-    /settings reads them), plus detail (which cap, which limit)."""
-    context = context or LedgerContext()
-    channel_id = context.channel_id
-    author = context.author
-    recoveries = context.recoveries
-    author_id = context.author_id
-    detail = context.detail
-    mids = [m for m in mids if m]
-    if not mids:
-        return
-    d = _ledger_load()
-    code = ledger_code(status, reason)
-    TM.ledger(code, [d["entries"].get(m) for m in mids])
-    # Where it happened, as the monitor knows it now (a thread's parent
-    # only for a thread): /settings' Why reads it later, when the
-    # channel may be gone from discovery.
-    info = CHANNELS.get(str(channel_id)) if channel_id else None
-    where = {}
-    if info and info.get("guild_id"):
-        where = {
-            "guild_id": info["guild_id"],
-            "parent_id": info.get("parent_id") if info.get("thread") else None,
-        }
-    elif channel_id and (
-        channel_id in _DIRECT_MESSAGES.names or channel_id in _DIRECT_MESSAGES.users
-    ):
-        where = {"dm": True}
-    for mid in mids:
-        ent = d["entries"].get(mid, {})
-        ent.update(where)
-        ent.update(
-            {
-                "status": status,
-                "reason": reason,
-                "channel_id": channel_id or ent.get("channel_id"),
-                "author": author or ent.get("author"),
-                "author_id": str(author_id) if author_id else ent.get("author_id"),
-                "code": code,
-                "updated": time.time(),
-            }
-        )
-        if detail is not None:
-            ent["detail"] = detail
-        else:
-            ent.pop("detail", None)
-        if recoveries is not None:
-            ent["recoveries"] = recoveries
-        d["entries"][mid] = ent
-        if author_id and author:
-            remember_name(author_id, author)
-    _ledger_save(d)
-
-
-# Reason codes for the ledger, from the reason text every caller
-# writes: what /settings' "Why no reply?" explains.
-_LEDGER_CODES = (
-    ("settings: who.replies is off", "replies-off"),
-    ("settings: none of the owners is in", "ownerless"),
-    ("settings: who.bots", "bots-ignore"),
-    ("settings: not allowed by who.allow", "not-allowed"),
-    ("settings: on who.ignore", "not-allowed"),
-    ("settings: not in who.allow", "not-allowed"),
-    ("settings: who.dms_from", "dm-not-allowed"),
-    ("settings: not in who.dms_from", "dm-not-allowed"),
-    ("settings: shares no server", "dm-not-allowed"),
-    ("daily cap reached", "cap"),
-    ("bot exchange limit", "bot-exchange"),
-    ("suspicious, ignored", "suspicious-ignored"),
-    ("predates bot join", "predates-join"),
-    ("no send permission", "no-send"),
-    ("403 missing access", "no-send"),
-    ("enqueue failed", "internal"),
-    ("sweep enqueue failed", "internal"),
-    ("recovery cap reached", "internal"),
-    ("no reply (worker's call)", "worker-skipped"),
-    ("send failed", "send-failed"),
-    ("held for owner review (never_share)", "never-share"),
-    ("never_share hold discarded", "never-share"),
-    # Reminders and watches (muse_watches.REASON_*): a request refused.
-    ("reminders: limit reached", "watch-cap"),
-    ("reminders: not allowed", "watch-not-allowed"),
-    ("reminder held", "watch-held"),
-)
-
-
-def ledger_code(status, reason=""):
-    """A ledger entry's reason code: replied, queued, quarantined, or why
-    a message was skipped (dm-off, a _LEDGER_CODES code, else other)."""
-    if status in ("replied", "queued", "quarantined"):
-        return status
-    if status == "enqueue_failed":
-        return "internal"
-    reason = str(reason or "")
-    if reason.startswith("settings: who.replies is off for DMs"):
-        return "dm-off"
-    for prefix, code in _LEDGER_CODES:
-        if reason.startswith(prefix):
-            return code
-    return "other"
+    return _message_ledger().record_many(mids, status, reason, context)
 
 
 # Display names of people the monitor has seen (ledger authors), for
@@ -1079,7 +976,7 @@ def remember_name(uid, name):
 
 
 def _ledger_terminal(mid):
-    return _ledger_load()["entries"].get(mid, {}).get("status") in LEDGER_TERMINAL
+    return _message_ledger().terminal(mid)
 
 
 def _quarantine_ids():
@@ -3299,203 +3196,19 @@ def drain_gateway(state, inbox, channels):
     return _gateway_ingress(state, channels).drain(inbox)
 
 
-# ---------------------------------------------------------------------------
-# Reconciliation sweep. Every engine.sweep.every_cycles poll cycles,
-# independently re-read recent channel history (and the owners' polled DM
-# channels) and diff every mention / reply-to-bot / owner DM against the
-# durable records (replied_to, queue, outbox, quarantine, ledger; a burst
-# fragment counts as its trigger). Anything older than the grace period with no
-# terminal state is requeued on the spot. This is the backstop that turns
-# every silent failure mode (storm loss, mid-cycle kill, worker drop)
-# into a delayed reply instead of a permanent miss. Aborts on the first
-# 429: during a rate-limit storm the sweep must not add request pressure.
-# (The SWEEP_* constants are resolved from config in the header block.)
-# ---------------------------------------------------------------------------
-@dataclass
-class MentionSweep:
-    state: dict
-    queue: list
-    channels: dict
-    dms: bool = True
-
-    def run(self):
-        if rest_backing_off():
-            return False
-        self.prepare_indexes()
-        # The owners' DM channels are swept too: a DM lost in a gateway gap
-        # is as lost as a mention.
-        dm_channels = (
-            [(dm_id, {"dm": True, "name": name}) for dm_id, name in _DIRECT_MESSAGES.names.items()]
-            if self.dms
-            else []
-        )
-        self.now = time.time()
-        self.changed = False
-        for cid, info in list(self.channels.items()) + dm_channels:
-            try:
-                msgs = api_get(f"/channels/{cid}/messages?limit=20")
-            except Exception as e:
-                if getattr(e, "code", None) == HTTPStatus.TOO_MANY_REQUESTS:
-                    print("Sweep aborted: rate limited.", flush=True)
-                    return self.changed
-                continue
-            if not isinstance(msgs, list):
-                continue
-            for m in sorted(msgs, key=lambda x: int(x["id"])):
-                self.consider(m, cid, info)
-        return self.changed
-
-    def prepare_indexes(self):
-        self.entries = _ledger_load()["entries"]
-        self.q_ids = {q.get("message_id") for q in self.queue}
-        self.outbox_targets = set()
-        for path in (OUTBOX_FILE, OUTBOX_PROCESSING_FILE):
-            for i in _read_json(path, list) or []:
-                if isinstance(i, dict):
-                    self.outbox_targets.update((i.get("reply_to"), i.get("item")))
-        self.quar_ids = _quarantine_ids()
-        self.replied = set(self.state.get("replied_to", []))
-        self.pending_ids = set()
-        for entry in self.state.get("pending", {}).values():
-            self.pending_ids.add(entry.get("first_id"))
-            for frag in entry.get("fragments", []):
-                self.pending_ids.add(frag.get("id"))
-        # Burst fragment id -> trigger id. A fragment is answered by its
-        # trigger's queue item, so it is accounted for whenever its trigger
-        # is (and an outbox reply under a fragment accounts for the trigger).
-        self.aliases = self.state.get("reply_aliases", {})
-        self.outbox_targets |= {self.aliases[t] for t in self.outbox_targets if t in self.aliases}
-
-    def consider(self, m, cid, info):
-        dm = bool(info.get("dm"))
-        mid = m["id"]
-        author = _who(m)
-        if author.get("id") == BOT_ID:
-            return  # (other bots: trigger_kind applies behavior.bots)
-        if m.get("type", 0) not in CONVERSATION_TYPES:
-            return  # a system notice (a pin, a new thread)
-        if dm:
-            # Owner DM channels: every owner message is a trigger.
-            if (
-                is_bot_author(author)
-                or not dm_swept_author(author.get("id"))
-                or not dm_sender_allowed(author)
-            ):
-                return
-        # Direct address only: follow-ups are never requeued.
-        elif trigger_kind(m, info.get("guild_id")) != "mention":
-            return
-        if predates_join(self.state, m, info.get("guild_id")):
-            return
-        age = self.now - _snowflake_ts(mid)
-        if age < SWEEP_GRACE_SECS or age > SWEEP_MAX_AGE_SECS:
-            return
-        self.recover(m, cid, info)
-
-    def recover(self, m, cid, info):
-        mid = m["id"]
-        author = _who(m)
-        cname = "DM with " + info["name"] if info.get("dm") else channel_display(info)
-        if mid in self.replied:
-            if self.entries.get(mid, {}).get("status") != "replied":
-                ledger_record(
-                    mid,
-                    "replied",
-                    "sweep sync",
-                    context=LedgerContext(
-                        channel_id=cid, author=author.get("username"), author_id=author.get("id")
-                    ),
-                )
-            return
-        ids = {mid, self.aliases.get(mid, mid)}
-        if any(
-            ids & s
-            for s in (
-                self.replied,
-                self.quar_ids,
-                self.q_ids,
-                self.outbox_targets,
-                self.pending_ids,
-            )
-        ):
-            return  # accounted for and in flight
-        ent = self.entries.get(mid)
-        if any(self.entries.get(i, {}).get("status") in LEDGER_TERMINAL for i in ids):
-            return
-        if info.get("can_send") is False:
-            ledger_record(
-                mid,
-                "skipped",
-                "no send permission in channel",
-                context=LedgerContext(
-                    channel_id=cid, author=author.get("username"), author_id=author.get("id")
-                ),
-            )
-            return
-        recs = (ent or {}).get("recoveries", 0)
-        if recs >= SWEEP_MAX_RECOVERIES:
-            if ent and ent.get("status") != "skipped":
-                ledger_record(
-                    mid,
-                    "skipped",
-                    "recovery cap reached",
-                    context=LedgerContext(
-                        channel_id=cid, author=author.get("username"), author_id=author.get("id")
-                    ),
-                )
-                print(
-                    f"Sweep: giving up on unrecoverable mention "
-                    f"{mid} from {author.get('username')} in "
-                    f"{cname} (recorded in mention ledger).",
-                    flush=True,
-                )
-            return
-        ok = enqueue_message(
-            m,
-            cname,
-            self.state,
-            self.queue,
-            context=QueueContext(
-                dm=bool(info.get("dm")), fragments=[], guild_id=info.get("guild_id")
-            ),
-        )
-        if ok:
-            self.changed = True
-            self.q_ids.add(mid)
-            ledger_record(
-                mid,
-                "queued",
-                f"sweep recovery #{recs + 1}",
-                context=LedgerContext(
-                    channel_id=cid,
-                    author=author.get("username"),
-                    recoveries=recs + 1,
-                    author_id=author.get("id"),
-                ),
-            )
-            print(
-                f"Sweep recovered lost mention {mid} from {author.get('username')} in {cname}.",
-                flush=True,
-            )
-        elif not _ledger_terminal(mid):
-            # (A gate inside enqueue, e.g. quarantine or the join
-            # watermark, may already have recorded a terminal state.)
-            ledger_record(
-                mid,
-                "enqueue_failed",
-                "sweep enqueue failed",
-                context=LedgerContext(
-                    channel_id=cid,
-                    author=author.get("username"),
-                    recoveries=recs + 1,
-                    author_id=author.get("id"),
-                ),
-            )
-
-
 def sweep_mentions(state, queue, channels, dms=True):
-    """Requeue mentions that no durable record accounts for."""
-    return MentionSweep(state, queue, channels, dms).run()
+    return MentionReconciler(
+        admission=_admission(),
+        ledger=_message_ledger(),
+        get=api_get,
+        enqueue=enqueue_message,
+        quarantined=_quarantine_ids,
+        outbox_paths=(OUTBOX_FILE, OUTBOX_PROCESSING_FILE),
+        direct=_DIRECT_MESSAGES,
+        window=RecoveryWindow(SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES),
+        backing_off=rest_backing_off,
+        now=time.time,
+    ).run(state, queue, channels, dms)
 
 
 # ---------------------------------------------------------------------------

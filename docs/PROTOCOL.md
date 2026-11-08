@@ -9,6 +9,7 @@
 | --- | --- |
 | REST巡回・時間配分・定期ジョブの実行管理 | `src/muse_discord/rest_scheduler.py` |
 | 起動・イベント処理・各機能の接続 | `src/muse_discord/monitor.py` |
+| メッセージの処理結果・診断理由の永続化 | `src/muse_discord/message_ledger.py` |
 | REST・Gateway受信の分類・確認位置・重複排除 | `src/muse_discord/receiving/` |
 | 連投の集約・到着順序・登録失敗の再試行 | `src/muse_discord/bursts.py` |
 | 受信バーストの検証・キュー項目の組み立て | `src/muse_discord/ingest.py` |
@@ -112,6 +113,7 @@ RESTの巡回と定期ジョブの実行順・待ち時間は `rest_scheduler.Re
 サーバー・DMへの応答開始条件は `admission.AdmissionPolicy` が持つ。共有サーバーの確認結果は `SharedServers` が期限付きで保持し、所有者の発言による在籍確認は `owner.presence` に反映する。
 設定変更の影響は `settings_assessment.assess` が保存前後の実効値を比較して評価する。UIとCLIは同じ評価を使い、設定エンジンからUIや確認処理を呼び出さない。
 RESTとGatewayの受信は `receiving.messages`、Gatewayイベントの振り分けは `receiving.gateway` が持つ。`receiving.cursor` はRESTの確認位置とGatewayで処理したIDを分けて保持し、Gatewayの受信で通信断中の未取得メッセージを飛び越さない。既知DMの対応表は `receiving.direct` が持つ。
+処理結果と診断理由は `message_ledger.MessageLedger` が保存する。`receiving.reconciliation` は台帳と処理中のIDを `RecoveryScan` にまとめ、確認できないメッセージだけを再登録する。返信済み・保留中・送信待ちの連投は断片からも二重登録しない。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査
