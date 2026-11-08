@@ -77,13 +77,10 @@ from muse_discord.bursts import (
 )
 from muse_discord.channel_access import ChannelAccess
 from muse_discord.conversation import (
-    PRIVATE_THREAD_TYPE,
     Conversation,
     channel_display,
     is_forwarded,
-    now_snowflake,
 )
-from muse_discord.conversation import THREAD_TYPES as _THREAD_TYPES
 from muse_discord.conversation import _snowflake_ts as _snowflake_ts
 from muse_discord.conversation import _who as _who
 from muse_discord.directory.discovery import (
@@ -129,6 +126,10 @@ from muse_discord.owner.review import released_ok as hold_released_ok
 from muse_discord.owner.targets import CommandTargets
 from muse_discord.owner.updates import UpdateNotices, version_installed
 from muse_discord.paths import project_root
+from muse_discord.receiving.cursor import ReceiveCursor
+from muse_discord.receiving.direct import DirectChannels
+from muse_discord.receiving.gateway import GatewayEvents, GatewayIngress
+from muse_discord.receiving.messages import CONVERSATION_TYPES, ReceivedMessages, ReceptionEffects
 from muse_discord.reply_delivery import OutboxDelivery
 from muse_discord.response_policy import (
     ResponsePolicy,
@@ -273,8 +274,8 @@ def _proactive_context():
         bot_ids=lambda: (BOT_ID, BOT_USER_ID),
         owners=lambda: OWNER_USER_IDS,
         channels=lambda: CHANNELS,
-        dm_channels=lambda: DM_CHANNELS,
-        dm_users=lambda: DM_CHANNEL_USER,
+        dm_channels=lambda: _DIRECT_MESSAGES.names,
+        dm_users=lambda: _DIRECT_MESSAGES.users,
         user_names=lambda: _USER_NAMES,
         write_private=lambda path, body: atomic_write(path, body, 0o600),
         ledger=lambda *args, **kwargs: _ledger_load(*args, **kwargs),
@@ -986,7 +987,9 @@ def ledger_record_many(mids, status, reason="", context=None):
             "guild_id": info["guild_id"],
             "parent_id": info.get("parent_id") if info.get("thread") else None,
         }
-    elif channel_id and (channel_id in DM_CHANNELS or channel_id in DM_CHANNEL_USER):
+    elif channel_id and (
+        channel_id in _DIRECT_MESSAGES.names or channel_id in _DIRECT_MESSAGES.users
+    ):
         where = {"dm": True}
     for mid in mids:
         ent = d["entries"].get(mid, {})
@@ -1504,7 +1507,7 @@ _holds_live = {}
 
 
 def _reply_review():
-    return ReplyReview(settings, _owner_messenger(), DM_CHANNEL_USER, _settle, _holds_live)
+    return ReplyReview(settings, _owner_messenger(), _DIRECT_MESSAGES.users, _settle, _holds_live)
 
 
 def never_share_hit(state, item, qid, parts):
@@ -1753,8 +1756,8 @@ def _outcome(mid, e, where):
             parent = info.get("parent_id") if info.get("thread") else None
     dm = gid is None and bool(
         e.get("dm")
-        or cid in DM_CHANNELS
-        or cid in DM_CHANNEL_USER
+        or cid in _DIRECT_MESSAGES.names
+        or cid in _DIRECT_MESSAGES.users
         or code in ("dm-off", "dm-not-allowed")
     )
     return {
@@ -1838,7 +1841,7 @@ def _owner_auth():
         lambda: OWNER_USER_IDS,
         CHANNELS,
         _GUILD_CHANNELS,
-        DM_CHANNEL_USER,
+        _DIRECT_MESSAGES.users,
         api_get,
         _CHANNEL_LOOKUP,
     )
@@ -2173,27 +2176,8 @@ def _bursts(state):
     )
 
 
-def hold_fragment(state, channel_id, msg):
-    return _bursts(state).hold(channel_id, msg)
-
-
 def stage_trigger(state, msg, cname, kind, place=None):
     return _bursts(state).stage(msg, cname, kind, place)
-
-
-def stage_found(state, msg, cname, guild_id, kind):
-    """Stage one classified guild trigger the moment it is classified, in
-    arrival order, so a non-trigger follow-up later in the same poll
-    batch or gateway drain finds the open burst (hold_fragment) instead
-    of being classified before its trigger was staged. Talk scope: a
-    trigger in a channel the bot cannot send in is never staged; it is
-    logged once per channel and ledgered as skipped so the sweep leaves
-    it alone."""
-    info = CHANNELS.get(msg["channel_id"])
-    if info is not None and info.get("can_send") is False:
-        _note_no_send(msg, cname)
-        return
-    stage_trigger(state, msg, cname, kind, place=MessagePlace(guild_id=guild_id))
 
 
 def note_activity(channel_id, user_id, msg_id=None):
@@ -2374,155 +2358,40 @@ def record_history(state, channel_id, messages):
     return _conversation().record_history(state, channel_id, messages)
 
 
-# ---------------------------------------------------------------------------
-# REST watermark vs gateway dedupe. state["last_seen"][cid] is the REST
-# poll's watermark and only the poll advances it (or seeding, the first
-# time a channel is seen): if the gateway advanced it, the first message
-# after a gap of lost events would move it past the missed ones. Messages
-# the gateway handled above the watermark are remembered in
-# state["gw_seen"][cid] instead, the poll skips those, and both
-# paths skip anything at or below the watermark: every message is
-# processed once, by whichever path sees it first.
-# ---------------------------------------------------------------------------
-GW_SEEN_PER_CHANNEL = 1000
-GW_SEEN_MAX_AGE_SECS = 24 * 3600
-
-
-def gateway_seen(state, cid, mid):
-    return mid in state.get("gw_seen", {}).get(cid, ())
-
-
-def note_gateway_seen(state, cid, mid):
-    """Record a message the gateway path handled. The first message ever
-    seen in a channel seeds its REST watermark instead (history before it
-    counts as seen, as with seed_channel_seen)."""
-    if cid not in state["last_seen"]:
-        state["last_seen"][cid] = mid
-        return
-    ids = state.setdefault("gw_seen", {}).setdefault(cid, [])
-    ids.append(mid)
-    del ids[:-GW_SEEN_PER_CHANNEL]
-
-
-def advance_rest_watermark(state, cid, mid):
-    """Move a channel's REST watermark to mid; gateway ids at or below it
-    are covered by the watermark now and are dropped."""
-    state["last_seen"][cid] = mid
-    ids = state.get("gw_seen", {}).get(cid)
-    if ids is not None:
-        ids[:] = [i for i in ids if int(i) > int(mid)]
-        if not ids:
-            del state["gw_seen"][cid]
+# Shared REST/Gateway reception and gap repair.
 
 
 def prune_gateway_seen(state):
-    """Drop gateway ids no poll will ever re-read (channels nobody polls,
-    such as DMs under dm_policy: open)."""
-    now = time.time()
-    for cid in list(state.get("gw_seen", {})):
-        ids = [i for i in state["gw_seen"][cid] if now - _snowflake_ts(i) < GW_SEEN_MAX_AGE_SECS]
-        if ids:
-            state["gw_seen"][cid] = ids
-        else:
-            del state["gw_seen"][cid]
+    return ReceiveCursor(state).prune(time.time())
+
+
+def _receiver(state):
+    return ReceivedMessages(
+        _admission(),
+        _bursts(state),
+        api_get,
+        ReceptionEffects(watch_scan, TM.count, note_refused, _note_no_send, seed_channel_seen),
+    )
+
+
+def _gateway_ingress(state, channels):
+    return GatewayIngress(
+        _receiver(state),
+        channels,
+        _channel_access(),
+        GatewayEvents(on_guild_event, watch_perm_event, note_activity, apply_record),
+        GUILD_ALLOWLIST,
+    )
 
 
 def check_channel(channel_id, channel_name, state, guild_id=None):
-    """Check for new messages in a channel and stage its triggers (see
-    stage_found). Returns the (msg, kind) pairs staged (kind as in
-    trigger_kind). Messages the gateway already handled are skipped."""
-    last_seen = state["last_seen"].get(channel_id)
-    if not last_seen:
-        # Never seeded (discovery normally does it): history is history.
-        seed_channel_seen(channel_id, channel_name, state)
-        return []
-
-    # 100 (Discord's max) so the poll keeps up with busy channels: it now
-    # re-reads every message the gateway delivered since the last poll.
-    params = {"limit": 100, "after": last_seen}
-
-    query = urllib.parse.urlencode(params)
-    try:
-        messages = api_get(f"/channels/{channel_id}/messages?{query}")
-    except Exception as e:
-        print(f"Error reading #{channel_name}: {e}", flush=True)
-        return []
-
-    if not messages:
-        return []
-
-    record_history(state, channel_id, messages)
-
-    newest = max(messages, key=lambda m: int(m["id"]))
-    gw_done = set(state.get("gw_seen", {}).get(channel_id, ()))
-    advance_rest_watermark(state, channel_id, newest["id"])
-
-    triggers = []
-    for msg in sorted(messages, key=lambda m: int(m["id"])):
-        if msg["id"] in gw_done:
-            continue  # the gateway path already handled it
-        kind = classify_message(state, msg, channel_name, guild_id)
-        if kind:
-            stage_found(state, msg, channel_name, guild_id, kind)
-            triggers.append((msg, kind))
-
-    return triggers
-
-
-# Message types people write: DEFAULT and REPLY. Everything else in a
-# channel is a system notice ("X joined the server", a pin, ...).
-CONVERSATION_TYPES = (0, 19)
+    return _receiver(state).poll_channel(channel_id, channel_name, guild_id)
 
 
 def classify_message(state, msg, channel_name, guild_id=None):
-    """Classify a single message exactly the way check_channel's loop does.
-
-    Shared by the REST poll path and the gateway fast path so both ingest
-    routes behave identically. Returns "mention", "follow_up", or None
-    (folded into a burst, skipped, or not actionable).
-    """
-    if predates_join(state, msg, guild_id):
-        # Older than the bot's arrival in this guild: never a trigger,
-        # never a fragment. It can still reach the worker as history.
-        return None
-    if msg.get("type", 0) not in CONVERSATION_TYPES:
-        # Discord's system notices ("X pinned a message", "X started a
-        # thread", ...) carry the acting user as author: never a
-        # trigger, a follow-up or a fragment.
-        return None
-    author = _who(msg)
-    if author.get("id") == BOT_ID:
-        return None  # the bot's own messages: never triggers or fragments
-    watch_scan(msg, guild_id)  # Discord watches (cheap; never raises)
-    TM.count("messages_seen")
-    if (
-        is_bot_author(author)
-        and settings().get("who.bots", scope_for(guild_id, msg.get("channel_id"))) == "ignore"
-    ):
-        if addresses_bot(msg):
-            note_refused(msg, channel_name, "who.bots: ignore")
-        return None
-    if hold_fragment(state, msg.get("channel_id"), msg):
-        return None  # folded into a burst already being coalesced
-    kind, refusal = trigger_verdict(msg, guild_id, state)
-    if refusal:
-        note_refused(msg, channel_name, refusal)
-    return kind
+    return _receiver(state).classify(msg, channel_name, guild_id)
 
 
-# Discord does not let bots list DM channels: GET /users/@me/channels always
-# returns an empty list for bot tokens. Instead, resolve each known user's DM
-# channel directly with POST /users/@me/channels (create-or-get: returns the
-# existing channel if there is one, creates an empty one otherwise, and never
-# sends a message).
-#
-# The owners' DM channels, and those of the people who.dms_from names
-# (a list of user ids), are resolved for REST polling (gap repair and
-# the sweep) unless DMs are off (dms.who.replies: off). Anyone else's DMs
-# cannot be enumerated (there is no DM list endpoint for bots), so they
-# arrive via the gateway only, and only as who.dms_from allows: under the
-# default (owners) the bot never even records a stranger's DM, so there
-# is nothing to decline or deflect.
 def dm_listed_people():
     return _admission().dm_listed_people()
 
@@ -2535,92 +2404,15 @@ def dm_swept_author(uid):
     return _admission().dm_swept_author(uid)
 
 
-# The DM channels the poll has resolved, {channel_id: recipient name}:
-# the reconciliation sweep covers these as well as server channels.
-# DM_CHANNEL_USER: {channel_id: recipient user id} (an owner's DM or a
-# listed person's: never_share treats only the owners' as private).
-DM_CHANNELS = {}
-DM_CHANNEL_USER = {}
+_DIRECT_MESSAGES: DirectChannels
 
 
 def list_dm_channels():
-    """Return [(channel_id, recipient_username)] for known users' DM channels."""
-    out = []
-    for uid in dm_poll_user_ids():
-        try:
-            c = api_post("/users/@me/channels", {"recipient_id": uid})
-        except Exception as e:
-            print(f"DM channel resolve failed for {uid}: {e}", flush=True)
-            continue
-        if c and c.get("id"):
-            recips = c.get("recipients") or []
-            name = recips[0].get("username", uid) if recips else uid
-            out.append((c["id"], name))
-            DM_CHANNELS[c["id"]] = name
-            DM_CHANNEL_USER[c["id"]] = str(uid)
-    return out
+    return _DIRECT_MESSAGES.resolve(dm_poll_user_ids(), api_post)
 
 
 def check_dm_channel(dm_id, dm_name, state):
-    """Return unseen non-bot messages in a DM channel. In a DM every message
-    is addressed to the bot, so no mention filtering is needed. The first
-    time a DM channel is read (first run, or state.json deleted) its
-    history counts as already seen, like a new channel's: the backlog is
-    never one big fresh trigger. Messages the gateway already handled
-    are skipped."""
-    try:
-        messages = api_get(f"/channels/{dm_id}/messages?limit=20")
-    except Exception as e:
-        print(f"DM poll error #{dm_name}: {e}", flush=True)
-        return []
-    last_seen = state["last_seen"].get(dm_id)
-    if not messages:
-        if not last_seen:
-            state["last_seen"][dm_id] = now_snowflake()
-        return []
-
-    record_history(state, dm_id, messages)
-
-    if not last_seen:
-        newest = max(messages, key=lambda m: int(m["id"]))
-        state["last_seen"][dm_id] = newest["id"]
-        print(f"Tracking DM with {dm_name} from message {newest['id']}.", flush=True)
-        return []
-    new = [m for m in messages if int(m["id"]) > int(last_seen)]
-    gw_done = set(state.get("gw_seen", {}).get(dm_id, ()))
-    if new:
-        newest = max(new, key=lambda m: int(m["id"]))
-        advance_rest_watermark(state, dm_id, newest["id"])
-
-    out = []
-    for m in sorted(new, key=lambda m: int(m["id"])):
-        if (
-            m.get("author", {}).get("id") == BOT_USER_ID
-            or m["id"] in gw_done
-            or m.get("type", 0) not in CONVERSATION_TYPES
-        ):
-            continue
-        TM.count("messages_seen")
-        if not dm_sender_allowed(m.get("author")):
-            note_dm_refused(m)
-            continue
-        if not hold_fragment(state, dm_id, m):
-            out.append(m)
-    return out
-
-
-def note_dm_refused(msg):
-    """A DM the DM settings decline (dm_sender_allowed). Only an owner's
-    or a who.dms_from-listed person's is ledgered (see note_refused): the
-    sweep covers only their DM channels, and a stranger's DMs stay
-    unrecorded."""
-    author = _who(msg)
-    if dm_swept_author(author.get("id")) and not is_bot_author(author):
-        note_refused(
-            msg,
-            "DM with " + (author.get("username") or "?"),
-            dm_refusal(author) or "who.replies is off for DMs",
-        )
+    return _receiver(state).poll_dm(dm_id, dm_name)
 
 
 def bot_run_length(history, msg):
@@ -3503,131 +3295,8 @@ def _gateway_thread_main(token, inbox, status):
         status["dead"] = True
 
 
-def _gateway_metadata(state, m):
-    if "_guild_event" in m:
-        on_guild_event(state, m["_guild_event"])
-        return True
-    if "_perm_event" in m:
-        watch_perm_event(m["_perm_event"])
-        return True
-    if "_typing" in m:
-        note_activity(m["_typing"].get("channel_id"), m["_typing"].get("user_id"))
-        return True
-    if "_record" in m:
-        apply_record(state, m["_record"])
-        return True
-    return False
-
-
-def _gateway_guild_message(state, m, channels):
-    cid, gid = m["channel_id"], m["guild_id"]
-    info = channels.get(cid)
-    if info is None:
-        # Channel/thread discovery hasn't registered yet: resolve it
-        # once via the API so the message isn't missed. A failure
-        # (e.g. 403 private channel) skips it here only; last_seen
-        # is untouched, so the REST poll can still pick it up.
-        try:
-            ch = api_get(f"/channels/{cid}")
-        except Exception:
-            return None
-        if not ch or not ch.get("id"):
-            return None
-        g = ch.get("guild_id") or gid
-        info = {
-            "name": ch.get("name") or "?",
-            "guild_id": g,
-            "guild_name": (GUILDS.get(g) or {}).get("name") or g,
-            "can_send": None,
-            "thread": ch.get("type") in _THREAD_TYPES,
-            "parent_id": ch.get("parent_id"),
-            "private": ch.get("type") == PRIVATE_THREAD_TYPE,
-        }
-        if not info["thread"] and ch.get("parent_id"):
-            CHANNEL_CATEGORY[cid] = ch["parent_id"]
-        if not info["thread"]:  # watches: who can read it
-            _CHANNEL_OVERWRITES[cid] = ch.get("permission_overwrites") or []
-        channels[cid] = info
-    cname = channel_display(info)
-    record_history(state, cid, [m])
-    note_gateway_seen(state, cid, m["id"])
-    kind = classify_message(state, m, cname, gid)
-    if kind:
-        stage_found(state, m, cname, gid, kind)
-        return m, cname, gid, kind
-    return None
-
-
-def _gateway_dm_message(state, m):
-    cid = m["channel_id"]
-    # DM event (no guild_id). The DM settings decide whose DMs
-    # are even read (dm_sender_allowed): under the default
-    # (dms_from: owners) everyone else's DMs are dropped unread
-    # and unrecorded; dms.who.replies: off drops all of them.
-    author = _who(m)
-    own = author.get("id") == BOT_ID
-    if not own:
-        TM.count("messages_seen", int(m.get("type", 0) in CONVERSATION_TYPES))
-        if not dm_sender_allowed(author):
-            note_dm_refused(m)
-            return None
-    record_history(state, cid, [m])
-    note_gateway_seen(state, cid, m["id"])
-    if own or m.get("type", 0) not in CONVERSATION_TYPES:
-        return None  # its own messages, system notices: context only
-    if hold_fragment(state, cid, m):
-        return None  # folded into a burst already being coalesced
-    return m, "DM with " + (author.get("username") or cid)
-
-
-def _gateway_message_new(state, m):
-    cid = m["channel_id"]
-    last = state["last_seen"].get(cid)
-    if last and int(m["id"]) <= int(last):
-        return False  # the poll loop already handled it
-    if gateway_seen(state, cid, m["id"]):
-        return False  # delivered twice (e.g. replayed on resume)
-    gid = m.get("guild_id")
-    return not (gid and GUILD_ALLOWLIST and gid not in GUILD_ALLOWLIST)
-
-
 def drain_gateway(state, inbox, channels):
-    """Pull gateway-delivered messages (all guilds + DMs) and classify them
-    exactly like polled messages. Returns (triggers, dms): guild
-    triggers as (msg, cname, guild_id, kind) tuples (already staged, see
-    stage_found), DMs as (msg, cname).
-    Guild join/leave events are applied to state on the way, and typing
-    events and message arrivals are recorded for the early burst flush
-    (note_activity). Skips anything the REST poll already processed (at
-    or below its last_seen watermark), and leaves that watermark alone
-    (see note_gateway_seen). Messages from servers outside a non-empty
-    bot.guild_ids are ignored."""
-    mentions, dms = [], []
-    while True:
-        try:
-            m = inbox.get_nowait()
-        except pyqueue.Empty:
-            break
-        if _gateway_metadata(state, m):
-            continue
-        cid = m.get("channel_id")
-        if not cid:
-            continue
-        # Recorded even when the poll got here first: the burst holding
-        # this message needs to know when its author last spoke.
-        note_activity(cid, _who(m).get("id"), m["id"])
-        if not _gateway_message_new(state, m):
-            continue
-        gid = m.get("guild_id")
-        if gid:
-            trigger = _gateway_guild_message(state, m, channels)
-            if trigger:
-                mentions.append(trigger)
-        else:
-            dm = _gateway_dm_message(state, m)
-            if dm:
-                dms.append(dm)
-    return mentions, dms
+    return _gateway_ingress(state, channels).drain(inbox)
 
 
 # ---------------------------------------------------------------------------
@@ -3656,7 +3325,7 @@ class MentionSweep:
         # The owners' DM channels are swept too: a DM lost in a gateway gap
         # is as lost as a mention.
         dm_channels = (
-            [(dm_id, {"dm": True, "name": name}) for dm_id, name in DM_CHANNELS.items()]
+            [(dm_id, {"dm": True, "name": name}) for dm_id, name in _DIRECT_MESSAGES.names.items()]
             if self.dms
             else []
         )
@@ -4177,6 +3846,7 @@ def initialize(config_path=None, token_override=None):
     global PRO, SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
     global TM, TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
     global _S0, _SETTINGS, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
+    global _DIRECT_MESSAGES
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
@@ -4220,6 +3890,7 @@ def initialize(config_path=None, token_override=None):
         )
         sys.exit(1)
     _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
+    _DIRECT_MESSAGES = DirectChannels()
     _ACTIVITY = GatewayActivity()
     _DISCOVERY_REFRESH = DiscoveryRefresh()
     _SHARED_MEMBERSHIP = SharedServers(

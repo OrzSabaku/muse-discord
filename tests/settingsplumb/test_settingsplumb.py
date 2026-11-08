@@ -561,7 +561,7 @@ class UIData(unittest.TestCase):
         m._ledger_save(d)
         self.assertEqual(self.ctx.recent_outcomes(MS.Place.dms(), 10), [])
         # A DM channel the monitor polls is one.
-        m.DM_CHANNELS["400000000000000077"] = "owner"
+        m._DIRECT_MESSAGES.names["400000000000000077"] = "owner"
         m.ledger_record(
             "3003",
             "skipped",

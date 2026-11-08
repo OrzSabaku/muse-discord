@@ -43,7 +43,7 @@ DM_U1, DM_U2 = tb.DM_U1, "400000000000000080"
 class _B(tb.Base):
     def setUp(self):
         super().setUp()
-        self.mod.DM_CHANNEL_USER[DM_U2] = U2
+        self.mod._DIRECT_MESSAGES.users[DM_U2] = U2
 
     def forged(self, cid, **kw):
         return dict({"item": sf(), "channel_id": cid, "text": "hello there"}, **kw)

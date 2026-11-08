@@ -981,7 +981,7 @@ class ReviewMedium(unittest.TestCase):
         sam_dm = "4" + SAM[1:]
         own_dm = "4" + OWNER[1:]
         self.assertIn(sam_dm, chans)
-        self.assertEqual(m.DM_CHANNEL_USER[sam_dm], SAM)
+        self.assertEqual(m._DIRECT_MESSAGES.users[sam_dm], SAM)
         # posts were only channel lookups (nothing sent)
         self.assertTrue(all(p == "/users/@me/channels" for p, _d in m.api.posts))
         # never_share: still private for the owner's DM only
@@ -1014,7 +1014,7 @@ class ReviewMedium(unittest.TestCase):
             f.write("    replies: 'off'\n")
         os.utime(m.cfg_path, (_t.time() + 5, _t.time() + 5))
         with contextlib.redirect_stdout(io.StringIO()):
-            m.note_dm_refused(dict(sam_msg, id="123456789012345679"))
+            m._receiver({}).note_dm_refused(dict(sam_msg, id="123456789012345679"))
         self.assertEqual(m._ledger_load()["entries"]["123456789012345679"]["status"], "skipped")
 
 

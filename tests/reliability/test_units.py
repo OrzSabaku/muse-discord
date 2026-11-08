@@ -166,7 +166,7 @@ class F6Watermarks(unittest.TestCase):
         # An owner DM the poll missed is swept up.
         mod = self.mod
         mod.CHANNELS = {}
-        mod.DM_CHANNELS = {"DM1": "owner"}
+        mod._DIRECT_MESSAGES.names = {"DM1": "owner"}
         d1 = msg("DM1", OWNER, "are you there?", gid=None, age=600)
         mod.api.msgs["DM1"] = [d1]
         q = []

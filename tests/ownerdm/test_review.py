@@ -135,7 +135,7 @@ class ForgottenChannels(Base):
     a channel it cannot place is looked up, failing closed."""
 
     def forget(self):
-        self.mod.DM_CHANNEL_USER.clear()
+        self.mod._DIRECT_MESSAGES.users.clear()
         for i in range(301):
             self.mod.note_item_meta(self.st, f"6{i:017d}", channel_id=CH, dm=False, owner_dm=False)
 
@@ -159,7 +159,7 @@ class ForgottenChannels(Base):
         s = self.stranger_mention()
         u = self.queue(dmsg(U1, "hello", channel=DM_U1))
         self.forget()
-        self.mod.DM_CHANNEL_USER.clear()
+        self.mod._DIRECT_MESSAGES.users.clear()
         self.st["item_meta"].pop(u["id"], None)
         lookups = []
 

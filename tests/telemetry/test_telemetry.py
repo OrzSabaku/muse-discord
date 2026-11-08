@@ -236,7 +236,7 @@ class NeverIdentifying(Base):
             for msg in (mention, chatter, ignored):
                 kind = m.classify_message(self.st, msg, "Lounge #general", G1)
                 if kind and kind != "join":
-                    m.stage_found(self.st, msg, "Lounge #general", G1, kind)
+                    m._receiver(self.st).stage(msg, "Lounge #general", G1, kind)
             for entry in self.st.get("pending", {}).values():
                 entry["first_seen"] = 0
             q = []

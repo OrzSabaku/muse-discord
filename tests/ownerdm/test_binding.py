@@ -62,8 +62,8 @@ class Base(unittest.TestCase):
         beat.start()
         self.addCleanup(beat.stop)
         for cid, uid in ((DM, OWNER), (DM2, OWNER2), (DM_U1, U1)):
-            m.DM_CHANNELS[cid] = "dm"
-            m.DM_CHANNEL_USER[cid] = uid
+            m._DIRECT_MESSAGES.names[cid] = "dm"
+            m._DIRECT_MESSAGES.users[cid] = uid
         self.reactions = []
         m.add_reaction = lambda cid, mid, e: self.reactions.append((cid, mid, e)) or True
         self.st = state(m)
@@ -496,7 +496,7 @@ class LegitPathAndCompat(Base):
         # An owner removed after queueing: still bound.
         m = self.owner_dm()
         self.mod.OWNER_USER_IDS = {OWNER2}
-        self.mod.DM_CHANNEL_USER.pop(DM)
+        self.mod._DIRECT_MESSAGES.users.pop(DM)
         self.outbox(self.reply(m, "x"))
         self.assert_refused("bad nonce")
         self.assertIn(m["id"], self.queued())
@@ -553,7 +553,7 @@ class NonceLifetime(Base):
     def test_evicted_item_meta_still_bound(self):
         m = self.owner_dm()
         del self.st["item_meta"][m["id"]]
-        self.mod.DM_CHANNEL_USER.clear()
+        self.mod._DIRECT_MESSAGES.users.clear()
         self.outbox(self.reply(m, "forged"))
         self.assert_refused("bad nonce")
         self.assert_open(m)

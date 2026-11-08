@@ -36,8 +36,8 @@ DM_U2 = "400000000000000080"
 class _R(tb.Base):
     def setUp(self):
         super().setUp()
-        self.mod.DM_CHANNELS[DM_U2] = "dm"
-        self.mod.DM_CHANNEL_USER[DM_U2] = U2
+        self.mod._DIRECT_MESSAGES.names[DM_U2] = "dm"
+        self.mod._DIRECT_MESSAGES.users[DM_U2] = U2
 
     def owner_cmd(self, text="<@bot> pin that"):
         return self.queue(gmsg(OWNER, text, mention=True), dm=False, guild=G1)

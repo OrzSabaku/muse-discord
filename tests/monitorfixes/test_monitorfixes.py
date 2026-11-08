@@ -92,7 +92,7 @@ class Base(unittest.TestCase):
         with quiet() as buf:
             kind = self.m.classify_message(self.st, msg, cname, guild)
             if kind:
-                self.m.stage_found(self.st, msg, cname, guild, kind)
+                self.m._receiver(self.st).stage(msg, cname, guild, kind)
         return kind, buf.getvalue()
 
     def flush(self, force=False):
@@ -261,7 +261,7 @@ class RefusedStaysRefused(Base):
     replies: "off"
 """
         )
-        m.DM_CHANNELS[DM_CH] = "owner"
+        m._DIRECT_MESSAGES.names[DM_CH] = "owner"
         dm = dmsg(OWNER, "you there?")
         dm["id"] = sf(600)
         inbox = queue.Queue()
@@ -426,7 +426,7 @@ class SystemNotices(Base):
         reply["type"] = 19
         self.assertEqual(self.stage(reply)[0], "mention")
         # A pin in an owner's DM is not a trigger either (gateway, sweep).
-        m.DM_CHANNELS[DM_CH] = "owner"
+        m._DIRECT_MESSAGES.names[DM_CH] = "owner"
         pin = dmsg(OWNER, "")
         pin["type"] = 6
         pin["id"] = sf(600)

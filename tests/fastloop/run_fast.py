@@ -70,15 +70,22 @@ def load_state_live():
 
 
 mod.load_state = load_state_live
-_orig_stage = mod.stage_trigger
+_orig_bursts = mod._bursts
 
 
-def stage(state, msg, *a, **kw):
-    rec["staged"].append([msg["id"], rel(time.time())])
-    return _orig_stage(state, msg, *a, **kw)
+def observed_bursts(state):
+    bursts = _orig_bursts(state)
+    original = bursts.stage
+
+    def stage(msg, *args, **kwargs):
+        rec["staged"].append([msg["id"], rel(time.time())])
+        return original(msg, *args, **kwargs)
+
+    bursts.stage = stage
+    return bursts
 
 
-mod.stage_trigger = stage
+mod._bursts = observed_bursts
 _orig_enq = mod.enqueue_message
 
 

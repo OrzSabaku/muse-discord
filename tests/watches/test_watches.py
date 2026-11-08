@@ -70,8 +70,8 @@ class Base(unittest.TestCase):
     def boot(self, tmp=None):
         """Load the monitor (again, over the same files: a restart)."""
         self.mod = m = load_monitor(self.cfg, tmp=tmp)
-        m.DM_CHANNELS[DM] = "dm"
-        m.DM_CHANNEL_USER[DM] = OWNER
+        m._DIRECT_MESSAGES.names[DM] = "dm"
+        m._DIRECT_MESSAGES.users[DM] = OWNER
         if tmp is None:  # message ids GET /channels/x/messages/<id> finds
             self.alive = set()
         api_get = m.api.get

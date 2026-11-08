@@ -94,7 +94,7 @@ class Base(unittest.TestCase):
         m = self.m
         self.now = time.time()
         m.PRO.clock = lambda: self.now
-        m.DM_CHANNELS[DM_U1] = "u1"
+        m._DIRECT_MESSAGES.names[DM_U1] = "u1"
         self.st = state(m)
         # Quiet channels: the last message an hour ago, from a person.
         for cid in (CH, CH2, CH_G2):

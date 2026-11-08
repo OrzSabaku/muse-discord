@@ -1003,7 +1003,7 @@ class FollowUps(MonitorBase):
         first = gmsg(U1, "one more thing")
         with quiet():
             kind = m.classify_message(self.st, first, "#c", G1)
-            m.stage_found(self.st, first, "#c", G1, kind)
+            m._receiver(self.st).stage(first, "#c", G1, kind)
             self.assertIsNone(m.classify_message(self.st, gmsg(U1, "and another"), "#c", G1))
             q = []
             m.flush_pending(self.st, q, force=True)
@@ -1016,7 +1016,7 @@ class FollowUps(MonitorBase):
         first = gmsg(U1, "wait")
         with quiet():
             kind = m.classify_message(self.st, first, "#c", G1)
-            m.stage_found(self.st, first, "#c", G1, kind)
+            m._receiver(self.st).stage(first, "#c", G1, kind)
             m.classify_message(self.st, gmsg(U1, "@muse hm", mention=True), "#c", G1)
             q = []
             m.flush_pending(self.st, q, force=True)
