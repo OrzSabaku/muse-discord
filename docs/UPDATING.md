@@ -96,7 +96,7 @@ Muse側の受信・監視フックを先に解除し、その後 `monitor.pid` �
 | キューが増えるが返答しない | 受信フックの登録先、専用ワーカー、`worker-prompt.md` のパスを確認 |
 | フック未実行・古い指示 | [導入手順](SETUP.md) の登録を確認し、プロンプトを再生成 |
 | チャンネルが見えない・投稿できない | 招待状態とBotロールの閲覧・送信権限を確認。本人DM用ではサーバー無応答が正常 |
-| `/settings`・ボタンが動かない | `monitor.log` の登録エラー、`settings_ui.py`、Interactions Endpoint URLが空かを確認 |
+| `/settings`・ボタンが動かない | `monitor.log` の登録エラー、`settings_views/`、Interactions Endpoint URLが空かを確認 |
 | 重複返信を抑止したログ | 受信フックと別のポーラーを二重登録していないか確認 |
 | 外部アプリが拒否される | [権限段階・nonce・承認結果](EXTERNAL_APPS.md) を確認。結果不明の操作は再送前にアプリ側を確認 |
 

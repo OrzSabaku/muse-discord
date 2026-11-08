@@ -59,7 +59,11 @@
 | 設定の表示文言・名前解決 | `src/muse_discord/settings_display.py` |
 | 設定画面の読み書き・ユーザー別セッション | `src/muse_discord/settings_runtime.py` |
 | メッセージの処理結果から作る返信診断 | `src/muse_discord/message_outcomes.py` |
-| Discordの設定画面 | `src/muse_discord/settings_ui.py` |
+| Discord設定画面の公開API | `src/muse_discord/settings_ui.py` |
+| 設定画面の下書き・権限・保存と取り消しの判断 | `src/muse_discord/settings_views/model.py` |
+| 設定画面のボタン・入力フォーム | `src/muse_discord/settings_views/controls.py` |
+| 設定画面の部品配置・表示 | `src/muse_discord/settings_views/panel.py`・`presentation.py` |
+| 設定画面のコマンド受付・再描画 | `src/muse_discord/settings_views/commands.py` |
 | 返信データの共通検証 | `src/muse_discord/reply_protocol.py` |
 | 単一起動ロック・旧PIDの確認 | `src/muse_discord/monitor_process.py` |
 | Gateway接続スレッド・キュー・終了状態 | `src/muse_discord/gateway_session.py` |
@@ -221,3 +225,5 @@ node --test telemetry/worker/test/worker.test.js
 単一起動のPIDロックは `MonitorLock` が保持し、取得に失敗した経路では記述子を閉じる。`GatewaySession` はイベントと操作のキュー、接続状態、接続スレッドを持ち、SDKを接続時まで読み込まない。接続スレッドが終了したときは接続状態を落としてメインループを起こし、通常のREST処理へ戻す。
 
 チャンネル権限のキャッシュはプロセス内で一つの `ChannelAccess`、投稿者ロールのキャッシュは `AuthorRoles` が保持する。両者の失敗時の扱いは混ぜない。通知の候補・再試行時刻・Web確認の公開キャッシュは `WatchState` にまとめる。通知ストアは保存先の提供関数を受け取り、保存先が変わると読み込みキャッシュとロック先も切り替える。既存の辞書を参照するサービスがあるため、一覧の更新には `DirectoryState.adopt()` を使う。
+
+設定画面の `Screen` はDiscord SDKから独立し、下書き・同時編集の検知・権限確認・保存と取り消しの判断を持つ。ネイティブ部品はクライアントの `settings_redraw` コールバックへ再描画を依頼し、部品と描画処理を循環参照させない。外部からの受付は応答を保留してからファイル操作を行い、描画前には改めて最新の権限と設定を確認する。
