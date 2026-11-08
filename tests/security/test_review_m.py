@@ -23,10 +23,10 @@ class Tool(unittest.TestCase):
     def thread(self, *args):
         import test_discord_api as td
 
-        td.D.TOKEN = TOKEN
+        td.D.session.token = TOKEN
         td.write_owner_items(td.ITEMS)
-        td.D.GENERATED_DIR = os.path.dirname(td.D.OWNER_ITEMS_FILE)
-        td.D.api_multipart = lambda path, payload, f: (
+        td.D.session.generated_dir = os.path.dirname(td.D.session.owner_items_file)
+        td.D.session.api_multipart = lambda path, payload, f: (
             td.CALLS.append(("POST", path, payload)) or {"id": "1"}
         )
         td.CALLS.clear()
@@ -42,7 +42,7 @@ class Tool(unittest.TestCase):
     def test_thread_secret_split_between_text_and_upload(self):
         import test_discord_api as td
 
-        upload = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE), "half.txt")
+        upload = os.path.join(os.path.dirname(td.D.session.owner_items_file), "half.txt")
         with open(upload, "w") as f:
             f.write(TOKEN[30:])
         try:

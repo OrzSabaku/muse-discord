@@ -173,8 +173,8 @@ class Tool(unittest.TestCase):
     def test_post_and_edit_refuse_secrets(self):
         import test_discord_api as td
 
-        td.D.TOKEN = TOKEN
-        nonces = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE), "item_nonces.json")
+        td.D.session.token = TOKEN
+        nonces = os.path.join(os.path.dirname(td.D.session.owner_items_file), "item_nonces.json")
         with open(nonces, "w") as f:
             json.dump({"5": "9f" * 16}, f)
         td.write_owner_items(td.ITEMS)
@@ -199,11 +199,13 @@ class Tool(unittest.TestCase):
     def test_thread_refuses_a_secret_inside_its_upload(self):
         import test_discord_api as td
 
-        td.D.TOKEN = TOKEN
+        td.D.session.token = TOKEN
         td.write_owner_items(td.ITEMS)
-        td.D.GENERATED_DIR = os.path.dirname(td.D.OWNER_ITEMS_FILE)
-        td.D.api_multipart = lambda path, payload, f: td.CALLS.append(("POST", path, payload))
-        upload = os.path.join(td.D.GENERATED_DIR, "cat.png")
+        td.D.session.generated_dir = os.path.dirname(td.D.session.owner_items_file)
+        td.D.session.api_multipart = lambda path, payload, f: td.CALLS.append(
+            ("POST", path, payload)
+        )
+        upload = os.path.join(td.D.session.generated_dir, "cat.png")
         with open(upload, "w") as f:
             f.write(f"x {TOKEN}")
         td.CALLS.clear()
@@ -217,9 +219,9 @@ class Tool(unittest.TestCase):
     def test_slot_nonce_and_a_split_thread_are_refused(self):
         import test_discord_api as td
 
-        td.D.TOKEN = TOKEN
+        td.D.session.token = TOKEN
         td.write_owner_items(td.ITEMS)
-        slot = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE), "proactive_nonce.json")
+        slot = os.path.join(os.path.dirname(td.D.session.owner_items_file), "proactive_nonce.json")
         with open(slot, "w") as f:
             json.dump({"7": "7e" * 16}, f)
         try:

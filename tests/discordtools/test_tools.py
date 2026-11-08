@@ -1,7 +1,6 @@
 """On-demand reads, durable acknowledgments, splitting, and owner bindings."""
 
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -209,16 +208,14 @@ class Binding(unittest.TestCase):
             os.environ["MUSE_DISCORD_CONFIG"] = str(cfg)
             os.environ["MUSE_CLI_TEST_TOKEN"] = "test-token"
             try:
-                spec = importlib.util.spec_from_file_location(
-                    "discord_cli_test", ROOT / "bin/discord-api.py"
-                )
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                module.PACKAGE_DIR = temp
-                module.OWNER_ITEMS_FILE = str(Path(temp) / "owner_items.json")
-                module.OWNER_DM_NONCES_FILE = str(Path(temp) / "owner_dm_nonces.json")
+                from muse_discord.discord_tools.cli import create_cli
+
+                module = create_cli(temp)
+                module.session.package_dir = temp
+                module.session.owner_items_file = str(Path(temp) / "owner_items.json")
+                module.session.owner_dm_nonces_file = str(Path(temp) / "owner_dm_nonces.json")
                 calls = []
-                module.api = lambda *args: calls.append(args)
+                module.session.api = lambda *args: calls.append(args)
                 for command, args in (
                     ("get-messages", [CHANNEL]),
                     ("list-unread", [CHANNEL]),
@@ -236,7 +233,7 @@ class Binding(unittest.TestCase):
                     self.assertIn("error", json.loads(output.getvalue()))
                 self.assertEqual(calls, [])
                 self.assertFalse((Path(temp) / "read-state.sqlite").exists())
-                Path(module.OWNER_ITEMS_FILE).write_text(
+                Path(module.session.owner_items_file).write_text(
                     json.dumps(
                         {
                             ITEM: {
@@ -248,7 +245,7 @@ class Binding(unittest.TestCase):
                         }
                     )
                 )
-                Path(module.OWNER_DM_NONCES_FILE).write_text("{}")
+                Path(module.session.owner_dm_nonces_file).write_text("{}")
 
                 def fake_api(method, path, data=None):
                     calls.append((method, path, data))
@@ -268,10 +265,10 @@ class Binding(unittest.TestCase):
                     ]
                     return result
 
-                module.api = fake_api
+                module.session.api = fake_api
                 module.media_tools = lambda: MediaTools(
-                    module.api,
-                    module.guard_target,
+                    module.session.api,
+                    module.auth.guard_target,
                     temp,
                     lambda *args: {"path": str(Path(temp) / "media/x.png")},
                 )

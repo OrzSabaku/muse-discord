@@ -33,6 +33,7 @@ sys.path.insert(
 from common import MUT_DIR as SRC  # noqa: E402
 from common import redirect_files, scratch, signed  # noqa: E402 (local import path bootstrap)
 
+from muse_discord.discord_tools.cli import create_cli  # noqa: E402 (source path bootstrap)
 from muse_discord.media import fetch, video  # noqa: E402
 from muse_discord.response_policy import _media_counts as media_counts  # noqa: E402
 
@@ -128,11 +129,8 @@ M = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(M)
 M.initialize(token_override="dummy-token")
 redirect_files(M, os.path.join(WORK, "run"))
-spec = importlib.util.spec_from_file_location(
-    "discord_api", os.path.join(SRC, "bin", "discord-api.py")
-)
-D = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(D)
+
+D = create_cli(SRC)
 
 M.BOT_ID = M.BOT_USER_ID = BOTID
 M.BOT_NAME = "musebot"
@@ -202,7 +200,7 @@ def reset():
     M.GENERATED_DIR = os.path.join(d, "generated")
     M.MEDIA_DIR = os.path.join(d, "media")
     os.makedirs(M.GENERATED_DIR)
-    D.GENERATED_DIR = M.GENERATED_DIR
+    D.session.generated_dir = M.GENERATED_DIR
     API_POSTS.clear()
     FILE_SENDS.clear()
     CURL_CALLS.clear()
@@ -212,7 +210,7 @@ def reset():
     M.collect_media = ORIG_COLLECT
     M._SETTINGS.engine = M._SETTINGS.engine.model_copy(update={"max_reply_chars": 1800})
     M._CAPABILITIES.files.commands.cache["body"] = None
-    D.OWNER_ITEMS_FILE = M.OWNER_ITEMS_FILE
+    D.session.owner_items_file = M.OWNER_ITEMS_FILE
     st = M.load_state()
     st["guild_joined"] = {GUILD: 0}
     _ST[0] = st
@@ -511,8 +509,8 @@ def d_multipart(path, payload, file_path):
     return {"id": "500000000000000001", "name": "t"}
 
 
-D.api = d_api
-D.api_multipart = d_multipart
+D.session.api = d_api
+D.session.api_multipart = d_multipart
 
 
 def d_acts():

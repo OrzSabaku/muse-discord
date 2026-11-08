@@ -155,18 +155,15 @@ class ForgedAnswersDoNotHideOwnerDms(_Hook):
 def load_discord_api(work):
     """bin/discord-api.py with a test config and a stubbed API that
     records every call."""
-    import importlib.util
 
     cfg = os.path.join(work, "config.yaml")
     with open(cfg, "w") as f:
         f.write('version: 1\nowners: ["100000000000000001"]\ntoken_from: env:MUSE_TEST_TOKEN\n')
     os.environ["MUSE_DISCORD_CONFIG"] = cfg
     os.environ["MUSE_TEST_TOKEN"] = "dummy-token"
-    spec = importlib.util.spec_from_file_location(
-        "discord_api_hook", os.path.join(MUT_DIR, "bin", "discord-api.py")
-    )
-    d = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(d)
+    from muse_discord.discord_tools.cli import create_cli
+
+    d = create_cli(MUT_DIR)
     d.calls = []
 
     def api(method, path, data=None):
@@ -179,7 +176,7 @@ def load_discord_api(work):
             }
         return [] if "/messages?" in path else {"id": "1"}
 
-    d.api = api
+    d.session.api = api
     return d
 
 
@@ -321,8 +318,8 @@ class OwnerCommandsWakeAlone(_Hook):
         self.assertIn(self.OWN, out)  # it knows the id...
         self.assertNotIn(self.C, out)  # ...not the nonce
         d = load_discord_api(self.d)
-        d.OWNER_ITEMS_FILE = os.path.join(self.pkg, "owner_items.json")
-        d.OWNER_DM_NONCES_FILE = os.path.join(self.pkg, "owner_dm_nonces.json")
+        d.session.owner_items_file = os.path.join(self.pkg, "owner_items.json")
+        d.session.owner_dm_nonces_file = os.path.join(self.pkg, "owner_dm_nonces.json")
         dm = "200000000000000004"  # someone's private DM
         for prefix in (
             [],

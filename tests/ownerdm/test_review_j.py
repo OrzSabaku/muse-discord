@@ -9,7 +9,6 @@ queue time.
 Usage: [MUT_DIR=<tree>] python3 tests/ownerdm/test_review_j.py"""
 
 import base64
-import importlib.util
 import io
 import json
 import os
@@ -24,6 +23,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 import test_binding as tb  # noqa: E402
 from common import MUT_DIR, scratch  # noqa: E402
 from settings_harness import CH, OWNER  # noqa: E402
+
+from muse_discord.discord_tools.cli import create_cli  # noqa: E402 (source path bootstrap)
 
 
 def token_like(uid="111000000000000099"):
@@ -61,11 +62,8 @@ with open(CFG, "w") as f:
     f.write(f'version: 1\nowners: ["{OWNER}"]\ntoken_from: env:MUSE_TEST_TOKEN\n')
 os.environ["MUSE_DISCORD_CONFIG"] = CFG
 os.environ.setdefault("MUSE_TEST_TOKEN", "dummy-token")
-spec = importlib.util.spec_from_file_location(
-    "discord_api_rj", os.path.join(MUT_DIR, "bin", "discord-api.py")
-)
-D = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(D)
+
+D = create_cli(MUT_DIR)
 
 CMD_CH = "200000000000000002"  # where the owner typed the command
 MODLOG = "200000000000000020"  # private, named by the owner (#mod-log)
@@ -95,9 +93,9 @@ def fake_api(method, path, data=None):
     return {"id": "500000000000000001", "name": "t"}
 
 
-D.api = fake_api
-D.OWNER_DM_NONCES_FILE = os.path.join(WORK, "owner_dm_nonces.json")
-D.OWNER_ITEMS_FILE = os.path.join(WORK, "owner_items.json")
+D.session.api = fake_api
+D.session.owner_dm_nonces_file = os.path.join(WORK, "owner_dm_nonces.json")
+D.session.owner_items_file = os.path.join(WORK, "owner_items.json")
 
 
 MON = tb.load_monitor(tb.CFG)
@@ -127,7 +125,7 @@ def owner_item(content):
 
 class OwnerTool(unittest.TestCase):
     def run_tool(self, content, *args):
-        with open(D.OWNER_ITEMS_FILE, "w") as f:
+        with open(D.session.owner_items_file, "w") as f:
             json.dump(owner_item(content), f)
         CALLS.clear()
         out, err = io.StringIO(), io.StringIO()

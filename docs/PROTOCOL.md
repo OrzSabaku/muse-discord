@@ -103,6 +103,10 @@ outboxの処理中項目・失敗回数・新規返信の到着検知は `Outbox
 | 自発発言の保存・破損時の復旧・nonce公開 | `src/muse_discord/proactive/store.py` |
 | 本人への承諾確認・再試行・ボタンの照合 | `src/muse_discord/proactive/consent.py` |
 | 単発CLI・MCP | `bin/discord-api.py`・`src/muse_discord/discord_tools/` |
+| 所有者コマンドの引数・表示・実行先選択 | `src/muse_discord/discord_tools/cli.py` |
+| 所有者コマンドと本人DMの認可・対象制限 | `src/muse_discord/discord_tools/authorization.py` |
+| 単発ツールのトークン・通信・生成添付の検査 | `src/muse_discord/discord_tools/session.py` |
+| 単発ツールの秘密情報検査 | `src/muse_discord/discord_tools/privacy.py` |
 | 外部アプリのポリシー・承認・実行 | `src/muse_discord/external_apps/` |
 
 ## キューと返信
