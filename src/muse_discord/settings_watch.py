@@ -55,6 +55,23 @@ class LiveSettings:
             self._changed(pending, current)
         return current
 
+    def retire_changes(self, notify: Callable[[str], Any], backing_off: Callable[[], bool]) -> int:
+        """Discord-side settings changes that config.yaml has overtaken (the
+        file was edited at that spot afterwards) or that no longer validate:
+        move them to the overlay's history, one owner DM each (the conflict
+        rule: the newest intent wins). Waits out a REST backoff so the DMs
+        can land."""
+        if not self.read().retire or backing_off():
+            return 0
+        with self.overlay_lock:
+            # Re-checked under the lock: a /settings change written since
+            # may have replaced a stale entry, which must not be retired.
+            notes = self.read().commit_retirements()
+        for note in notes:
+            print(note, flush=True)
+            notify(note)
+        return len(notes)
+
     def _changed(self, previous, current):
         print("Settings reloaded (config.yaml or config.discord.yaml changed).", flush=True)
         if sorted(current.owners) != sorted(previous.owners):

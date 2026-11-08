@@ -640,24 +640,6 @@ def dm_refusal(author):
     return _admission().dm_refusal(author)
 
 
-def retire_overlay_changes():
-    """Discord-side settings changes that config.yaml has overtaken (the
-    file was edited at that spot afterwards) or that no longer validate:
-    move them to the overlay's history, one owner DM each (the conflict
-    rule: the newest intent wins). Waits out a REST backoff so the DMs
-    can land."""
-    if not settings().retire or rest_backing_off():
-        return 0
-    with _SETTINGS.overlay_lock:
-        # Re-checked under the lock: a /settings change written since
-        # may have replaced a stale entry, which must not be retired.
-        notes = settings().commit_retirements()
-    for note in notes:
-        print(note, flush=True)
-        notify_owners(note)
-    return len(notes)
-
-
 # ---------------------------------------------------------------------------
 # Conversational follow-ups (who.replies: conversational, the default).
 # After the bot's reply to a HUMAN is actually sent in a channel, that
@@ -1669,7 +1651,7 @@ def main():
         scheduler.begin_tick(now, backing)
         dm_items = []
         _run_phase("Gateway drain", _drain_live_messages, state, inbox)
-        _run_phase("Settings overlay", retire_overlay_changes)
+        _run_phase("Settings overlay", _SETTINGS.retire_changes, notify_owners, rest_backing_off)
         _run_phase("/settings upkeep", _settings_upkeep, status)
         _run_phase("Owner DM upkeep", _CAPABILITIES.upkeep, state)
         _run_phase("Reminders and watches", watch_tick, state)

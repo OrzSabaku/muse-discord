@@ -618,8 +618,8 @@ class LiveReload(MonitorBase):
         bump(m._SETTINGS.watcher.overlay_path)
         self.rewrite(NEW_BASE + "everywhere:\n  style:\n    length: normal\n")
         with quiet():
-            self.assertEqual(m.retire_overlay_changes(), 1)
-            self.assertEqual(m.retire_overlay_changes(), 0)
+            self.assertEqual(m._SETTINGS.retire_changes(m.notify_owners, m.rest_backing_off), 1)
+            self.assertEqual(m._SETTINGS.retire_changes(m.notify_owners, m.rest_backing_off), 0)
         self.assertEqual(len(m.api.dm_posts()), 1)  # the owner is told
         self.assertEqual(m.settings().get("style.length", MS.Scope.everywhere()), "normal")
 
