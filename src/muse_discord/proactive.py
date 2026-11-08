@@ -827,16 +827,27 @@ class Proactive:
                 "targets": [self.describe(state, t, now) for t in targets],
             },
         }
+        slot["pending_item"] = item
         d["slot"] = slot
         d["side"] = "public" if targets[0]["type"] == "channel" else "private"
         self.save()  # the slot (and its nonce) first,
         self.write_nonces()  # then the hook's nonce file,
-        self.m.queue_edit(add=[item])  # then the queue
+        self.publish_slot()  # then the queue (retried by upkeep if busy)
         print(
             f"Heartbeat: {len(targets)} place(s) or people it may reach out to; queued slot {sid}.",
             flush=True,
         )
         return item
+
+    def publish_slot(self):
+        """Retry a saved slot item without changing its nonce or heartbeat deadline."""
+        slot = self.data().get("slot") or {}
+        item = slot.get("pending_item")
+        if item is None:
+            return
+        self.m.queue_edit(add=[item])
+        slot.pop("pending_item", None)
+        self.save()
 
     def end_slot(self, state, why):
         d = self.data()
@@ -905,6 +916,7 @@ class Proactive:
             elif not s.get("spent") and now > s.get("expires", 0):
                 self.end_slot(state, "expired unanswered")
         self.write_nonces()  # (after a restart, say; only when it changed)
+        self.publish_slot()
         self.drop_orphans()
         if self._alert and self.m.notify_owners(self._alert):
             self._alert = None
