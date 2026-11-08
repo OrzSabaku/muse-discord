@@ -12,13 +12,13 @@ from typing import Any
 from muse_discord.conversation import _snowflake_ts
 from muse_discord.message_ledger import MessageLedger
 from muse_discord.message_models import LedgerContext, Settlement
-from muse_discord.message_queue import QueueFiles, keep_last, trigger_of
+from muse_discord.message_queue import keep_last, trigger_of
 
 
 @dataclass
 class ReplyState:
     ledger: MessageLedger
-    queue: QueueFiles
+    load_queue: Callable[[], list]
     track_item: Callable[[str, dict], Any]
     latency: Callable[[float], Any]
     now: Callable[[], float] = time.time
@@ -37,7 +37,7 @@ class ReplyState:
         q = next(
             (
                 q
-                for q in self.queue.load()
+                for q in self.load_queue()
                 if isinstance(q, dict) and str(q.get("message_id")) == qid
             ),
             {},

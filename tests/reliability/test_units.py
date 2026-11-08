@@ -73,7 +73,7 @@ class F2BurstLedger(unittest.TestCase):
         self.assertEqual(
             ledger(mod).get(q2["id"], {}).get("status"), "queued", "fragment ledgered at enqueue"
         )
-        mod._settle(
+        mod._REPLIES.settle(
             st,
             {"reply_to": q3["id"], "channel_id": "C1"},
             outcome=Settlement(status="replied", replied=True),
@@ -86,7 +86,7 @@ class F2BurstLedger(unittest.TestCase):
         mod = H.load_monitor()
         st = new_state(mod)
         (q1, q2, q3), _q = self._burst(mod, st, ["a", "b", "c"])
-        mod._settle(
+        mod._REPLIES.settle(
             st,
             {"reply_to": q2["id"], "channel_id": "C1"},
             outcome=Settlement(status="skipped", reason="no reply (worker's call)", replied=True),

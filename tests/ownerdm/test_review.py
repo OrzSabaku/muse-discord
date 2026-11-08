@@ -139,7 +139,9 @@ class ForgottenChannels(Base):
     def forget(self):
         self.mod._DIRECT_MESSAGES.users.clear()
         for i in range(301):
-            self.mod.note_item_meta(self.st, f"6{i:017d}", channel_id=CH, dm=False, owner_dm=False)
+            self.mod._REPLIES.note_item(
+                self.st, f"6{i:017d}", channel_id=CH, dm=False, owner_dm=False
+            )
 
     def test_owner_dm_channel_forgotten(self):
         m = self.owner_dm()

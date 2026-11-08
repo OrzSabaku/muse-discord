@@ -242,7 +242,7 @@ def _proactive_context():
         owner_check_pending=lambda state, gid: _OWNER_PRESENCE.pending(state, gid),
         owners_absent=lambda *args, **kwargs: _OWNER_PRESENCE.absent(*args, **kwargs),
         queue_edit=lambda *args, **kwargs: queue_edit(*args, **kwargs),
-        queued_item_meta=lambda *args, **kwargs: queued_item_meta(*args, **kwargs),
+        queued_item_meta=lambda *args, **kwargs: _REPLIES.queued_meta(*args, **kwargs),
         rest_backing_off=lambda *args, **kwargs: rest_backing_off(*args, **kwargs),
         scope_for=lambda *args, **kwargs: scope_for(*args, **kwargs),
         send_fragmented=lambda *args, **kwargs: _PARTS.send(*args, **kwargs),
@@ -427,7 +427,7 @@ def _deliver_outbox_item(batch, item):
         max_reply_chars=_SETTINGS.engine.max_reply_chars,
     )
     effects = ReplyEffects(
-        state=_reply_state(),
+        state=_REPLIES,
         memory=_MEMORY,
         schedules=_watch_requests(),
         watches=policy.watches,
@@ -478,6 +478,7 @@ def _quarantine_store():
 
 
 _LEDGER: MessageLedger
+_REPLIES: ReplyState
 _RECEPTION_AUDIT: ReceptionAudit
 
 
@@ -652,7 +653,7 @@ def _bursts(state):
         ),
         enqueue_message,
         BurstEffects(
-            note_ingested,
+            _REPLIES.note_ingested,
             lambda mid: mid in _quarantine_ids() or _LEDGER.terminal(mid),
             _LEDGER.record_many,
         ),
@@ -749,23 +750,11 @@ def check_dm_channel(dm_id, dm_name, state):
     return _receiver(state).poll_dm(dm_id, dm_name)
 
 
-def _reply_state():
-    return ReplyState(_LEDGER, _queue_files(), PRO.policy.note_item, TM.latency, time.time)
-
-
-def queued_item_meta(state, qid, index):
-    return _reply_state().queued_meta(state, qid, index)
-
-
 def started_item_id(now=None):
     """The queue id of an item the monitor starts (a reminder or watch
     fire, a heartbeat slot): a snowflake for now with random low bits,
     so it passes every id check and never names a real message."""
     return W.new_fire_id(now)
-
-
-def note_item_meta(state, mid, **meta):
-    return _reply_state().note_item(state, mid, **meta)
 
 
 def _worker_context():
@@ -780,7 +769,7 @@ def _worker_context():
 
 
 def _ingest_journal():
-    return IngestJournal(_LEDGER, _quarantine_store(), _reply_state(), _CAPABILITIES)
+    return IngestJournal(_LEDGER, _quarantine_store(), _REPLIES, _CAPABILITIES)
 
 
 def enqueue_message(msg, cname, state, queue, context=None):
@@ -795,14 +784,6 @@ def enqueue_message(msg, cname, state, queue, context=None):
         _worker_context(),
         _ingest_journal(),
     ).enqueue()
-
-
-def note_ingested(state, mid):
-    return _reply_state().note_ingested(state, mid)
-
-
-def _settle(state, item, outcome):
-    return _reply_state().settle(state, item, outcome)
 
 
 # Processing progress and poison-item counts belong to OutboxProcessor.
@@ -857,7 +838,9 @@ def _watch_audience():
 
 
 def _watch_requests():
-    return WatchRequests(_WATCH_STORE, _watch_audience(), queued_item_meta, _note_watch_timezone)
+    return WatchRequests(
+        _WATCH_STORE, _watch_audience(), _REPLIES.queued_meta, _note_watch_timezone
+    )
 
 
 def _note_watch_timezone(uid, fresh):
@@ -884,7 +867,7 @@ def _watch_runtime():
         fires=WatchFireBuilder(audience, _LEDGER.record, _worker_context().settings_card),
         queue=WatchQueue(
             _queue_files(),
-            _reply_state(),
+            _REPLIES,
             _CAPABILITIES,
             lambda: _SETTINGS.owners,
             _CAPABILITIES.write_owner_dms,
@@ -1119,7 +1102,7 @@ def _initialize_owner_services():
         lambda: load_queue(),
         lambda text: _OWNER_MESSAGES.notify(text),
     )
-    _REVIEW = ReplyReview(settings, _OWNER_MESSAGES, _DIRECT_MESSAGES.users, _settle)
+    _REVIEW = ReplyReview(settings, _OWNER_MESSAGES, _DIRECT_MESSAGES.users, _REPLIES.settle)
     _UPDATE_NOTICES = UpdateNotices(
         lambda: UPDATE_CHECK_FILE,
         lambda: UPDATE_REQUEST_FILE,
@@ -1151,7 +1134,7 @@ def _initialize_owner_services():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
-    global _QUEUE_STAGING, _LEDGER, _RECEPTION_AUDIT
+    global _REPLIES, _QUEUE_STAGING, _LEDGER, _RECEPTION_AUDIT
     global _IDENTITY, _OUTBOX, _WORK_WAIT
     global _SENDER, _PARTS, _TYPING
     global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
@@ -1211,6 +1194,13 @@ def _initialize_services():
         _DIRECT_MESSAGES,
         lambda *args: TM.ledger(*args),
         now=lambda: time.time(),
+    )
+    _REPLIES = ReplyState(
+        _LEDGER,
+        lambda: load_queue(),
+        lambda mid, meta: PRO.policy.note_item(mid, meta),
+        lambda seconds: TM.latency(seconds),
+        lambda: time.time(),
     )
     _RECEPTION_AUDIT = ReceptionAudit(_LEDGER)
     _QUEUE_STAGING = QueueStaging(_bursts, _queue_publication)

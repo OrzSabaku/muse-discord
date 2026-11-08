@@ -25,7 +25,7 @@ class ReplyTracking(unittest.TestCase):
         self.ledger = MessageLedger(
             lambda: os.path.join(path, "ledger.json"), {}, DirectChannels(), Mock()
         )
-        self.replies = ReplyState(self.ledger, self.queue, Mock(), Mock())
+        self.replies = ReplyState(self.ledger, self.queue.load, Mock(), Mock())
 
     def test_fragment_settlement_never_closes_an_unrelated_burst(self):
         state = {"replied_to": [], "reply_aliases": {"11": "10", "21": "20"}}

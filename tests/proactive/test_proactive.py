@@ -116,7 +116,7 @@ class Base(unittest.TestCase):
     def dmed(self, uid, cid, age=2 * HOUR):
         """uid DMed the bot (a queued DM, as enqueue_message records)."""
         mid = sf(age)
-        self.m.note_item_meta(
+        self.m._REPLIES.note_item(
             self.st,
             mid,
             author_id=uid,
@@ -558,7 +558,7 @@ class Posting(Base):
         self.assertNotIn(DM_U1, self.targets(slot))
         later = -(self.now - time.time()) + 2 * HOUR
         # A message of theirs elsewhere (a server) is no answer...
-        self.m.note_item_meta(
+        self.m._REPLIES.note_item(
             self.st,
             sf(later),
             author_id=U1,
@@ -646,7 +646,7 @@ class Eligibility(Base):
     def test_never_dm_someone_who_did_not_dm_first(self):
         # U2 talked to the bot in a server only; U1 DMed it.
         mid = sf(2 * HOUR)
-        self.m.note_item_meta(
+        self.m._REPLIES.note_item(
             self.st,
             mid,
             author_id=U2,
@@ -658,7 +658,7 @@ class Eligibility(Base):
         )
         self.dmed(U1, DM_U1)
         # A bot that DMed counts for nothing either.
-        self.m.note_item_meta(
+        self.m._REPLIES.note_item(
             self.st,
             sf(2 * HOUR),
             author_id="333",

@@ -272,7 +272,7 @@ def test_monitor_removes_answered_items():
     st["reply_aliases"] = {frag1: trig, frag2: trig}
     # gone was queued here (the monitor's record of it), and its queue
     # item is already gone; never was never queued at all.
-    m.note_item_meta(st, gone, channel_id="101", kind="mention")
+    m._REPLIES.note_item(st, gone, channel_id="101", kind="mention")
     write(
         m.QUEUE_FILE,
         [
