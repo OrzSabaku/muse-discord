@@ -86,13 +86,15 @@ def signed(mod, state, item):
     queues; minted here too for an item a test queued by hand). A
     reply_nonce the item already sets is kept, and reply_nonce=None
     drops it (a run that was not handed the item)."""
+    from muse_discord.message_queue import answered_id, trigger_of
+
     item = dict(item)
     if "reply_nonce" in item:
         if item["reply_nonce"] is None:
             del item["reply_nonce"]
         return item
-    qid = mod._answered_id(state, item)
+    qid = answered_id(state, item)
     if qid:
         frags = mod.queue_index(state)["frags"]
-        item["reply_nonce"] = mod.reply_nonce_mint(state, mod.trigger_of(state, qid, frags))
+        item["reply_nonce"] = mod.reply_nonce_mint(state, trigger_of(state, qid, frags))
     return item

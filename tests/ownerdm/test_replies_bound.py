@@ -1,4 +1,4 @@
-"""Replies stay where they belong (monitor.py's own_channel_problem):
+"""Replies stay where they belong (reply_binding.py):
 after the owner-DM gate, every outbox item must answer a message the
 monitor queued (item, else reply_to, through burst fragments), in that
 message's own channel. A run woken by anyone (and maybe prompt-injected)
@@ -36,6 +36,8 @@ from settings_harness import (
     sf,
     write,
 )
+
+from muse_discord.reply_binding import STALE_PROMPT_DM
 
 DM_U1, DM_U2 = tb.DM_U1, "400000000000000080"
 
@@ -177,7 +179,7 @@ class StillWorks(_B):
         self.assertFalse(os.path.exists(self.mod.STALE_PROMPT_FILE))
         for m in items[2:4]:
             self.outbox(self.reply(m, "hi", reply_nonce=None))
-        dms = [d for p, d in self.mod.api.posts if d.get("content") == self.mod.STALE_PROMPT_DM]
+        dms = [d for p, d in self.mod.api.posts if d.get("content") == STALE_PROMPT_DM]
         self.assertEqual(len(dms), 2)  # each owner, once
         self.assertTrue(os.path.exists(self.mod.STALE_PROMPT_FILE))
         self.outbox(self.reply(items[4], "hi"))  # current prompt
@@ -209,7 +211,7 @@ class StillWorks(_B):
             self.outbox(self.reply(m, "hi", reply_nonce=None))
         posts = [d.get("content") or "" for _, d in self.mod.api.posts]
         self.assertTrue(any("can't save files" in c for c in posts), posts)
-        self.assertNotIn(self.mod.STALE_PROMPT_DM, posts)
+        self.assertNotIn(STALE_PROMPT_DM, posts)
         self.assertFalse(os.path.exists(self.mod.STALE_PROMPT_FILE))
 
     def test_retry_and_restart_keep_the_nonce(self):

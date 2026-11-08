@@ -38,9 +38,7 @@ from Discord), both read through muse_settings.py. See
 config.example.yaml for the schema.
 """
 
-import contextlib
 import fcntl
-import hmac
 import os
 import queue as pyqueue
 import sys
@@ -104,7 +102,7 @@ from muse_discord.message_models import (
     Speaker,
 )
 from muse_discord.message_outcomes import MessageOutcomes
-from muse_discord.message_queue import QueueFiles, owner_dm_metadata, trigger_of
+from muse_discord.message_queue import QueueFiles, owner_dm_metadata
 from muse_discord.message_queue import answered_id as _answered_id
 from muse_discord.messaging import formatting as reply_formatting
 from muse_discord.messaging.parts import PartDelivery
@@ -122,7 +120,6 @@ from muse_discord.owner.memory import OwnerMemory
 from muse_discord.owner.messaging import OwnerMessenger
 from muse_discord.owner.presence import OwnerPresence
 from muse_discord.owner.review import ReplyReview
-from muse_discord.owner.review import released_ok as hold_released_ok
 from muse_discord.owner.targets import CommandTargets
 from muse_discord.owner.updates import UpdateNotices, version_installed
 from muse_discord.paths import project_root
@@ -132,6 +129,7 @@ from muse_discord.receiving.gateway import GatewayEvents, GatewayIngress
 from muse_discord.receiving.messages import ReceivedMessages, ReceptionEffects
 from muse_discord.receiving.quarantine import MessageQuarantine, is_suspicious
 from muse_discord.receiving.reconciliation import MentionReconciler, RecoveryWindow
+from muse_discord.reply_binding import ReplyBinding, StalePrompt
 from muse_discord.reply_delivery import OutboxDelivery
 from muse_discord.reply_state import ReplyState
 from muse_discord.response_policy import (
@@ -1299,7 +1297,6 @@ def owner_items_upkeep(state, queue, now):
 # silence or put a schedule action on only the items it was handed, not
 # on ones whose ids it saw in history. Spent when the item settles.
 # ---------------------------------------------------------------------------
-REPLY_NONCE_FIELD = "reply_nonce"
 ITEM_NONCES_FILE = os.path.join(BASE_DIR, "item_nonces.json")
 _ITEM_NONCES_WRITTEN: dict[str, dict[str, str] | None] = {"body": None}
 _ITEM_NONCES_ALERT: dict[str, str | None] = {"day": None}
@@ -1856,125 +1853,15 @@ def could_name_slot(item):
         return True
 
 
-# An outdated worker prompt (from before reply nonces) writes outbox
-# items without reply_nonce, every one of which is refused: the bot goes
-# silent. STALE_PROMPT_HITS such refusals within STALE_PROMPT_WINDOW
-# mark it (prompt_outdated.json, for bin/doctor.py) and DM the owners
-# once a day; an outbox item that carries its reply_nonce clears it.
-MISSING_REPLY_NONCE = "no reply_nonce (an outdated worker prompt?)"
 STALE_PROMPT_FILE = os.path.join(BASE_DIR, "prompt_outdated.json")
-STALE_PROMPT_HITS = 3
-STALE_PROMPT_WINDOW = 3600
-STALE_PROMPT_DM = (
-    "My instructions for writing replies are out of date, "
-    "so I can't send replies. Ask your Muse to update "
-    "muse-discord; that refreshes them."
-)
 
 
-def note_reply_nonce(state, refusal):
-    """After own_channel_problem: count refusals for a missing
-    reply_nonce (see STALE_PROMPT_HITS); a passing item clears them."""
-    now = time.time()
-    if refusal is None:
-        if state.pop("stale_prompt_hits", None) is not None or os.path.exists(STALE_PROMPT_FILE):
-            with contextlib.suppress(OSError):
-                os.remove(STALE_PROMPT_FILE)
-        return
-    if MISSING_REPLY_NONCE not in refusal:
-        return
-    hits = [
-        t
-        for t in state.get("stale_prompt_hits") or []
-        if isinstance(t, (int, float)) and now - t < STALE_PROMPT_WINDOW
-    ]
-    hits.append(now)
-    state["stale_prompt_hits"] = hits[-STALE_PROMPT_HITS:]
-    if len(hits) < STALE_PROMPT_HITS:
-        return
-    if not os.path.exists(STALE_PROMPT_FILE):
-        print(
-            "WORKER PROMPT OUT OF DATE: outbox items carry no "
-            "reply_nonce; re-render the worker prompt (docs/UPDATING.md).",
-            flush=True,
-        )
-        with contextlib.suppress(OSError):
-            atomic_write(STALE_PROMPT_FILE, {"since": now, "refused": len(hits)})
-    day = time.strftime("%Y-%m-%d")
-    if state.get("stale_prompt_alert") != day:
-        state["stale_prompt_alert"] = day
-        notify_owners(STALE_PROMPT_DM)
-
-
-def bound_elsewhere(state, item):
-    """True for an outbox item whose own binder has checked it in full,
-    so own_channel_problem leaves it alone: a held reply an owner chose
-    to send (hold_released_ok), or an item for a heartbeat slot
-    (proactive.py, through bind_started: the slot's own nonce, its
-    targets and caps bind it; it has no reply_nonce). The one place to
-    add another such binder. A reminder or watch firing is not one:
-    watch_bind checks its place, and its reply_nonce still binds it to
-    the run that was handed it."""
-    if hold_released_ok(state, item):
-        return True
-    try:
-        return bool(PRO.names_slot(item))
-    except Exception as e:  # then the reply_nonce check binds it
-        print(f"Proactive: could not check for a slot ({e}).", flush=True)
-        return False
-
-
-def _reply_nonce_problem(state, item, t):
-    want = ((state.get("reply_nonces") or {}).get(t) or {}).get("nonce")
-    if not want:
-        return f"{t}: no live reply_nonce yet (its next wake gets one)"
-    got = item.get(REPLY_NONCE_FIELD)
-    if got is None:
-        if t not in (_ITEM_NONCES_WRITTEN["body"] or {}):
-            # Never written for the hook: no wake could have had it.
-            return f"{t}: its reply_nonce was never written (see the log)"
-        return (
-            f"{t}: {MISSING_REPLY_NONCE} (copy the item's "
-            f"{REPLY_NONCE_FIELD} from the wake payload)"
-        )
-    if not isinstance(got, str) or not hmac.compare_digest(
-        str(want).encode(), got.encode("utf-8", "replace")
-    ):
-        return (
-            f"{t}: bad reply_nonce (missing or wrong: copy the item's "
-            f"{REPLY_NONCE_FIELD} from the wake payload)"
-        )
-    return None
-
-
-def own_channel_problem(state, item, index):
-    """None when this outbox item answers an open queue item, in that
-    item's own channel (a thread, for a message in a thread), and
-    carries that item's reply_nonce (handed only to the wake holding the
-    item's lease); else why it is refused. So a run can neither post
-    anywhere else under a made-up item, nor answer, silence or schedule
-    on an item it was not handed (its id may be in the history it read).
-    An owner's command to post elsewhere goes through bin/discord-api.py
-    with the item's owner_command_nonce. A held reply an owner chose to
-    send was checked when it was first drafted (bound_elsewhere)."""
-    if bound_elsewhere(state, item):
-        return None
-    qid = _answered_id(state, item)
-    if not qid:
-        return "answers no queued message (set item to its message_id)"
-    t = trigger_of(state, qid, index["frags"])
-    cid = index["channels"].get(t)
-    if not cid:
-        return f"{t} is not an open queue item (answered already, or never queued)"
-    if str(item.get("channel_id")) != cid:
-        return f"channel_id is not the channel of {t}"
-    # It replies (and reacts: reactions go on reply_to) under its own
-    # message or one of its own burst fragments, never under another
-    # open item in the channel.
-    rt = item.get("reply_to")
-    if rt and trigger_of(state, rt, index["frags"]) != t:
-        return f"reply_to is not {t} or one of its fragments"
-    return _reply_nonce_problem(state, item, t)
+def _reply_binding():
+    return ReplyBinding(
+        PrivateFile(ITEM_NONCES_FILE, _ITEM_NONCES_WRITTEN),
+        lambda item: PRO.names_slot(item),
+        StalePrompt(STALE_PROMPT_FILE, notify_owners, time.time, lambda: time.strftime("%Y-%m-%d")),
+    )
 
 
 class _MonitorReplyPolicy:
@@ -1996,15 +1883,15 @@ class _MonitorReplyPolicy:
 
     @staticmethod
     def own_channel_problem(state, item, index):
-        return own_channel_problem(state, item, index)
+        return _reply_binding().problem(state, item, index)
 
     @staticmethod
     def bound_elsewhere(state, item):
-        return bound_elsewhere(state, item)
+        return _reply_binding().bound_elsewhere(state, item)
 
     @staticmethod
     def note_reply_nonce(state, refusal):
-        return note_reply_nonce(state, refusal)
+        return _reply_binding().stale_prompt.note(state, refusal)
 
     @staticmethod
     def _answered_id(state, item):

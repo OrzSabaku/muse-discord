@@ -15,6 +15,7 @@
 | 連投の集約・到着順序・登録失敗の再試行 | `src/muse_discord/bursts.py` |
 | 受信バーストの検証・キュー項目の組み立て | `src/muse_discord/ingest.py` |
 | 依頼のメタデータ・時刻・連投全体の完了記録 | `src/muse_discord/reply_state.py` |
+| 通常返信の依頼・送信先・nonceの対応確認と指示不整合の診断 | `src/muse_discord/reply_binding.py` |
 | 返信の認可・副作用・送信結果の処理順 | `src/muse_discord/reply_delivery.py` |
 | サーバー・DMの応答開始条件と共有サーバー判定 | `src/muse_discord/admission.py` |
 | 応答回数・メディア回数・対象者のポリシー | `src/muse_discord/response_policy.py` |
@@ -136,6 +137,7 @@ HTTPの長い制限待ちと認証失敗は `http_runtime`、稼働記録は `mo
 設定画面の実行時アクセスは `settings_runtime.SettingsContext`、ユーザー別の一時保存は `SettingsSessions` が持つ。診断は `message_outcomes.MessageOutcomes` が台帳とディレクトリから組み立て、送信先不明のサーバーメッセージをDMへ分類しない。
 コマンドの定義と差分登録は `settings_commands.CommandRegistrar` が持つ。登録状況・再試行時刻・application IDをサービス内で保持し、他のコマンドを消す一括置換は使わない。Gateway側の設定コマンド判定も同じ名前の定義を参照する。
 ボタン等の操作は `interaction_dispatch` が受け付ける。振り分け時に現在の所有者を確認し、状態変更は記録キューへ返す。ハンドラーと応答の例外を個別に処理し、後続の操作を止めない。
+通常返信の結び付けは `reply_binding.ReplyBinding` が確認する。開いている依頼・元のチャンネル・その連投の断片・発行済みnonceを照合する。`StalePrompt` はnonce未公開とワーカー指示の不整合を区別し、保留解除と自発枠には既存の専用検証を使う。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査
