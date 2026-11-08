@@ -45,17 +45,21 @@ class Doctor:
     # -- process -------------------------------------------------------
     def monitor_pid(self):
         """The live monitor.py running from this package dir, or None.
-        monitor.pid first, then any `python3 monitor.py` whose working
-        directory is this package (never another install's)."""
+        Recorded PIDs first, then the watchdog's root/bin entrypoint whose
+        working directory is this package (never another install's)."""
         cands = []
-        try:
-            with open(self.path("monitor.pid")) as f:
-                cands.append(f.read().split()[0])
-        except OSError, IndexError:
-            pass
+        for name in ("src/muse_discord/monitor.pid", "monitor.pid"):
+            try:
+                with open(self.path(name)) as f:
+                    cands.append(f.read().split()[0])
+            except OSError, IndexError:
+                pass
         try:
             out = subprocess.run(
-                ["pgrep", "-f", "^python3 [m]onitor.py"], capture_output=True, text=True, timeout=10
+                ["pgrep", "-f", r"^python3 (bin/)?[m]onitor\.py( |$)"],
+                capture_output=True,
+                text=True,
+                timeout=10,
             ).stdout
             cands += out.split()
         except OSError, subprocess.SubprocessError:
