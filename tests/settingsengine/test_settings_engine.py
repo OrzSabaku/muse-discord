@@ -43,6 +43,8 @@ from fake import (
     load_monitor,
 )
 
+from muse_discord.settings_assessment import assess
+
 P = MS.Place
 C = MS.Change
 DEF, DMS = P.defaults(), P.dms()
@@ -178,17 +180,17 @@ class Risk(unittest.TestCase):
                 cfg = config(self, text)
                 if first:
                     apply(cfg, first)
-                self.assertIs(MS.assess(load(cfg), changes, info, NAMES).risky, risky)
+                self.assertIs(assess(load(cfg), changes, info, NAMES).risky, risky)
         # An Undo is judged by its outcome too.
         cfg = config(self, BIG_DEFAULT)
         apply(cfg, [C(S3, "style.length", "brief")])
         st = load(cfg)
-        self.assertFalse(MS.assess(st, MS.undo_plan(st, S3), INFO).risky)
+        self.assertFalse(assess(st, MS.undo_plan(st, S3), INFO).risky)
         # an undo that reopens Chatty in a big server is risky
         apply(cfg, [C(S2, "who.replies", "conversational")], OWNER)
         apply(cfg, [C(S2, "who.replies", "off")], OWNER)
         st = load(cfg)
-        self.assertTrue(MS.assess(st, MS.undo_plan(st, S2), INFO).risky)
+        self.assertTrue(assess(st, MS.undo_plan(st, S2), INFO).risky)
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +678,7 @@ class Presets(unittest.TestCase):
             MS.preset_changes(st, "friends", S1, INFO)
         ch = MS.preset_changes(st, "friends", S3, INFO)
         self.assertIn(C(S3, "privacy.memory", "everything"), ch)
-        self.assertTrue(MS.assess(st, ch, INFO).risky)  # confirm first
+        self.assertTrue(assess(st, ch, INFO).risky)  # confirm first
         for pl in (DEF, DMS, GEN):
             with self.assertRaises(MS.SettingsError):
                 MS.preset_changes(st, "work", pl)

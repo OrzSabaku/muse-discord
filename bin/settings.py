@@ -66,6 +66,7 @@ sys.path[:0] = [os.path.join(PKG, "src"), os.path.join(PKG, "bin")]
 import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
 
 from muse_discord import muse_settings as MS  # noqa: E402
+from muse_discord.settings_assessment import assess  # noqa: E402
 
 
 def _cfg_path(args):
@@ -261,7 +262,7 @@ def _run(args, st, cfg, info, changes):
             print("No change: " + r.describe(names) + ".")
     if not todo:
         return 0
-    risk = MS.assess(st, [r.change for r in todo], info)
+    risk = assess(st, [r.change for r in todo], info)
     for r in todo:
         print(r.describe(names))
     for n in risk.notes:
@@ -354,7 +355,7 @@ def cmd_undo(args):
         print(f"Nothing to undo in {MS.place_name(place, names)}.")
         return 0
     print(text)
-    risk = MS.assess(st, MS.undo_plan(st, place, children), info)
+    risk = assess(st, MS.undo_plan(st, place, children), info)
     for w in risk.warnings:
         print("Warning: " + w)
     if risk.risky and not args.yes:

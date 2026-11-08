@@ -31,6 +31,7 @@
 | 設定の型・検証 | `src/muse_discord/settings_schema.py`（Pydantic） |
 | Discord HTTP通信 | `src/muse_discord/discord_rest.py`（discord.py） |
 | Discord接続・UI操作受付 | `src/muse_discord/discord_connection.py`（discord.py） |
+| 設定変更による応答対象・公開範囲・費用の評価 | `src/muse_discord/settings_assessment.py` |
 | 設定の継承・変更・保存 | `src/muse_discord/muse_settings.py` |
 | 設定の表示文言・名前解決 | `src/muse_discord/settings_display.py` |
 | Discordの設定画面 | `src/muse_discord/settings_ui.py` |
@@ -108,6 +109,7 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 連投の集約と再試行は `bursts.PendingBursts`、Gatewayの入力順序は `bursts.GatewayActivity` が持つ。未処理の連投と再試行時刻は保存対象の状態に残し、登録途中の例外ではその試行が追加したキュー項目だけを取り消す。
 RESTの巡回と定期ジョブの実行順・待ち時間は `rest_scheduler.RestScheduler` が持つ。時計と実行操作を渡し、巡回と保守処理で時間枠を共有する。再探索要求は復旧直後の周回で消費しない。
 サーバー・DMへの応答開始条件は `admission.AdmissionPolicy` が持つ。共有サーバーの確認結果は `SharedServers` が期限付きで保持し、所有者の発言による在籍確認は `owner.presence` に反映する。
+設定変更の影響は `settings_assessment.assess` が保存前後の実効値を比較して評価する。UIとCLIは同じ評価を使い、設定エンジンからUIや確認処理を呼び出さない。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

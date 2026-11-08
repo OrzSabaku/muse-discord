@@ -2,8 +2,9 @@
 
 One private screen: choose a place, a category and a setting. Every edit
 waits in the same draft until Save. The settings engine still owns validation,
-inheritance, permissions, risk assessment and undo. Sessions are user-bound
-and expire after 15 minutes; restarting never resurrects a pending change.
+inheritance, permissions and undo; settings_assessment evaluates change risks.
+Sessions are user-bound and expire after 15 minutes; restarting never resurrects
+a pending change.
 """
 
 import asyncio
@@ -18,6 +19,7 @@ import discord
 from discord import ui
 
 from muse_discord import muse_settings as ms
+from muse_discord.settings_assessment import assess
 from muse_discord.settings_display import clip
 
 MAX_CONFIRMATION_WARNINGS = 5
@@ -385,7 +387,7 @@ class Screen:
                 raise ms.SettingsError(
                     "設定の履歴が変わりました。画面を更新してからやり直してください。"
                 )
-            assessment = ms.assess(ctx.settings, plan, ctx) if role == "owner" else None
+            assessment = assess(ctx.settings, plan, ctx) if role == "owner" else None
             self.pending = {
                 "undo": current,
                 "warnings": assessment.warnings if assessment else [],
@@ -415,7 +417,7 @@ class Screen:
         self.check_baseline(ctx, place)
         if role == "admin":
             changes = ms.admin_changes(ctx.settings, place.guild_id, changes, ctx)
-        assessment = ms.assess(ctx.settings, changes, ctx) if role == "owner" else None
+        assessment = assess(ctx.settings, changes, ctx) if role == "owner" else None
         if assessment and assessment.risky:
             # 確認中に条件が変わった場合は、新しい警告をもう一度表示する。
             warnings = assessment.warnings
@@ -449,7 +451,7 @@ class Screen:
         if role == "admin":
             kw["admin_gid"] = place.guild_id
         plan = ms.undo_plan(ctx.settings, place, kw["children"], kw.get("admin_gid"))
-        assessment = ms.assess(ctx.settings, plan, ctx) if role == "owner" else None
+        assessment = assess(ctx.settings, plan, ctx) if role == "owner" else None
         if assessment and assessment.warnings != pending["warnings"]:
             pending["warnings"] = assessment.warnings
             return ""
