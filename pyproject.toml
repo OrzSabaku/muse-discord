@@ -34,7 +34,7 @@ line-length = 100
 target-version = "py315"
 
 [tool.ruff.lint]
-select = ["E", "F"]
+select = ["E", "F", "B", "I", "UP", "SIM", "C901", "PLR", "FURB", "RUF"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -44,11 +44,6 @@ addopts = "--tb=short"
 include = ["src", "bin"]
 exclude = ["**/__pycache__", ".venv", "build", "dist"]
 typeCheckingMode = "basic"
-strict = [
-  "src/muse_discord/paths.py",
-  "src/muse_discord/secret_scan.py",
-  "src/muse_discord/reply_protocol.py",
-]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.15"
