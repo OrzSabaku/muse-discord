@@ -8,8 +8,8 @@ import hashlib
 import os
 import re
 
+from muse_discord.bot_credentials import DEFAULT_TOKEN_FILE, token_file
 from muse_discord.setup import support as C
-from muse_discord.setup.credentials import DEFAULT_TOKEN_FILE
 from muse_discord.storage import atomic_write
 
 PKG = C.PKG_DIR
@@ -145,7 +145,7 @@ def save_connection(args, token, owner_id, rep, name):
     path = None
     if os.path.exists(cfg):
         try:
-            path = C.token_file(C.load_settings(cfg))
+            path = token_file(C.load_settings(cfg).token_sources(), PKG)
         except MS.SettingsError:
             path = None
     path = path or os.path.expanduser(DEFAULT_TOKEN_FILE)
@@ -155,6 +155,6 @@ def save_connection(args, token, owner_id, rep, name):
         MS, st = write_config(cfg, owner_id, rep)
     except (MS.SettingsError, RuntimeError, OSError) as e:
         return rep.fail("config", f"Could not write config.yaml (the token is saved): {e}", 6)
-    if C.token_file(st) != path:
+    if token_file(st.token_sources(), PKG) != path:
         rep.line(f"NOTE: config.yaml reads the token from {st.token_sources()}, not {path}.")
     name_persona(st, name, rep)

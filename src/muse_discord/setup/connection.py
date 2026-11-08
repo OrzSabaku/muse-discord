@@ -9,6 +9,7 @@ import os
 import sys
 from http import HTTPStatus
 
+from muse_discord.bot_credentials import read_token, token_file
 from muse_discord.setup import support as C
 from muse_discord.setup.credentials import (
     AGAIN,
@@ -43,7 +44,7 @@ def get_token(args, rep):
     (token, exit code when it failed)."""
     if args.saved:
         try:
-            token = C.read_token(C.load_settings(args.config))
+            token = read_token(C.load_settings(args.config).token_sources(), C.PKG_DIR)
         except C.settings_module().SettingsError:
             token = None
         if not token:
@@ -52,7 +53,7 @@ def get_token(args, rep):
     if args.token_file:
         saved = None
         with contextlib.suppress(Exception):
-            saved = C.token_file(C.load_settings(args.config))
+            saved = token_file(C.load_settings(args.config).token_sources(), C.PKG_DIR)
         if saved and os.path.realpath(os.path.expanduser(args.token_file)) == os.path.realpath(
             saved
         ):

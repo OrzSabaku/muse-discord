@@ -9,9 +9,6 @@ import os
 import re
 import stat
 
-DEFAULT_TOKEN_FILE = "~/.config/muse-discord/bot_token"
-
-
 TOKEN_RE = re.compile(
     r"[A-Za-z0-9_-]{17,40}\.[A-Za-z0-9_-]{4,10}"
     r"\.[A-Za-z0-9_-]{25,}"

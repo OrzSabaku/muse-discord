@@ -2,6 +2,7 @@
 
 import copy
 
+from muse_discord.bot_credentials import DEFAULT_TOKEN_FILE
 from muse_discord.settings import overlay as _overlay
 from muse_discord.settings.overlay import (
     OVERLAY_NAME,
@@ -15,7 +16,6 @@ from muse_discord.settings.overlay import (
 )
 from muse_discord.settings.values import (
     DEFAULT_PERSONA,
-    DEFAULT_TOKEN_FILE,
     SERVER_SCOPE_PARTS,
     _scope_kind,
     _show,

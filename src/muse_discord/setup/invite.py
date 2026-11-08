@@ -3,6 +3,7 @@
 import time
 from http import HTTPStatus
 
+from muse_discord.bot_credentials import read_token
 from muse_discord.setup import support as C
 
 
@@ -62,7 +63,7 @@ def describe_guild(token, bot_id, g):
 def wait(args, rep):
     MS = C.settings_module()
     try:
-        token = C.read_token(C.load_settings(args.config))
+        token = read_token(C.load_settings(args.config).token_sources(), C.PKG_DIR)
     except MS.SettingsError as e:
         return rep.fail("config", f"config.yaml: {e}", 6)
     if not token:

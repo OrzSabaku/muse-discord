@@ -19,9 +19,6 @@ MIN_CHANNEL_KEY_PARTS = 5
 SOURCE_DATE_INDEX = 2
 
 
-DEFAULT_TOKEN_FILE = "~/.config/muse-discord/bot_token"
-
-
 DEFAULT_PERSONA = "persona.md"
 
 

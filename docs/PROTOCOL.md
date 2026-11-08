@@ -29,6 +29,7 @@ outboxの処理中項目・失敗回数・新規返信の到着検知は `Outbox
 | 接続CLIの引数解析と実行先の選択 | `bin/connect-discord.py` |
 | 接続用の入力判別・設定保存・本人確認・参加確認・結果表示 | `src/muse_discord/setup/` |
 | CLIのPython環境選択 | `bin/setup_common.py` |
+| トークン参照の優先順位・プロジェクト相対パス・既定の保存先 | `src/muse_discord/bot_credentials.py` |
 | 稼働診断・結果表示・所有者への通知と返信確認 | `src/muse_discord/diagnostics/` |
 | 匿名利用統計の公開API | `src/muse_discord/telemetry.py` |
 | 匿名レポートの項目選別・集計 | `src/muse_discord/usage_stats/payload.py` |

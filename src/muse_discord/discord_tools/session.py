@@ -8,6 +8,7 @@ instance, so tests and other callers need no process-wide mutable bindings.
 import os
 from typing import Any
 
+from muse_discord.bot_credentials import DEFAULT_TOKEN_FILE, read_token
 from muse_discord.discord_tools.privacy import scrub
 
 
@@ -61,26 +62,11 @@ class ToolSession:
     def load_token(self):
         """token_from, in order (an invalid config: the default file)."""
         st = self.settings()
-        sources = (
-            st.token_sources() if st is not None else [("file", "~/.config/muse-discord/bot_token")]
-        )
-        files = []
-        for kind, where in sources:
-            if kind == "env":
-                if where and os.environ.get(where):
-                    return os.environ[where].strip()
-                continue
-            files.append(where)
-            try:
-                with open(os.path.expanduser(where)) as f:
-                    return f.read().strip()
-            except OSError:
-                continue
-        # Nothing readable: fail the way a missing token file always did.
-        with open(
-            os.path.expanduser(files[-1] if files else "~/.config/muse-discord/bot_token")
-        ) as f:
-            return f.read().strip()
+        sources = st.token_sources() if st is not None else [("file", DEFAULT_TOKEN_FILE)]
+        token = read_token(sources, self.package_dir)
+        if not token:
+            raise SystemExit("No bot token found in the configured environment variables or files.")
+        return token
 
     def bot_id(self):
         if self._bot_id is None:

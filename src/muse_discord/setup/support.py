@@ -103,31 +103,3 @@ def load_settings(config_path):
     """config.yaml through muse_settings, as the bot loads it. Raises
     muse_settings.SettingsError."""
     return settings_module().load(config_path)
-
-
-def token_path(where):
-    """A token_from file path as the bot resolves it: ~ expanded, and a
-    relative path taken from the package dir (the bot's working dir)."""
-    return os.path.join(PKG_DIR, os.path.expanduser(where))
-
-
-def read_token(st):
-    """The bot token from config.yaml's token_from (an env var or a
-    file), or None. Never printed."""
-    for kind, where in st.token_sources():
-        if kind == "env":
-            v = os.environ.get(where, "").strip()
-        else:
-            try:
-                with open(token_path(where)) as f:
-                    v = f.read().strip()
-            except OSError:
-                v = ""
-        if v:
-            return v
-    return None
-
-
-def token_file(st):
-    files = [p for k, p in st.token_sources() if k == "file"]
-    return token_path(files[0]) if files else None

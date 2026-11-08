@@ -25,6 +25,7 @@ except ImportError:
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord.admission import AdmissionPolicy, SharedServers
+from muse_discord.bot_credentials import read_token
 from muse_discord.bot_identity import BotIdentity
 from muse_discord.bursts import (
     BurstEffects,
@@ -298,17 +299,7 @@ def _load_token(initial_settings):
     # The watchdog never passes a token.
     if len(sys.argv) > 1 and sys.argv[1] != "--config":
         return sys.argv[1]
-    for kind, where in initial_settings.token_sources():
-        if kind == "env":
-            if where and os.environ.get(where):
-                return os.environ[where].strip()
-            continue
-        try:
-            with open(os.path.expanduser(where)) as f:
-                return f.read().strip()
-        except OSError:
-            continue
-    return None
+    return read_token(initial_settings.token_sources(), BASE_DIR)
 
 
 # The bot's own identity, fetched at startup. Used to recognize mentions,

@@ -9,8 +9,8 @@ import os
 import re
 import time
 
+from muse_discord.bot_credentials import read_token, token_file
 from muse_discord.diagnostics.context import ago, read_ledger
-from muse_discord.setup import support as C
 
 HOOKS = (
     # (stamp, what it is, how often it runs, older than this = problem)
@@ -117,7 +117,7 @@ def check_configuration(d, st):
             "config.yaml lists no owner.",
             "run bin/connect-discord.py again with the token.",
         )
-    token = C.read_token(st)
+    token = read_token(st.token_sources(), d.pkg)
     if not token:
         d.add(
             "problem",
@@ -126,7 +126,7 @@ def check_configuration(d, st):
             "Copy) and run bin/connect-discord.py with it.",
         )
     else:
-        tf = C.token_file(st)
+        tf = token_file(st.token_sources(), d.pkg)
         if tf and os.path.exists(tf) and os.stat(tf).st_mode & 0o077:
             d.add(
                 "problem", f"The token file {tf} is readable by other accounts.", f"chmod 600 {tf}"

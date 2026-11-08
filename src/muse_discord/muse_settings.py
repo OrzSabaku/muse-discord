@@ -23,6 +23,7 @@ Caps (limits.*, media.per_day) count within the scope WHERE THEY
 ARE SET: everywhere = one total, a server = that server, dms = all DMs.
 Every cap set along the chain is enforced (see Settings.cap_layers)."""
 
+from muse_discord.bot_credentials import DEFAULT_TOKEN_FILE as DEFAULT_TOKEN_FILE
 from muse_discord.settings.changes import ApplyResult as ApplyResult
 from muse_discord.settings.changes import Change as Change
 from muse_discord.settings.changes import Planned as Planned
@@ -92,7 +93,6 @@ from muse_discord.settings.resolution import Settings as Settings
 from muse_discord.settings.values import CHANNEL_ONLY as CHANNEL_ONLY
 from muse_discord.settings.values import CHANNEL_SHORT as CHANNEL_SHORT
 from muse_discord.settings.values import DEFAULT_PERSONA as DEFAULT_PERSONA
-from muse_discord.settings.values import DEFAULT_TOKEN_FILE as DEFAULT_TOKEN_FILE
 from muse_discord.settings.values import MIN_CHANNEL_KEY_PARTS as MIN_CHANNEL_KEY_PARTS
 from muse_discord.settings.values import MIN_SERVER_KEY_PARTS as MIN_SERVER_KEY_PARTS
 from muse_discord.settings.values import NO_CHANGE as NO_CHANGE
