@@ -17,6 +17,7 @@
 | サーバー・DMの応答開始条件と共有サーバー判定 | `src/muse_discord/admission.py` |
 | 応答回数・メディア回数・対象者のポリシー | `src/muse_discord/response_policy.py` |
 | 呼びかけ・会話履歴・会話参加者 | `src/muse_discord/conversation.py` |
+| 状態ファイル・未反映キュー項目の保存と再試行 | `src/muse_discord/durable_state.py` |
 | 共有キューの読み取り・差分更新 | `src/muse_discord/message_queue.py` |
 | outboxの取得・再起動復旧・送信後の確定 | `src/muse_discord/outbox_store.py` |
 | 段階間で受け渡すメッセージの型 | `src/muse_discord/message_models.py` |
@@ -119,6 +120,7 @@ RESTとGatewayの受信は `receiving.messages`、Gatewayイベントの振り�
 処理結果と診断理由は `message_ledger.MessageLedger` が保存する。`receiving.reconciliation` は台帳と処理中のIDを `RecoveryScan` にまとめ、確認できないメッセージだけを再登録する。返信済み・保留中・送信待ちの連投は断片からも二重登録しない。
 HTTPの長い制限待ちと認証失敗は `http_runtime`、稼働記録は `monitor_health` が持つ。RESTの完了・失敗時に稼働記録を更新し、匿名のinteraction応答が401になってもBotのトークン拒否として扱わない。
 送信前の検査は `outgoing_guard.OutgoingGuard` が持つ。値の書き換えは行わず、各文字列と結合した内容を検査する。所有者への通知回数はスレッド間で共有し、ロックを解放してから送ることで再帰した検査でも待ち合わない。
+状態ファイルの保存は `durable_state.StateFile`、未反映の依頼を共有キューへ反映する順序は `QueuePublication` が持つ。キュー更新前に復旧可能な状態を保存し、ロック待ちや書き込みの失敗では未反映の依頼を残す。保存済み内容のキャッシュは保存先と組にする。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

@@ -41,7 +41,6 @@ config.example.yaml for the schema.
 import contextlib
 import fcntl
 import hmac
-import json
 import os
 import queue as pyqueue
 import re
@@ -89,19 +88,19 @@ from muse_discord.directory.lifecycle import GuildLifecycle
 from muse_discord.directory.membership import AuthorRoles
 from muse_discord.directory.scopes import DirectoryScopes
 from muse_discord.directory.snapshot import DirectorySnapshot
+from muse_discord.durable_state import QueuePublication, StateFile
 from muse_discord.http_runtime import DiscordCalls, RequestOptions, RestBackoff
 from muse_discord.ingest import MessageEnqueuer
 from muse_discord.interactions import ephemeral, interaction_user_id
 from muse_discord.message_ledger import MessageLedger, ledger_code
 from muse_discord.message_models import (
-    LEDGER_TERMINAL,
+    PROACTIVE_KIND as PRO_KIND,
+)
+from muse_discord.message_models import (
     LedgerContext,
     MessagePlace,
     QueueContext,
     Speaker,
-)
-from muse_discord.message_models import (
-    PROACTIVE_KIND as PRO_KIND,
 )
 from muse_discord.message_queue import QueueFiles, owner_dm_metadata, trigger_of
 from muse_discord.message_queue import answered_id as _answered_id
@@ -636,60 +635,23 @@ def queue_edit(add=(), drop=None):
 
 
 def publish_queue_additions(state, additions=()):
-    """Persist staged additions until the shared queue accepts them."""
-    backlog = {q["message_id"]: q for q in state.get("queue_backlog", [])}
-    backlog.update((q["message_id"], q) for q in additions)
-    if not backlog:
-        return
-    entries = _ledger_load()["entries"]
-    replied = set(state.get("replied_to", []))
-    state["queue_backlog"] = [
-        q
-        for mid, q in backlog.items()
-        if mid not in replied and entries.get(mid, {}).get("status") not in LEDGER_TERMINAL
-    ]
-    save_state(state)  # also preserves the consumed burst and its capability
-    if state["queue_backlog"]:
-        queue_edit(add=state["queue_backlog"])
-    state.pop("queue_backlog", None)
+    return QueuePublication(_queue_files(), _STATE_STORE, _message_ledger()).publish(
+        state, additions
+    )
 
 
 def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE) as f:
-            state = json.load(f)
-    else:
-        state = {}
-    state.setdefault("last_seen", {})
-    state.setdefault("replied_to", [])
-    state.setdefault("rate", {"day": "", "day_count": 0, "users": {}})
-    state.setdefault("history", {})
-    # Leftovers from the removed burst breaker.
-    for key in ("breaker", "owner_triggers", "trigger_texts"):
-        state.pop(key, None)
-    state.pop("bot_runs", None)  # leftover from the removed bot turn cap
-    state.pop("web_nonces", None)  # leftover: web watches are DM only now
-    # Bursts staged by the removed name trigger: not direct address.
-    state["pending"] = {
-        k: v for k, v in state.get("pending", {}).items() if v.get("kind") != "name_drop"
-    }
-    # The ownerless-server gate holds from the first message on, even
-    # when the boot discovery fails.
+    state = _STATE_STORE.load()
+    # Restore owner admission before failed startup discovery can expose a server.
     mirror_owner_presence(state)
     return state
 
 
-_STATE_WRITTEN: dict[str, str | None] = {"text": None}
+_STATE_STORE: StateFile
 
 
 def save_state(state):
-    """Write state.json, unless it holds exactly this already (the main
-    loop saves several times a tick, mostly with nothing changed)."""
-    state["replied_to"] = state["replied_to"][-200:]
-    text = json.dumps(state)
-    if text != _STATE_WRITTEN["text"] or not os.path.exists(STATE_FILE):
-        atomic_write(STATE_FILE, None, text=text)
-        _STATE_WRITTEN["text"] = text
+    return _STATE_STORE.save(state)
 
 
 def is_suspicious(content):
@@ -3357,14 +3319,44 @@ def _start_monitor():
     return state, inbox, status
 
 
+def _initialize_services():
+    """Build process-owned services after configuration and token validation."""
+    global TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
+    global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
+    _STATE_STORE = StateFile(lambda: STATE_FILE)
+    _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
+    _BACKOFF = RestBackoff(BACKOFF_INITIAL_SECS, BACKOFF_MAX_SECS, lambda: time.time())
+    _OUTPUT = OutgoingGuard(
+        lambda: TOKEN,
+        _live_nonces,
+        lambda text: notify_owners(text),
+        lambda: time.strftime("%Y-%m-%d"),
+    )
+    _DISCORD = DiscordCalls(
+        lambda: TOKEN, _BACKOFF, _HEALTH, lambda data, where: guard_outgoing(data, where)
+    )
+    _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
+    _DIRECT_MESSAGES = DirectChannels()
+    _ACTIVITY = GatewayActivity()
+    _DISCOVERY_REFRESH = DiscoveryRefresh()
+    _SHARED_MEMBERSHIP = SharedServers(
+        lambda path: api_get(path),
+        lambda: rest_backing_off(),
+        lambda: list(GUILDS),
+        lambda gid: owners_absent(gid),
+        lambda: time.time(),
+    )
+    TM = _import_telemetry()
+    PRO = _import_proactive()
+
+
 def initialize(config_path=None, token_override=None):
     """Load this monitor's configuration and services once, after importing it."""
     global BACKOFF_INITIAL_SECS, BACKOFF_MAX_SECS, BOT_COALESCE_SECS, CFG, CHANNEL_REFRESH_CYCLES
     global COALESCE_SECS, GUILD_ALLOWLIST, MAX_REPLY_CHARS, OWNER_USER_IDS, POLL_INTERVAL
-    global PRO, SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
-    global TM, TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
-    global _S0, _SETTINGS, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
-    global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT
+    global SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
+    global TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
+    global _S0, _SETTINGS
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
@@ -3407,30 +3399,7 @@ def initialize(config_path=None, token_override=None):
             file=sys.stderr,
         )
         sys.exit(1)
-    _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
-    _BACKOFF = RestBackoff(BACKOFF_INITIAL_SECS, BACKOFF_MAX_SECS, lambda: time.time())
-    _OUTPUT = OutgoingGuard(
-        lambda: TOKEN,
-        _live_nonces,
-        lambda text: notify_owners(text),
-        lambda: time.strftime("%Y-%m-%d"),
-    )
-    _DISCORD = DiscordCalls(
-        lambda: TOKEN, _BACKOFF, _HEALTH, lambda data, where: guard_outgoing(data, where)
-    )
-    _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
-    _DIRECT_MESSAGES = DirectChannels()
-    _ACTIVITY = GatewayActivity()
-    _DISCOVERY_REFRESH = DiscoveryRefresh()
-    _SHARED_MEMBERSHIP = SharedServers(
-        lambda path: api_get(path),
-        lambda: rest_backing_off(),
-        lambda: list(GUILDS),
-        lambda gid: owners_absent(gid),
-        lambda: time.time(),
-    )
-    TM = _import_telemetry()
-    PRO = _import_proactive()
+    _initialize_services()
     _INITIALIZED = True
 
 
