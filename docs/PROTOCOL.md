@@ -9,6 +9,7 @@
 | --- | --- |
 | 受信・キュー・返信・認可 | `src/muse_discord/monitor.py` |
 | 段階間で受け渡すメッセージの型 | `src/muse_discord/message_models.py` |
+| 受信添付の取得・文書抽出・動画フレーム抽出 | `src/muse_discord/media_ingest.py` |
 | ファイル排他・原子的な保存 | `src/muse_discord/storage.py` |
 | 監視入力の型・検証 | `src/muse_discord/muse_watches.py`（Pydantic） |
 | Discordの権限計算 | `src/muse_discord/discord_permissions.py`（discord.py） |

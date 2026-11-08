@@ -645,9 +645,9 @@ def f5_lookalike_hosts_rejected_and_not_downloaded():
         "https://media.giphy.com/a",
     ]
     for u in bad:
-        assert not M.embed_host_allowed(u), u
+        assert not M.media_ingest.embed_host_allowed(u), u
     for u in good:
-        assert M.embed_host_allowed(u), u
+        assert M.media_ingest.embed_host_allowed(u), u
     reset()
     CURL_HANDLER[0] = lambda cmd: curl_result(b"GIF89a\nimage/gif")
     m = msg(
@@ -674,7 +674,9 @@ def f5_redirect_to_private_or_unlisted_host_refused():
         return curl_result(b"SECRET-METADATA\n200\ntext/plain\n")
 
     CURL_HANDLER[0] = handler
-    data, _ctype = M._fetch_complete("https://media.tenor.com/doc.txt", 1000, 5, "document")
+    data, _ctype = M.media_ingest._fetch_complete(
+        "https://media.tenor.com/doc.txt", 1000, 5, "document"
+    )
     assert data is None, f"followed redirect to private addr: {data!r}"
     assert len(CURL_CALLS) == 1, CURL_CALLS
     # ... or to a host off the allowlist
@@ -688,7 +690,7 @@ def f5_redirect_to_private_or_unlisted_host_refused():
         return curl_result(b"internal\n200\ntext/plain\n")
 
     CURL_HANDLER[0] = handler
-    data, _ = M._fetch_complete("https://media.tenor.com/a.txt", 1000, 5, "document")
+    data, _ = M.media_ingest._fetch_complete("https://media.tenor.com/a.txt", 1000, 5, "document")
     assert data is None, data
 
 
@@ -702,7 +704,7 @@ def f5_allowlisted_redirect_followed_and_pinned():
         return curl_result(b"GIF89a-bytes\n200\nimage/gif\n")
 
     CURL_HANDLER[0] = handler
-    data, ctype = M._fetch_complete("https://media.tenor.com/a.gif", 1000, 5, "image")
+    data, ctype = M.media_ingest._fetch_complete("https://media.tenor.com/a.gif", 1000, 5, "image")
     assert data == b"GIF89a-bytes" and ctype == "image/gif", (data, ctype)
     assert "-L" not in CURL_CALLS[0] and "-f" in CURL_CALLS[0]
     i = CURL_CALLS[1].index("--resolve")
@@ -711,7 +713,7 @@ def f5_allowlisted_redirect_followed_and_pinned():
 
 @test
 def f5_urllib_redirect_handler_checks_hops():
-    h = M._FetchRedirectHandler()
+    h = M.media_ingest._FetchRedirectHandler()
     req = urllib.request.Request("https://media.tenor.com/a.gif")
     for bad in [
         "https://metadata.tenor.com/x",
@@ -876,7 +878,7 @@ def f8_ffmpeg_inputs_whitelisted():
     reset()
     FF_REAL[0] = False
     try:
-        M.extract_frames("/nonexistent/x.vid", os.path.join(WORK, "fr"), 2)
+        M.media_ingest.extract_frames("/nonexistent/x.vid", os.path.join(WORK, "fr"), 2)
     finally:
         FF_REAL[0] = True
     probes = [c for c in FF_CALLS if c[0] == "ffprobe"]
@@ -924,7 +926,7 @@ def f8_concat_playlist_refused():
         # A relative name passes the concat demuxer's own "safe" check.
         f.write("ffconcat version 1.0\nfile 'real.mp4'\nduration 1\n")
     FF_OUT.clear()
-    frames = M.extract_frames(evil, os.path.join(VID_DIR, "evil"), 2)
+    frames = M.media_ingest.extract_frames(evil, os.path.join(VID_DIR, "evil"), 2)
     assert not frames, f"concat playlist was demuxed: {frames}"
     # ffprobe reading the playlist's target reports its duration.
     probes = [o for o in FF_OUT if o[0] == "ffprobe"]
@@ -937,7 +939,7 @@ def f8_real_video_still_works():
     real = _make_real_video()
     vid = os.path.join(VID_DIR, "ok.vid")
     shutil.copy(real, vid)
-    frames = M.extract_frames(vid, os.path.join(VID_DIR, "ok"), 2)
+    frames = M.media_ingest.extract_frames(vid, os.path.join(VID_DIR, "ok"), 2)
     assert len(frames) == 2, frames
     webm = os.path.join(VID_DIR, "real.webm")
     REAL_RUN(
@@ -945,7 +947,9 @@ def f8_real_video_still_works():
     )
     if os.path.exists(webm):
         shutil.copy(webm, os.path.join(VID_DIR, "w.vid"))
-        frames = M.extract_frames(os.path.join(VID_DIR, "w.vid"), os.path.join(VID_DIR, "w"), 2)
+        frames = M.media_ingest.extract_frames(
+            os.path.join(VID_DIR, "w.vid"), os.path.join(VID_DIR, "w"), 2
+        )
         assert len(frames) == 2, ("webm", frames)
 
 
