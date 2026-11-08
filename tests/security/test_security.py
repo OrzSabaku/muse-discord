@@ -977,7 +977,7 @@ def misc_sweep_generated_item_dirs():
     t = time.time() - 7200
     os.utime(old, (t, t))
     os.utime(old_dir, (t, t))
-    M.sweep_generated()
+    M._generated_replies().sweep_files()
     assert not os.path.exists(old) and not os.path.exists(old_dir)
     assert os.path.exists(new) and os.path.isdir(empty_new)
 

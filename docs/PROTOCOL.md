@@ -24,6 +24,7 @@
 | outboxの取得・再起動復旧・送信後の確定 | `src/muse_discord/outbox_store.py` |
 | 段階間で受け渡すメッセージの型 | `src/muse_discord/message_models.py` |
 | 受信添付の取得・文書抽出・動画フレーム抽出 | `src/muse_discord/media_ingest.py` |
+| 生成添付の依頼・チャンネル承認・再試行時の確認 | `src/muse_discord/generated_replies.py` |
 | 生成添付のパス検証・圧縮・期限切れ削除 | `src/muse_discord/generated_media.py` |
 | ファイル排他・原子的な保存 | `src/muse_discord/storage.py` |
 | 送信前の秘密情報検査・ライブnonce収集・所有者への通知制限 | `src/muse_discord/outgoing_guard.py` |
@@ -127,6 +128,7 @@ HTTPの長い制限待ちと認証失敗は `http_runtime`、稼働記録は `mo
 依頼のメタデータ・時刻・連投全体の完了記録は `reply_state.ReplyState` が持つ。完了対象はその依頼のトリガーと断片だけに限り、別の連投への参照で処理済みにしない。保存ロックと権限の消費は呼び出し元のoutbox確定処理が担う。
 プリセットは `settings_presets` が通常の変更案へ変換する。UIとCLIはその変更案を共通の評価・権限確認・保存処理へ渡し、プリセット自体は設定を書き込まない。利用統計へは定義を値として渡し、設定エンジンの内部属性から探さない。
 受信内容の検査と隔離は `receiving.quarantine` が持つ。隔離する連投はトリガーと全断片を台帳へ記録し、隔離ファイルが読めない場合は元の内容を `.bad` へ退避してから新しい記録を書く。
+生成添付の選択は `generated_replies.GeneratedReplies` が持つ。依頼IDと送信先に結び付いた有効な承認だけを使い、再試行の添付パスも毎回確認する。実際の送信後に承認を消費する処理は `reply_delivery` が担う。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査
