@@ -14,6 +14,7 @@ the stubbed API and a fake clock near real time.
 
 Usage: [MUT_DIR=<tree>] python3 tests/proactive/test_proactive.py"""
 
+import fcntl
 import json
 import os
 import shutil
@@ -1083,6 +1084,43 @@ class Hook(unittest.TestCase):
         os.remove(env["HOOK_STATE"])
         write("reply_outbox.json", [{"item": "7", "silent": True, "owner_dm_nonce": nonce}])
         self.assertIsNone(wake())
+
+
+class PublicationRecovery(Base):
+    def test_locked_heartbeat_is_published_once_after_reload(self):
+        m, pro = self.m, self.m.PRO
+        with open(m.LOCK_FILE, "a") as holder, mock.patch.object(m, "LOCK_WAIT_SECS", 0):
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with quiet(), self.assertRaises(m.SharedLockTimeout):
+                self.heartbeat("private")
+        saved = pro.data()["slot"]
+        sid, nonce, deadlines = saved["id"], saved["nonce"], dict(pro.data()["heartbeats"])
+        self.assertEqual(saved["pending_item"]["message_id"], sid)
+        self.assertEqual(m.load_queue(), [])
+        pro._data = None  # recreate from the durable slot, as after a restart
+        pro._next_tick = 0
+        with quiet():
+            pro.tick(self.st, self.now + 31)
+            pro.tick(self.st, self.now + 62)
+        self.assertEqual([q["message_id"] for q in m.load_queue()], [sid])
+        self.assertEqual(pro.data()["slot"]["nonce"], nonce)
+        self.assertEqual(pro.data()["heartbeats"], deadlines)
+        self.assertNotIn("pending_item", pro.data()["slot"])
+        pro._data = None
+        self.assertNotIn("pending_item", pro.data()["slot"])
+
+    def test_expired_pending_slot_is_not_published(self):
+        m, pro = self.m, self.m.PRO
+        with open(m.LOCK_FILE, "a") as holder, mock.patch.object(m, "LOCK_WAIT_SECS", 0):
+            fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with quiet(), self.assertRaises(m.SharedLockTimeout):
+                self.heartbeat("private")
+        slot = pro.data()["slot"]
+        pro._data = None
+        pro._next_tick = 0
+        with quiet():
+            pro.tick(self.st, slot["expires"] + 1)
+        self.assertNotIn(slot["id"], [q["message_id"] for q in m.load_queue()])
 
 
 if __name__ == "__main__":
