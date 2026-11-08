@@ -1268,11 +1268,13 @@ def atomic_write(path, obj, mode=None, text=None):
         raise
 
 
-# How long to wait for the shared lock before going ahead without it. The
-# lock is only ever held for a quick re-read and write, so a holder past
-# this is a hung process, and a hung worker tool must not stop the
-# monitor from ingesting and sending.
+# Bound contention without bypassing mutual exclusion. The main loop retries
+# deferred work after the holder releases the lock.
 LOCK_WAIT_SECS = 20
+
+
+class SharedLockTimeout(TimeoutError):
+    """The queue/outbox writer must defer its work; it never acquired the lock."""
 
 
 @contextlib.contextmanager
@@ -1284,20 +1286,17 @@ def shared_lock():
     reentrant: never nest it. Never hold it across network calls."""
     fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o644)
     try:
-        deadline = time.time() + LOCK_WAIT_SECS
+        deadline = time.monotonic() + LOCK_WAIT_SECS
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
-            except OSError:
-                if time.time() >= deadline:
-                    print(
-                        f"WARNING: {os.path.basename(LOCK_FILE)} held "
-                        f"for over {LOCK_WAIT_SECS}s; going ahead "
-                        f"without it.",
-                        flush=True,
-                    )
-                    break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise SharedLockTimeout(
+                        f"{os.path.basename(LOCK_FILE)} is busy; write deferred after "
+                        f"{LOCK_WAIT_SECS}s"
+                    ) from None
                 time.sleep(0.05)
         yield
     finally:
@@ -1359,6 +1358,25 @@ def queue_edit(add=(), drop=None):
     of items appended."""
     with shared_lock():
         return _queue_apply(add, drop)
+
+
+def publish_queue_additions(state, additions=()):
+    """Persist staged additions until the shared queue accepts them."""
+    backlog = {q["message_id"]: q for q in state.get("queue_backlog", [])}
+    backlog.update((q["message_id"], q) for q in additions)
+    if not backlog:
+        return
+    entries = _ledger_load()["entries"]
+    replied = set(state.get("replied_to", []))
+    state["queue_backlog"] = [
+        q
+        for mid, q in backlog.items()
+        if mid not in replied and entries.get(mid, {}).get("status") not in LEDGER_TERMINAL
+    ]
+    save_state(state)  # also preserves the consumed burst and its capability
+    if state["queue_backlog"]:
+        queue_edit(add=state["queue_backlog"])
+    state.pop("queue_backlog", None)
 
 
 def load_state():
@@ -6563,6 +6581,9 @@ def outbox_pass(state):
     _OUTBOX_CURRENT["key"] = None
     try:
         process_outbox(state)
+    except SharedLockTimeout:
+        _OUTBOX_CURRENT["key"] = None
+        raise  # contention is not a malformed outbox item
     except Exception as e:
         key = _OUTBOX_CURRENT["key"]
         _OUTBOX_CURRENT["key"] = None
@@ -6889,32 +6910,30 @@ class OutboxBatch:
         return done_ids, done_frags
 
     def finish(self):
-        _OUTBOX_CURRENT["key"] = None
-        # A released hold is used up however its item settled (sent, 403,
-        # a blocked secret, given up).
-        for item in self.settled:
-            if isinstance(item.get("_hold"), str):
-                (self.state.get("hold_released") or {}).pop(item["_hold"], None)
-
-        done_ids, done_frags = self.settled_ids()
-
-        # Answered: every capability those items held is spent.
-        for key in ("nl_nonces", "owner_items", "reply_nonces"):
-            held = self.state.get(key) or {}
-            for qid in done_ids & set(held):
-                del held[qid]
-        reply_nonces_write(self.state)
-        owner_dm_write_nonces(self.state)
-
-        def answered(q):
-            return q.get("message_id") in done_ids or any(
-                isinstance(f, dict) and f.get("message_id") in done_frags
-                for f in q.get("burst_fragments") or []
-            )
-
-        if self.rejects:
-            _reject_outbox(self.rejects)
         with shared_lock():
+            _OUTBOX_CURRENT["key"] = None
+            # A released hold is used up however its item settled (sent, 403,
+            # a blocked secret, given up).
+            for item in self.settled:
+                if isinstance(item.get("_hold"), str):
+                    (self.state.get("hold_released") or {}).pop(item["_hold"], None)
+
+            done_ids, done_frags = self.settled_ids()
+
+            # Answered: every capability those items held is spent.
+            for key in ("nl_nonces", "owner_items", "reply_nonces"):
+                held = self.state.get(key) or {}
+                for qid in done_ids & set(held):
+                    del held[qid]
+
+            def answered(q):
+                return q.get("message_id") in done_ids or any(
+                    isinstance(f, dict) and f.get("message_id") in done_frags
+                    for f in q.get("burst_fragments") or []
+                )
+
+            if self.rejects:
+                _reject_outbox(self.rejects)
             # Queue first, outbox second: the wake hook reads the outbox
             # before the queue, so it never sees an answered item in the
             # queue without its outbox entry.
@@ -6930,6 +6949,11 @@ class OutboxBatch:
                 atomic_write(OUTBOX_PROCESSING_FILE, self.remaining)
             else:
                 os.remove(OUTBOX_PROCESSING_FILE)
+
+        # Publishing can notify owners on an I/O failure; do not hold the
+        # queue lock across that network call. The capabilities are already spent.
+        reply_nonces_write(self.state)
+        owner_dm_write_nonces(self.state)
 
 
 class OutboxDelivery:
@@ -9115,7 +9139,7 @@ class SweepPass:
                 continue
             n += 1
         if changed:
-            queue_edit(add=queue[n_before:])
+            publish_queue_additions(state, queue[n_before:])
             save_state(state)
         return n
 
@@ -9253,13 +9277,14 @@ def _stage_polled_messages(state, dm_items):
     # can take tens of seconds (media downloads, ffmpeg) while the
     # monitor's own sends remove answered items.
     queue = load_queue()
+    queued = {q.get("message_id") for q in queue if isinstance(q, dict)}
+    queue.extend(q for q in state.get("queue_backlog", []) if q["message_id"] not in queued)
     n_before = len(queue)
     for msg, cname in dm_items:
         stage_trigger(state, msg, cname, "dm", place=MessagePlace(guild_id=None, dm=True))
 
-    dirty = flush_pending(state, queue)
-    if dirty:
-        queue_edit(add=queue[n_before:])
+    flush_pending(state, queue)
+    publish_queue_additions(state, queue[n_before:])
     save_state(state)
     return queue
 
@@ -9529,7 +9554,7 @@ def _start_monitor():
         queue = load_queue()
         n_before = len(queue)
         if flush_pending(state, queue, force=True):
-            queue_edit(add=queue[n_before:])
+            publish_queue_additions(state, queue[n_before:])
     save_state(state)
 
     return state, inbox, status
