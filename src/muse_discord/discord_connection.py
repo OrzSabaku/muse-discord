@@ -77,7 +77,7 @@ class Connection(discord.Client):
         await self.wait_until_ready()
 
     async def sync_presence(self):
-        # SettingsCtx uses the monitor's watcher: invalid edits retain the last
+        # The settings context uses the monitor's watcher: invalid edits retain the last
         # valid settings. Disk work must not block Gateway heartbeats/callbacks.
         if not self.is_ready():
             return

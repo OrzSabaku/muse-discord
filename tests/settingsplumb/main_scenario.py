@@ -60,7 +60,7 @@ def handle(ix, ctx):
 
 for key in ("/test-settings", "test-settings"):
     mod.register_interaction(
-        key, lambda ix, rest, uid, record: handle(ix, mod.SettingsCtx()), owner_only=False
+        key, lambda ix, rest, uid, record: handle(ix, mod.settings_context()), owner_only=False
     )
 
 

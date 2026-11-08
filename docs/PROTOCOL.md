@@ -44,6 +44,8 @@
 | プリセットの定義・変更案への変換・一致判定 | `src/muse_discord/settings_presets.py` |
 | 設定の継承・変更・保存 | `src/muse_discord/muse_settings.py` |
 | 設定の表示文言・名前解決 | `src/muse_discord/settings_display.py` |
+| 設定画面の読み書き・ユーザー別セッション | `src/muse_discord/settings_runtime.py` |
+| メッセージの処理結果から作る返信診断 | `src/muse_discord/message_outcomes.py` |
 | Discordの設定画面 | `src/muse_discord/settings_ui.py` |
 | 返信データの共通検証 | `src/muse_discord/reply_protocol.py` |
 | プロセス監視 | `bin/watchdog.sh` |
@@ -129,6 +131,7 @@ HTTPの長い制限待ちと認証失敗は `http_runtime`、稼働記録は `mo
 プリセットは `settings_presets` が通常の変更案へ変換する。UIとCLIはその変更案を共通の評価・権限確認・保存処理へ渡し、プリセット自体は設定を書き込まない。利用統計へは定義を値として渡し、設定エンジンの内部属性から探さない。
 受信内容の検査と隔離は `receiving.quarantine` が持つ。隔離する連投はトリガーと全断片を台帳へ記録し、隔離ファイルが読めない場合は元の内容を `.bad` へ退避してから新しい記録を書く。
 生成添付の選択は `generated_replies.GeneratedReplies` が持つ。依頼IDと送信先に結び付いた有効な承認だけを使い、再試行の添付パスも毎回確認する。実際の送信後に承認を消費する処理は `reply_delivery` が担う。
+設定画面の実行時アクセスは `settings_runtime.SettingsContext`、ユーザー別の一時保存は `SettingsSessions` が持つ。診断は `message_outcomes.MessageOutcomes` が台帳とディレクトリから組み立て、送信先不明のサーバーメッセージをDMへ分類しない。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

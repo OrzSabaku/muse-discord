@@ -249,7 +249,7 @@ def install_determinism():
 
 
 class FakeCtx:
-    """What monitor.SettingsCtx gives settings_ui.handle."""
+    """What monitor.settings_context() gives settings_ui.handle."""
 
     def __init__(
         self,

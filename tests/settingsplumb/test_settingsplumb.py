@@ -1,5 +1,5 @@
 """Settings integration: global command registration, legacy approval worker,
-SettingsCtx writes/undo/thread safety, scoped outcomes, and admin digests.
+SettingsContext writes/undo/thread safety, scoped outcomes, and admin digests.
 Native discord.py routing is covered in test_connection.py.
 """
 
@@ -286,7 +286,7 @@ class Ctx(unittest.TestCase):
 
     def ctx(self):
         with quiet():
-            return self.mod.SettingsCtx()
+            return self.mod.settings_context()
 
     def test_write_visible_at_once_and_to_main_loop(self):
         c = self.ctx()
@@ -432,7 +432,7 @@ class Ctx(unittest.TestCase):
             stale = mod.settings()
         self.assertTrue(stale.retire)
         with quiet():
-            mod.SettingsCtx().write("everywhere.style.length", "detailed", OWNER)
+            mod.settings_context().write("everywhere.style.length", "detailed", OWNER)
             n = mod.retire_overlay_changes()
         self.assertEqual(n, 0)
         e = overlay(mod)["values"]["everywhere.style.length"]
@@ -442,7 +442,7 @@ class Ctx(unittest.TestCase):
 
 # ------------------------------------------------- data for settings_ui
 class UIData(unittest.TestCase):
-    """What the redesigned /settings reads through SettingsCtx: the
+    """What the redesigned /settings reads through SettingsContext: the
     ledger's outcomes (with author ids and reason codes), names, the
     stash, the directory's system channel and send flags."""
 
@@ -450,7 +450,7 @@ class UIData(unittest.TestCase):
         self.mod = load_monitor(CFG)
         with quiet():
             self.mod.publish_directory()
-            self.ctx = self.mod.SettingsCtx()
+            self.ctx = self.mod.settings_context()
 
     def test_recent_outcomes_by_place(self):
         m = self.mod
@@ -574,14 +574,11 @@ class UIData(unittest.TestCase):
         )
 
     def test_private_sessions_are_user_bound_and_expire(self):
-        import time
-
         marker = object()
         self.ctx.session_put(OWNER, "screen", marker, ttl=900)
         self.assertIs(self.ctx.session_peek(OWNER, "screen"), marker)
         self.assertIsNone(self.ctx.session_peek(U1, "screen"))
-        with self.mod._SESSIONS_LOCK:
-            self.mod._SESSIONS[(OWNER, "screen")] = (marker, time.time() - 1)
+        self.ctx.session_put(OWNER, "screen", marker, ttl=-1)
         self.assertIsNone(self.ctx.session_peek(OWNER, "screen"))
 
 
@@ -590,7 +587,7 @@ class AdminDigest(unittest.TestCase):
         self.mod = load_monitor(CFG)
         with quiet():
             self.mod.publish_directory()
-            self.ctx = self.mod.SettingsCtx()
+            self.ctx = self.mod.settings_context()
 
     def age(self, secs):
         for e in self.mod._ADMIN_CHANGES.values():

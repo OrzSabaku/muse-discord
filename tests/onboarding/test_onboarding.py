@@ -24,6 +24,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 from common import MUT_DIR, scratch  # noqa: E402
 
+from muse_discord.message_ledger import ledger_code  # noqa: E402 (source path bootstrap)
+
 BOT_ID = "1300000000000000001"
 OWNER_ID = "1100000000000000001"
 APP_ID = BOT_ID
@@ -414,7 +416,7 @@ class OwnerlessServer(unittest.TestCase):
             mod.sync_guilds(st, mod.GUILDS, mod.CHANNELS)
         kind, why = mod.trigger_verdict(stranger, G2)
         self.assertIsNone(kind)
-        self.assertEqual(mod.ledger_code("skipped", f"settings: {why}"), "ownerless")
+        self.assertEqual(ledger_code("skipped", f"settings: {why}"), "ownerless")
         # Not a shared server for DMs (who.dms_from: shared-servers).
         mod.api.members[(G2, U1)] = []
         mod._SHARED_MEMBERSHIP.clear()

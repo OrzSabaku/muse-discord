@@ -91,7 +91,7 @@ from muse_discord.generated_replies import GeneratedReplies
 from muse_discord.http_runtime import DiscordCalls, RequestOptions, RestBackoff
 from muse_discord.ingest import MessageEnqueuer
 from muse_discord.interactions import ephemeral, interaction_user_id
-from muse_discord.message_ledger import MessageLedger, ledger_code
+from muse_discord.message_ledger import MessageLedger
 from muse_discord.message_models import (
     PROACTIVE_KIND as PRO_KIND,
 )
@@ -101,6 +101,7 @@ from muse_discord.message_models import (
     QueueContext,
     Speaker,
 )
+from muse_discord.message_outcomes import MessageOutcomes
 from muse_discord.message_queue import QueueFiles, owner_dm_metadata, trigger_of
 from muse_discord.message_queue import answered_id as _answered_id
 from muse_discord.messaging import formatting as reply_formatting
@@ -144,6 +145,7 @@ from muse_discord.rest_scheduler import (
     RestScheduler,
 )
 from muse_discord.rest_scheduler import run_phase as _run_phase
+from muse_discord.settings_runtime import SettingsContext, SettingsSessions
 from muse_discord.storage import PrivateFile, SharedLockTimeout, atomic_write
 from muse_discord.storage import publish_private as _publish
 from muse_discord.watches.audience import WatchAudience
@@ -1156,7 +1158,7 @@ WHY_COMMAND = {
     "default_member_permissions": "32",
 }
 
-# Directory for SettingsCtx, built on the main loop from discovery and
+# Directory for settings screens, built on the main loop from discovery and
 # the gateway, published through the thread-safe _DIRECTORY_VIEW snapshot.
 _MEMBER_COUNTS = {}  # guild id -> member count (approximate)
 _GUILD_CHANNELS = {}  # guild id -> [{"id","name","type","parent_id",..}]
@@ -1172,9 +1174,7 @@ def publish_directory():
 
 # Private settings screens and drafts, keyed by (user_id, random token).
 # Stored only in memory: restart or expiry discards uncommitted edits.
-_SESSIONS = {}
-_SESSIONS_LOCK = threading.Lock()
-SESSIONS_MAX = 200
+_SETTINGS_SESSIONS: SettingsSessions
 
 
 # Pending admin-change digests: guild id -> {"first": t, "changes": []}.
@@ -1182,185 +1182,24 @@ _ADMIN_CHANGES = {}
 _ADMIN_LOCK = threading.Lock()
 
 
-class SettingsCtx:
-    """Settings/directory access for Discord callbacks and worker threads.
-    Invalid writes and undo operations raise muse_settings.SettingsError.
-    """
-
-    def __init__(self):
-        self.now = time.time()
-        self.bot_id = str(BOT_ID or "")
-        self.owners = set(str(o) for o in self.settings.owners)
-
-    @property
-    def settings(self):
-        """The current muse_settings.Settings (reloaded on change, so a
-        write made through this ctx is visible right away)."""
-        return settings()
-
-    def guilds(self):
-        return _DIRECTORY_VIEW.guilds()
-
-    def channels(self, guild_id):
-        return _DIRECTORY_VIEW.channels(guild_id)
-
-    def write(self, key, value, by):
-        """One change by `by` (its role inferred: a non-owner is an
-        admin, held to the admin rules)."""
-        with _OVERLAY_LOCK:
-            MS.set_value(_SETTINGS.config_path, key, value, actor=MS.WriteActor(by=by))
-        settings()
-
-    def undo(self, scope_prefix, by, **kw):
-        """muse_settings.undo: revert the newest change (and the rest of
-        its group) at one scope (scope_prefix as muse_settings.
-        scope_prefix gives it, or a Place); the key reverted, or None.
-        kw: children, admin_gid, expect (see muse_settings.undo)."""
-        if kw.get("admin_gid"):
-            kw.setdefault("info", self)
-        with _OVERLAY_LOCK:
-            actor = MS.WriteActor(
-                by, admin_gid=kw.pop("admin_gid", None), info=kw.pop("info", None)
-            )
-            out = MS.undo(_SETTINGS.config_path, scope_prefix, actor, **kw)
-        settings()
-        return out
-
-    def apply(self, changes, by, role, group=None, admin_gid=None):
-        """muse_settings.apply: several changes in one write and one undo
-        group. role ("owner" or "admin") is required; an admin's changes
-        are checked against the admin rule with admin_gid and this ctx's
-        channel lists."""
-        with _OVERLAY_LOCK:
-            out = MS.apply(
-                _SETTINGS.config_path,
-                changes,
-                actor=MS.WriteActor(by=by, group=group, role=role, admin_gid=admin_gid, info=self),
-            )
-        settings()
-        return out
-
-    def undo_group(self, group, by, undo_id=None):
-        """muse_settings.undo_group: undo one specific group (owners
-        only)."""
-        with _OVERLAY_LOCK:
-            out = MS.undo_group(_SETTINGS.config_path, group, by, role="owner", undo_id=undo_id)
-        settings()
-        return out
-
-    def display_name(self, user_id):
-        """A person's name the monitor has seen (None when unknown)."""
-        return _USER_NAMES.get(str(user_id))
-
-    def session_peek(self, user_id, key):
-        """The payload session_put kept for (user_id, key), or None
-        (never kept, dropped, or expired). Not consumed."""
-        with _SESSIONS_LOCK:
-            e = _SESSIONS.get((str(user_id), str(key)))
-            if e is None or e[1] < time.time():
-                _SESSIONS.pop((str(user_id), str(key)), None)
-                return None
-            return e[0]
-
-    def session_put(self, user_id, key, payload, ttl=900):
-        now = time.time()
-        with _SESSIONS_LOCK:
-            for k in [k for k, v in _SESSIONS.items() if v[1] < now]:
-                del _SESSIONS[k]
-            while len(_SESSIONS) >= SESSIONS_MAX:
-                _SESSIONS.pop(next(iter(_SESSIONS)))
-            _SESSIONS[(str(user_id), str(key))] = (payload, now + ttl)
-
-    def session_drop(self, user_id, key):
-        with _SESSIONS_LOCK:
-            _SESSIONS.pop((str(user_id), str(key)), None)
-
-    def recent_outcomes(self, place, limit=20):
-        """The newest mention-ledger entries for a place (a Place from
-        muse_settings: a server, a channel and its threads, or DMs),
-        newest first: message_id, channel_id, guild_id, parent_id,
-        author_id (None in old entries), author,
-        status, code, detail, reason, at."""
-        where = _DIRECTORY_VIEW.locations(include_unmonitored=True)
-        out = []
-        fired = watch_store().read()["fired"]  # reminders: not messages
-        for mid, e in _ledger_load()["entries"].items():
-            if not isinstance(e, dict) or mid in fired:
-                continue
-            o = _outcome(mid, e, where)
-            kind = getattr(place, "kind", None)
-            if kind == "dms":
-                ok = o["guild_id"] is None and o["dm"]
-            elif kind == "server":
-                ok = o["guild_id"] == place.guild_id
-            elif kind == "channel":
-                ok = (o["parent_id"] or o["channel_id"]) == place.channel_id
-            else:
-                ok = True
-            if ok:
-                out.append(o)
-        out.sort(key=lambda o: o["at"], reverse=True)
-        return out[: max(0, int(limit))]
-
-    def outcome(self, message_id):
-        """recent_outcomes' entry for one message, or None."""
-        e = _ledger_load()["entries"].get(str(message_id))
-        if not isinstance(e, dict):
-            return None
-        where = _DIRECTORY_VIEW.locations()
-        return _outcome(str(message_id), e, where)
-
-    def names(self, some_id):
-        """A server's or channel's name for muse_settings' sentences."""
-        return _directory_name(some_id) or settings().labels.get(str(some_id))
-
-    def reload(self):
-        """A fresh Settings through the monitor's own watcher, so the
-        pages and the main loop see the same state."""
-        return settings()
-
-    def notify_owners_admin_change(self, guild_id, user_id, key, old, new):
-        _admin_digests().note(guild_id, user_id, key, old, new)
-
-    def log(self, msg):
-        print(f"/settings: {msg}", flush=True)
-
-
-def _outcome(mid, e, where):
-    """One ledger entry for /settings. Its server comes from the entry
-    (old entries have none), else from discovery; an entry is a DM's
-    only when it says so or its channel is a known DM channel (an
-    unmapped server channel is never shown under DMs)."""
-    cid = str(e.get("channel_id") or "")
-    code = e.get("code") or ledger_code(e.get("status"), e.get("reason"))
-    if e.get("guild_id"):
-        gid, parent = e["guild_id"], e.get("parent_id")
-    else:
-        gid, parent = where.get(cid, (None, None))
-        info = CHANNELS.get(cid)
-        if gid is None and info:
-            gid = info.get("guild_id")
-            parent = info.get("parent_id") if info.get("thread") else None
-    dm = gid is None and bool(
-        e.get("dm")
-        or cid in _DIRECT_MESSAGES.names
-        or cid in _DIRECT_MESSAGES.users
-        or code in ("dm-off", "dm-not-allowed")
+def settings_context():
+    return SettingsContext(
+        current=settings,
+        config_path=_SETTINGS.config_path,
+        overlay_lock=_OVERLAY_LOCK,
+        directory=_DIRECTORY_VIEW,
+        people=_USER_NAMES,
+        sessions=_SETTINGS_SESSIONS,
+        outcomes=MessageOutcomes(
+            _message_ledger,
+            _DIRECTORY_VIEW,
+            _DIRECT_MESSAGES,
+            lambda: watch_store().read()["fired"],
+        ),
+        admin_change=_admin_digests().note,
+        bot_id=str(BOT_ID or ""),
+        now=time.time(),
     )
-    return {
-        "message_id": mid,
-        "channel_id": cid or None,
-        "guild_id": gid,
-        "parent_id": parent,
-        "dm": dm,
-        "author_id": e.get("author_id"),
-        "author": e.get("author"),
-        "status": e.get("status"),
-        "code": code,
-        "detail": e.get("detail") or {},
-        "reason": e.get("reason"),
-        "at": e.get("updated") or _snowflake_ts(mid),
-    }
 
 
 def _directory_name(some_id):
@@ -2652,7 +2491,7 @@ GATEWAY_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15) | (1 << 11) | (1 <
 async def _gateway_run(token, inbox, status):
     from muse_discord.discord_connection import Connection, run
 
-    await run(token, Connection(inbox, status, SettingsCtx, guard_outgoing, GATEWAY_INTENTS))
+    await run(token, Connection(inbox, status, settings_context, guard_outgoing, GATEWAY_INTENTS))
 
 
 def _gateway_thread_main(token, inbox, status):
@@ -3031,6 +2870,8 @@ def _initialize_services():
     """Build process-owned services after configuration and token validation."""
     global TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
+    global _SETTINGS_SESSIONS
+    _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _STATE_STORE = StateFile(lambda: STATE_FILE)
     _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
     _BACKOFF = RestBackoff(BACKOFF_INITIAL_SECS, BACKOFF_MAX_SECS, lambda: time.time())

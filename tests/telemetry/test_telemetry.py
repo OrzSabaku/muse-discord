@@ -266,7 +266,7 @@ class NeverIdentifying(Base):
 
         # Settings changes: /settings (an owner, by id), a preset, a DM
         # request and the CLI; every key names the server's id.
-        ctx = m.SettingsCtx()
+        ctx = m.settings_context()
         place = MS.parse_place(f"server:{G1}")
         with quiet():
             ctx.write(f"servers.{G1}.style.notes", "talk about PINEAPPLE", OWNER)
