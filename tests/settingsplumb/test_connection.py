@@ -273,7 +273,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
 
         token = async_context.set(adapter)
         try:
-            with patch.object(DC.settings_ui, "redraw", side_effect=rendered):
+            with patch.object(self.client, "settings_redraw", side_effect=rendered):
                 self.client._connection.parse_interaction_create(raw)
                 await asyncio.wait_for(finished.wait(), 2)
             adapter.create_interaction_response.assert_awaited_once()

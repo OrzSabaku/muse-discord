@@ -48,6 +48,7 @@ class Connection(discord.Client):
         )
         self.inbox, self.gateway_status = inbox, status
         self.settings_context: Callable[[], Any] = context_factory
+        self.settings_redraw = settings_ui.redraw
         self.settings_guard: Callable[[Any, str], None] = guard
         self.settings_log = lambda message: print(message, flush=True)
         self._presence_sent = (False, "", "")

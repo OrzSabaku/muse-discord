@@ -36,6 +36,7 @@ def interaction(ctx, user=H.OWNER, gid=H.G1, manage=False, data=None):
         data=data or {},
         response=response,
         client=types.SimpleNamespace(
+            settings_redraw=UI.redraw,
             settings_context=factory,
             settings_guard=lambda *a: None,
             settings_log=ctx.log,

@@ -11,7 +11,7 @@ import asyncio
 import json
 import re
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, NotRequired, Protocol, TypedDict, cast
 
@@ -41,6 +41,8 @@ class Pending(TypedDict):
 class SettingsClient(Protocol):
     settings_context: Callable[[], Any]
     settings_log: Callable[[str], None]
+    settings_guard: Callable[[Any, str], Any]
+    settings_redraw: Callable[..., Awaitable[None]]
 
 
 TTL = 900
@@ -532,7 +534,9 @@ class Action(ui.DynamicItem, template=r"mset:(?P<token>[A-Za-z0-9_-]{12}):(?P<ac
                         ((interaction.data or {}).get("resolved") or {}).get("roles", {}),
                     ]
                 banner = await asyncio.to_thread(screen.act, ctx, role, self.action, vals)
-                await redraw(interaction, screen, banner)
+                await cast(SettingsClient, interaction.client).settings_redraw(
+                    interaction, screen, banner
+                )
         except (ms.SettingsError, ValueError, KeyError, IndexError) as exc:
             await error(interaction, str(exc))
         except Exception as exc:
@@ -613,7 +617,7 @@ class ValueModal(ui.Modal):
                         "編集中の設定項目が変わりました。入力画面を開き直してください。"
                     )
                 await asyncio.to_thread(self.screen.act, ctx, role, "input", [self.input.value])
-                await redraw(
+                await cast(SettingsClient, interaction.client).settings_redraw(
                     interaction,
                     self.screen,
                     "下書きに追加しました。保存するまで反映されません。",
