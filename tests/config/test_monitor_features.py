@@ -24,6 +24,9 @@ class OptionalFeatures(unittest.TestCase):
         self.assertIsNone(service.tick({}))
         self.assertIsNone(service.delivery.names_slot({}))
         self.assertIsNone(service.consent.apply_button({}))
+        response = service.consent.on_button({}, "yes:obsolete", "100", Mock())
+        self.assertEqual(response["data"]["flags"], 64)
+        self.assertEqual(response["data"]["content"], "That button is no longer active.")
 
     def test_missing_telemetry_dependency_leaves_notices_and_worker_hooks_inactive(self):
         with (

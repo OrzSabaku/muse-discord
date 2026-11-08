@@ -7,6 +7,8 @@ exception class; configuration, credentials and exception messages stay private.
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from muse_discord.interactions import ephemeral
+
 if TYPE_CHECKING:
     from muse_discord.proactive import Proactive, ProactiveContext
     from muse_discord.telemetry import Recorder
@@ -23,6 +25,9 @@ class NoProactive:
 
     def __getattr__(self, name):
         return lambda *args, **kwargs: None
+
+    def on_button(self, ix, rest, uid, record):
+        return ephemeral("That button is no longer active.")
 
 
 def load_telemetry(

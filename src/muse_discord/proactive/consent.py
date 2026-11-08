@@ -5,6 +5,7 @@ import threading
 from http import HTTPStatus
 
 from muse_discord import muse_settings as MS
+from muse_discord.interactions import closed_card, ephemeral
 from muse_discord.message_models import DeliveryOptions
 from muse_discord.proactive.model import ASK_KEY, ASK_SECS, ASK_SEND_SECS, ASKS_MAX, ASKS_PER_DAY
 from muse_discord.proactive.store import ProactiveStore
@@ -148,28 +149,12 @@ class ConsentRequests:
         with self._lock:
             rec = self._live.get(tok)
             if verb != "yes" or rec is None or self.clock() - rec[1] >= ASK_SECS:
-                return None
+                return ephemeral("That button is no longer active.")
             if rec[0] != str(uid):
-                return {
-                    "type": 4,
-                    "data": {
-                        "content": "That button is not for you.",
-                        "flags": 64,
-                        "allowed_mentions": {"parse": []},
-                    },
-                }
+                return ephemeral("That button is not for you.")
             del self._live[tok]
         record({"kind": "proactive_yes", "token": tok, "by": str(uid)})
-        original = (ix.get("message") or {}).get("content") or ""
-        line = "**Yes**: done."
-        return {
-            "type": 7,
-            "data": {
-                "content": original[: 1990 - len(line)] + "\n\n" + line,
-                "components": [],
-                "allowed_mentions": {"parse": []},
-            },
-        }
+        return closed_card(ix, "**Yes**: done.")
 
     def apply_button(self, rec):
         """Main loop: the person's own Yes (on_button). Checked again

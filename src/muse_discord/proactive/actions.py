@@ -90,6 +90,15 @@ class ConsentActions:
             self.consent.ask(uid, str(meta["channel_id"]), "in")
         return None
 
+    def note_schedule(self, uid, fresh):
+        """A reminder's time zone change requests confirmation for proactive quiet hours."""
+        for op, value in (fresh or {}).get("done") or []:
+            if op == "tz":
+                try:
+                    self.note_tz(uid, value)
+                except Exception as exc:
+                    print(f"Proactive: time zone note error: {exc}", flush=True)
+
     def note_tz(self, uid, tz):
         """A schedule action set person uid's time zone (the reminders'):
         their quiet hours move only when they confirm it themselves, and

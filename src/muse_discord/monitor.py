@@ -57,7 +57,6 @@ from muse_discord.interaction_dispatch import (
     InteractionRouter,
     InteractionWorker,
 )
-from muse_discord.interactions import ephemeral
 from muse_discord.media import collector as media
 from muse_discord.message_ledger import MessageLedger
 from muse_discord.message_models import (
@@ -441,14 +440,6 @@ _INTERACTION_RESPONDER: InteractionResponder
 _INTERACTION_WORKER: InteractionWorker
 
 
-def on_proactive_button(ix, rest, uid, record):
-    """mdpro:yes:<token>: the Yes on the monitor's own question to one
-    person (proactive.py, asks); anyone may click, only theirs counts."""
-    return PRO.consent.on_button(ix, rest, uid, record) or ephemeral(
-        "That button is no longer active."
-    )
-
-
 _DIRECTORY_VIEW: DirectorySnapshot
 # The same snapshot on disk, for bin/settings.py (places, names in its
 # sentences): written atomically, only when it changed.
@@ -692,17 +683,11 @@ WEB_RESULTS_FILE = os.path.join(BASE_DIR, "web_watch_results.json")
 
 def _watch_requests():
     return WatchRequests(
-        _WATCHES.store, _WATCHES.audience, _REPLIES.queued_meta, _note_watch_timezone
+        _WATCHES.store,
+        _WATCHES.audience,
+        _REPLIES.queued_meta,
+        lambda uid, fresh: PRO.actions.note_schedule(uid, fresh),
     )
-
-
-def _note_watch_timezone(uid, fresh):
-    for op, value in (fresh or {}).get("done") or []:
-        if op == "tz":
-            try:  # their quiet hours: only their own button moves them
-                PRO.actions.note_tz(uid, value)
-            except Exception as e:
-                print(f"Proactive: time zone note error: {e}", flush=True)
 
 
 # -- firing -----------------------------------------------------------------
@@ -1058,7 +1043,11 @@ def _initialize_services():
     _INTERACTIONS = InteractionRouter(lambda: _SETTINGS.owners)
     _INTERACTIONS.register("mdupd", _UPDATE_NOTICES.on_button)
     _INTERACTIONS.register("mdhold", _REVIEW.on_button)
-    _INTERACTIONS.register("mdpro", on_proactive_button, owner_only=False)
+    _INTERACTIONS.register(
+        "mdpro",
+        lambda ix, rest, uid, record: PRO.consent.on_button(ix, rest, uid, record),
+        owner_only=False,
+    )
     _INTERACTION_RESPONDER = InteractionResponder(_DISCORD)
     _INTERACTION_WORKER = InteractionWorker(_INTERACTIONS, _INTERACTION_RESPONDER)
     _ACTIVITY = GatewayActivity()

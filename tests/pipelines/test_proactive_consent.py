@@ -75,6 +75,10 @@ class ConsentRecovery(unittest.TestCase):
         consent.apply_button(forged)
         self.assertIn("100", store.data()["opted_out"])
         self.now += 86400
+        response = consent.on_button({}, "yes:" + self.token, "100", records.append)
+        self.assertEqual(response["data"]["flags"], 64)
+        self.assertEqual(response["data"]["content"], "That button is no longer active.")
+        self.assertEqual(len(records), 1)
         consent.apply_button(records[0])
         self.assertIn("100", store.data()["opted_out"])
         self.assertFalse(store.data()["asks"][self.token].get("done"))
