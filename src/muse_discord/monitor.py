@@ -149,6 +149,7 @@ from muse_discord.watches.queue import WatchQueue
 from muse_discord.watches.requests import WatchRequests
 from muse_discord.watches.runtime import WatchRuntime, WatchState
 from muse_discord.watches.web import WebWatchWork
+from muse_discord.work_wait import WorkWait
 from muse_discord.worker_context import WorkerContext
 
 CONFIG_PATH_ARGUMENT = 2
@@ -1052,6 +1053,7 @@ def _settle(state, item, outcome):
 
 # Processing progress and poison-item counts belong to OutboxProcessor.
 _OUTBOX: OutboxProcessor
+_WORK_WAIT: WorkWait
 
 
 STALE_PROMPT_FILE = os.path.join(BASE_DIR, "prompt_outdated.json")
@@ -1281,30 +1283,6 @@ def _cleanup_cycle(state, cycle_done):
         save_state(state)
 
 
-def _wait_for_work(state, gateway_status, scheduler, outbox_pass_at):
-    # Event-driven wait: a gateway MESSAGE_CREATE wakes the loop at
-    # once. Otherwise it idles in ticks of at most 2s, shorter while
-    # REST slices are due (none while they are behind), a burst is
-    # about to flush, or the outbox holds a reply.
-    now = time.time()
-    wait_for = scheduler.next_wait(now, rest_backing_off())
-    burst_wait = pending_wait(state, now)
-    if burst_wait is not None:
-        # A burst can flush early (burst_quiet): wake when it may.
-        wait_for = min(wait_for, burst_wait)
-    # A reply the worker writes goes out within ~0.25s, even when it
-    # lands mid-wait: the wait is cut into 0.25s steps that stat the
-    # outbox.
-    until = now + (0.0 if _OUTBOX.waiting(outbox_pass_at) else wait_for)
-    while True:
-        left = until - time.time()
-        if left <= 0 or gateway_status["wake"].wait(timeout=min(0.25, left)):
-            break
-        if _OUTBOX.waiting(outbox_pass_at):
-            break
-    gateway_status["wake"].clear()
-
-
 def _rest_scheduler():
     return RestScheduler(
         RestContext(
@@ -1503,7 +1481,7 @@ def _initialize_owner_services():
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
     global _QUEUE_STAGING, _LEDGER, _RECEPTION_AUDIT
-    global _OUTBOX
+    global _OUTBOX, _WORK_WAIT
     global _SENDER, _PARTS, _TYPING
     global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
@@ -1567,6 +1545,12 @@ def _initialize_services():
         lambda state: save_state(state),
         _CAPABILITIES.publish,
         _deliver_outbox_item,
+    )
+    _WORK_WAIT = WorkWait(
+        lambda: time.time(),
+        lambda state, now: pending_wait(state, now),
+        lambda since: _OUTBOX.waiting(since),
+        lambda: rest_backing_off(),
     )
     _INTERACTIONS = InteractionRouter(lambda: _SETTINGS.owners)
     _INTERACTIONS.register("mdupd", _UPDATE_NOTICES.on_button)
@@ -1667,7 +1651,7 @@ def main():
         scheduler.run_job(state, poll_turn, rest_spent, queue is not None)
         _run_phase("Cleanup", _cleanup_cycle, state, scheduler.cycle_done)
         TM.tick(settings, _DIRECTORY.guilds, _DIRECTORY.member_counts)
-        _wait_for_work(state, status, scheduler, outbox_pass_at)
+        _WORK_WAIT.wait(state, status["wake"], scheduler.next_wait, outbox_pass_at)
 
 
 if __name__ == "__main__":
