@@ -1,41 +1,14 @@
-"""
-muse-discord monitor: the engine of the muse-discord connector.
+"""Initialize the connector and coordinate reception, worker replies and maintenance.
 
-Watches Discord for messages that address the bot (mentions, replies to
-the bot, and DMs per policy), coalesces bursts, and appends work items to
-reply_queue.json. A separate worker (an agent session; see docs/PROTOCOL.md)
-drafts replies into reply_outbox.json, and this process sends them.
-Gateway websocket ingest provides realtime delivery; a periodic REST poll
-repairs gaps. A reconciliation sweep plus a mention ledger make silent
-message loss structurally difficult: every mention reaches a recorded
-terminal state (replied, quarantined, or skipped with a reason).
+Gateway events and paced REST gap repair share reception and queue services. A
+separate worker drafts replies; this process validates, sends and records them.
+Service responsibilities and trust boundaries are described in docs/PROTOCOL.md
+and in each owning module.
 
-This process is deterministic (no LLM) and never drafts text itself.
-
-Security model:
-- Discord message content is UNTRUSTED input.
-  1. Injection-pattern pre-filter: suspicious messages are quarantined
-     for the owner's review instead of being queued for auto-reply
-     (privacy.suspicious).
-  2. Rate limits: daily reply caps, per scope and per person, bound the
-     token budget an attacker could burn by spamming mentions
-     (limits.*). Who is answered at all is enforced too (who.*).
-  3. Output validation: worker-drafted replies are length-capped and
-     mass mentions (@everyone/@here) are neutralized before sending;
-     sends only ever ping users (allowed_mentions), never roles.
-  4. Send dedup: never send two replies to the same message (protects
-     against overlapping worker runs).
-  5. The bot token is read from where token_from points (a file or an
-     env var) at startup and is never written to any state file. The
-     worker never holds the token; it only reads and writes the
-     queue/outbox files.
-  6. never_share: a reply containing one of the owner's listed phrases
-     is held for the owners instead of posted (see owner.review.ReplyReview).
-
-Configuration: config.yaml next to this file (or --config PATH, or the
-MUSE_DISCORD_CONFIG env var), plus config.discord.yaml (changes made
-from Discord), both read through muse_settings.py. See
-config.example.yaml for the schema.
+Importing this module reads no configuration or token and starts no workers.
+Call initialize() before using process services; main() performs startup and runs
+the event loop. Configuration comes from the project root, --config PATH or
+MUSE_DISCORD_CONFIG.
 """
 
 import os
@@ -342,33 +315,6 @@ def _load_token(initial_settings):
 # skip the bot's own messages, and compute its channel permissions.
 _IDENTITY: BotIdentity
 
-# Generated media: when the media settings grant permission on a queue
-# item (media_permission), the worker may write generated files into
-# GENERATED_DIR/<the item's message_id>/; the send path attaches a reply's
-# files from its own item's directory only (validated in
-# generated_media.validate_paths), so one item's image can never ride on another
-# item's reply. Generation approvals are single-use, keyed by the
-# triggering message id and bound to its channel, because the worker's
-# outbox item does not carry the permission flag.
-
-# Conversation history: rolling window of recent messages kept per
-# channel/DM so the reply worker drafts with context. Stored in state.json,
-# attached to queue items (minus the triggering message itself).
-
-# Channels and guilds are discovered live at startup and refreshed
-# periodically: every channel/thread the bot can read, across every
-# guild it belongs to (restricted to bot.guild_ids when configured).
-# DirectoryState.channels: {channel_id: {"name", "guild_id", "guild_name", "can_send"}}
-#   can_send is the bot's effective Send Messages permission for the
-#   channel (Send Messages in Threads for threads), or None when it
-#   could not be computed; callers then attempt the send and rely on
-#   the 403 safety net in process_outbox.
-# DirectoryState.guilds: {guild_id: {"name", "joined_at"}}
-
-
-# Channel types the bot can meaningfully read: 0 = text, 5 = announcement.
-# Forum (15) and media (16) channels hold no messages themselves, only
-# threads (posts), whose send permission comes from them.
 
 # Re-check for brand-new threads this often (in poll cycles). Threads are
 # where forum posts live; a new post should be picked up within a few
@@ -405,17 +351,6 @@ def discover_channels(previous=None):
     return _discovery().channels(previous)
 
 
-# Brand-new threads. A thread created since the previous successful
-# thread listing of its guild (or since the monitor started) is seeded at
-# its own id, not at its newest message: a mention posted in it before
-# the gateway event was drained would otherwise sit at or below the
-# watermark, be skipped by the drain as "poll already handled", and wait
-# for the sweep. Its whole (short) history is read by the poll instead;
-# the gateway/poll dedup (gw_seen, the watermark) keeps that to one
-# reply. Older threads seen for the first time keep the usual seeding:
-# their history is history.
-
-
 def seed_channel_seen(cid, cname, state):
     return _discovery().seed(cid, cname, state)
 
@@ -435,22 +370,6 @@ def touch_heartbeat():
 
 def api_get(path):
     return _DISCORD.get(path)
-
-
-# ---------------------------------------------------------------------------
-# Secrets never leave in anything the bot sends. On the real platform
-# every session (workers included) runs as the same OS user, so a worker
-# that follows an injection into its shell can read the token file and
-# every nonce file; the nonces bind what it writes to the outbox, but
-# only this filter keeps a secret it read from being posted. Before any
-# send to Discord (replies, fires, owner DMs and notices, edits,
-# interaction responses, uploads and their files), the payload is
-# checked: the bot token
-# itself, any nonce the monitor holds live, or anything shaped like a
-# Discord token (three base64url segments, the first decoding to a
-# snowflake) drops the send (SecretBlocked), logged without the value,
-# and the owners are DMed about it once a day. Nothing is ever altered.
-# ---------------------------------------------------------------------------
 
 
 _OUTPUT: OutgoingGuard
@@ -556,15 +475,6 @@ def _quarantine_store():
     return MessageQuarantine(QUARANTINE_FILE, _LEDGER)
 
 
-# ---------------------------------------------------------------------------
-# Mention ledger: the durable record that makes silent drops impossible.
-# Every mention/DM reaching a terminal state (replied, quarantined,
-# skipped with a reason) is written here, and the reconciliation sweep
-# (sweep_mentions) diffs recent channel mentions against it and requeues
-# anything unaccounted for.
-# ---------------------------------------------------------------------------
-
-
 _LEDGER: MessageLedger
 _RECEPTION_AUDIT: ReceptionAudit
 
@@ -585,25 +495,6 @@ def _response_policy():
     )
 
 
-# ---------------------------------------------------------------------------
-# Join watermark. A message that predates the bot's arrival in a guild is
-# never a trigger: not on catch-up after a restart, not in a channel
-# discovered late, not on a sweep. The watermark is the bot's own
-# joined_at for that guild (member object at discovery, GUILD_CREATE on
-# the gateway), kept in state["guild_joined"] and enforced in
-# classification and again at enqueue, independent of last_seen seeding.
-# Backlog still reaches the worker as history on a post-join trigger.
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Scopes and who gets answered. Every decision about a message resolves
-# the settings for where it happened: a DM, or a server channel (a thread
-# uses its parent channel; a channel its category). A new server has no
-# entry of its own and resolves through all_servers, which ships careful
-# (plugins not marked safe_in_new_servers stay off).
-# When the bot joins a new server, the owners get a DM summary.
-# ---------------------------------------------------------------------------
 _DISCOVERY_REFRESH: DiscoveryRefresh
 # channel id -> its category id (from discovery), for category settings.
 
@@ -616,14 +507,6 @@ def scope_of_channel(channel_id):
     return _DIRECTORY.scopes.for_channel(channel_id)
 
 
-# (guild, user) -> (role ids, fetched at): roles of authors whose messages
-# carry no member object (the REST poll), for role entries in who.allow /
-# who.ignore. Only fetched when such a list names a role.
-
-
-# user id -> (shares a server with the bot?, checked at), for
-# who.dms_from: shared-servers. Positive answers last an hour, negative
-# ones ten minutes.
 _SHARED_MEMBERSHIP: SharedServers
 
 
@@ -637,22 +520,6 @@ def dm_refusal(author):
     return _admission().dm_refusal(author)
 
 
-# ---------------------------------------------------------------------------
-# Conversational follow-ups (who.replies: conversational, the default).
-# After the bot's reply to a HUMAN is actually sent in a channel, that
-# person's next messages there within FOLLOW_UP_WINDOW_SECS count as
-# addressed, without an @mention or a Discord reply. Only that person;
-# only the bot's own replies (re)open the window, so it cannot run on
-# without the bot; a message that addresses someone else (a reply to
-# another person's message, or an @mention of another user or a role)
-# closes it and is not a follow-up. Threads are their own channels here.
-# Follow-ups are coalesced, gated and ledgered like mentions, and the
-# queue item says follow_up: true; the reconciliation sweep never
-# requeues them (a missed follow-up is not a dropped mention).
-# state["follow_up"]: {"<channel>:<user>": time the window opened}
-# ---------------------------------------------------------------------------
-
-
 _OWNER_MESSAGES: OwnerMessenger
 _OWNER_PRESENCE: OwnerPresence
 _REVIEW: ReplyReview
@@ -664,26 +531,6 @@ _GUILD_LIFECYCLE: GuildLifecycle
 
 def notify_owners(text, components=None, flags=None):
     return _OWNER_MESSAGES.notify(text, components, flags)
-
-
-# Servers none of the owners is in. A public bot can be
-# added to any server by anyone with its install link, and there it would
-# answer strangers on the owner's Muse. So in a server where no owner is a
-# member it answers nobody until an owner chooses When it answers for that
-# server itself (Configure on the join DM, /settings, a DM, config.yaml),
-# and the server does not count as shared for who.dms_from:
-# shared-servers. Membership is checked when the bot joins a server (it
-# counts as ownerless until a check says otherwise), then hourly while no
-# owner is there; failed checks back off and the oldest due go first, a
-# few per pass. A first run (no state.json, or a lost one) checks every
-# server at once: a lost state.json must not open the gate. Servers
-# known from before this check existed are not checked. An owner's own
-# message in a server settles it at once. The record lives in
-# state.json, so a restart keeps it.
-# state["owner_in_guild"]: {gid: {"in": an owner is a member,
-#   "checked": a check has answered, "next": when to check, "fails": n}}
-# OwnerPresence.membership mirrors it: True, False (no owner), None (not checked
-# yet; gated like False).
 
 
 def mirror_owner_presence(state):
@@ -707,19 +554,6 @@ def on_guild_event(state, ev):
         _DISCOVERY_REFRESH.request()
 
 
-# ---------------------------------------------------------------------------
-# Update notices and interactions. Versions are releases: semver tags
-# vX.Y.Z. watchdog.sh records a new release in update_check.json
-# (latest, installed, entries, action_needed; see docs/PROTOCOL.md). The
-# monitor DMs each owner about it once, with [Update now] / [Later]
-# buttons. A click arrives as a gateway INTERACTION_CREATE and is
-# answered on its own thread, never behind the main loop's REST work:
-# Discord fails an interaction that is not acknowledged within 3 seconds.
-# "Update now" writes update_request.json, which hooks/update-watch.sh
-# turns into a wake of the owner's Muse in its main chat (it follows
-# docs/UPDATING.md to that exact release). "Later" only declines: a version is
-# offered once, and a newer one is offered again.
-# ---------------------------------------------------------------------------
 UPDATE_CHECK_FILE = os.path.join(BASE_DIR, "update_check.json")
 UPDATE_REQUEST_FILE = os.path.join(BASE_DIR, "update_request.json")
 
@@ -754,27 +588,9 @@ def apply_record(state, rec):
         PRO.consent.apply_button(rec)
 
 
-# Interaction dispatch: one handler per key, the custom_id prefix (the
-# text before the first ":") for buttons and other components, or
-# "/<name>" for a slash command. A handler gets (interaction, the rest of
-# the custom_id, the clicking user's id, record) and returns the callback
-# response; record(dict) hands a state change to the main loop.
 _INTERACTIONS: InteractionRouter
 _INTERACTION_RESPONDER: InteractionResponder
 _INTERACTION_WORKER: InteractionWorker
-
-
-# ---------------------------------------------------------------------------
-# never_share backstop. Before a reply goes anywhere but an owner's own
-# DM, its text is checked against privacy.never_share (case-insensitive,
-# whole phrases). A hit is not sent: the draft is held in
-# state["holds"] and the owners get it in a DM with [Send anyway] /
-# [Discard] (owners only). Holding settles the queue item (it leaves the
-# queue, so the wake hook never hands it to a worker again, and is
-# ledgered as skipped, so the sweep leaves it alone). Send anyway puts
-# it back through the outbox as the original reply; Discard and the
-# 24-hour expiry drop it. The phrase list is never logged.
-# ---------------------------------------------------------------------------
 
 
 def never_share_hit(state, item, qid, parts):
@@ -793,12 +609,6 @@ def on_proactive_button(ix, rest, uid, record):
     )
 
 
-# ---------------------------------------------------------------------------
-# /settings is rendered and dispatched by discord.py (discord_connection.py).
-# This context exposes the existing settings engine and discovery directory.
-# ---------------------------------------------------------------------------
-# Directory for settings screens, built on the main loop from discovery and
-# the gateway, published through the thread-safe _DIRECTORY_VIEW snapshot.
 _DIRECTORY_VIEW: DirectorySnapshot
 # The same snapshot on disk, for bin/settings.py (places, names in its
 # sentences): written atomically, only when it changed.
@@ -844,10 +654,6 @@ def flush_admin_digests(force=False):
     return _ADMIN_DIGESTS.flush(force)
 
 
-# ---------------------------------------------------------------------------
-# Owner-DM capabilities: handed only to the worker serving that DM.
-# The persisted "nl_nonces" key is retained for existing queued DMs.
-# ---------------------------------------------------------------------------
 _CAPABILITIES: CapabilityIssuer
 _OWNER_AUTH: OwnerAuthorization
 
@@ -910,12 +716,6 @@ def pending_wait(state, now):
 
 def flush_pending(state, queue, force=False):
     return _bursts(state).flush(queue, force)
-
-
-# What a monitor send may ping: users (the worker addresses people with
-# <@id>) and the author of the message replied to. Never roles,
-# @everyone or @here, whatever the text says; the zero-width rewrite in
-# sanitize_reply is a second layer, not the only one.
 
 
 _SENDER: MessageSender
@@ -1063,20 +863,6 @@ def _reply_binding():
     )
 
 
-# ---------------------------------------------------------------------------
-# Reminders and watches (muse_watches.py; docs/PROTOCOL.md, "Reminders and
-# watches"). The worker asks for one with a `schedule` action on its
-# reply to a queue item; the requester is that item's author and the
-# place its channel, from item_meta, never from the outbox
-# (watches.requests.WatchRequests). watches.json keeps them across restarts. When a
-# reminder is due, or a watch matches a server message the monitor
-# ingests (ReceivedMessages.classify: gateway and poll, once each), watch_tick
-# queues a "reminder" item (a fire) for the worker. The worker's reply
-# to it is bound to the requester and the place (watches.delivery.WatchDelivery.bind) and may
-# ping the requester only (WatchDelivery.send). A fire is kept in
-# watches.json until the ledger settles it, so a restart between
-# saving it and queueing it re-queues it instead of losing it.
-# ---------------------------------------------------------------------------
 _ACCESS: ChannelAccess
 _AUTHOR_ROLES: AuthorRoles
 _WATCH_STORE: W.Store
@@ -1171,30 +957,6 @@ _PROCESS_LOCK: MonitorLock
 _GATEWAY: GatewaySession
 
 PIDFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor.pid")
-
-
-# ---------------------------------------------------------------------------
-# Gateway fast path (realtime ingest).
-#
-# Discord's Gateway is a websocket that pushes MESSAGE_CREATE events the
-# instant they happen, for every guild the bot is in plus DMs, instead of
-# waiting for the next REST poll.
-#
-# The gateway thread ONLY enqueues raw message dicts into _gateway_inbox;
-# the main loop drains it and runs the exact same classify/stage path as
-# polled messages, so behavior is identical. REST polling still covers
-# every channel too: it acts as gap repair (anything the gateway missed
-# while reconnecting) and as the full fallback if the gateway is down. The
-# REST watermark plus the gateway-seen ids (see note_gateway_seen) prevent
-# double-processing without letting the gateway skip the poll past a gap.
-#
-# Requires the Message Content privileged intent (Discord dev portal -> Bot
-# -> Privileged Gateway Intents). Without the toggle, Discord closes the
-# connection with code 4014 and we fall back to polling with a loud log.
-# ---------------------------------------------------------------------------
-# GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT, plus
-# GUILD_MESSAGE_TYPING | DIRECT_MESSAGE_TYPING for the early burst flush
-# (burst_quiet). The typing intents are not privileged.
 
 
 def drain_gateway(state, inbox, channels):
