@@ -134,6 +134,15 @@ from muse_discord.response_policy import (
     predates_join,
 )
 from muse_discord.response_policy import _iso_ts as _iso_ts
+from muse_discord.rest_scheduler import (
+    DiscoveryRefresh,
+    RestClock,
+    RestContext,
+    RestOperations,
+    RestSchedule,
+    RestScheduler,
+)
+from muse_discord.rest_scheduler import run_phase as _run_phase
 from muse_discord.storage import PrivateFile, SharedLockTimeout, atomic_write
 from muse_discord.storage import publish_private as _publish
 from muse_discord.storage import read_json as _read_json
@@ -1119,7 +1128,7 @@ def rate_record(state, user_id, scope=None):
 # (plugins not marked safe_in_new_servers stay off).
 # When the bot joins a new server, the owners get a DM summary.
 # ---------------------------------------------------------------------------
-_FORCE_DISCOVERY = False  # set when the gateway reports a new guild
+_DISCOVERY_REFRESH: DiscoveryRefresh
 # channel id -> its category id (from discovery), for category settings.
 CHANNEL_CATEGORY = {}
 
@@ -1395,9 +1404,8 @@ def flush_join_notices(state, guilds, channels):
 
 
 def on_guild_event(state, ev):
-    global _FORCE_DISCOVERY
     if _guild_lifecycle().on_event(state, ev):
-        _FORCE_DISCOVERY = True
+        _DISCOVERY_REFRESH.request()
 
 
 # ---------------------------------------------------------------------------
@@ -3932,39 +3940,6 @@ def _note_no_send(msg, cname):
     )
 
 
-# ---------------------------------------------------------------------------
-# Sliced REST work. The REST poll (a request per channel), the sweep, the
-# thread refresh and discovery would block the loop for many seconds
-# behind a slow proxy, so each tick spends about REST_SLICE_SECS on REST
-# reads (at least one request when any is due) and the fast path
-# (gateway drain, staging, burst flushes, typing, the outbox) runs
-# between slices.
-#
-# The poll is a rotation over its targets: the owners' DM channels, then
-# every monitored channel. A rotation starts when the previous one has
-# finished and POLL_INTERVAL has passed since that one started; its
-# requests are spread over the first POLL_SPREAD of the interval, and
-# when Discord (or a proxy) is slower than that, it polls flat out, still
-# in slices, so every channel is read about once per interval. The first
-# rotation (the startup catch-up) is not paced. A cycle
-# (the unit of every cadence: sweep.every_cycles, the thread and channel
-# refreshes, the identity retry, the cleanup sweeps) is a completed
-# rotation, so the cadences mean what they meant. A channel discovered
-# mid-rotation joins the next one; one removed mid-rotation is skipped.
-#
-# The sweep pass, the thread refresh, and discovery are background jobs,
-# run one at a time in the order they were due, in slices that share the
-# tick's budget with the poll (alternating ticks when both have work).
-# Discovery and the thread refresh are generators that yield after each
-# request. Everything runs on the main thread: state and the rate-limit
-# globals keep one writer. While REST backs off (429), nothing is sliced
-# and the rotation waits; a sweep pass ends, as it always has.
-# ---------------------------------------------------------------------------
-REST_SLICE_SECS = 0.4
-POLL_SPREAD = 0.5
-POLL_TICK_SECS = 1.0  # pacing granularity: due targets go out together
-
-
 def poll_targets():
     """The targets of one rotation. Empty until the bot knows its own id:
     nothing can be classified before that, so watermarks stay put."""
@@ -3972,142 +3947,6 @@ def poll_targets():
         return []
     targets = [("dms",)] if dm_poll_user_ids() else []
     return targets + [("channel", cid) for cid in CHANNELS]
-
-
-class PollRotation:
-    """One pass of the REST poll over its targets, done in slices."""
-
-    def __init__(self, targets, started, spread=POLL_SPREAD):
-        self.targets = list(targets)
-        self.pos = 0
-        self.started = started
-        self.spread = spread
-
-    def done(self):
-        return self.pos >= len(self.targets)
-
-    def next_due(self):
-        """When the next target is due on the pacing schedule."""
-        return self.started + (POLL_INTERVAL * self.spread * self.pos / max(1, len(self.targets)))
-
-    def due(self, now):
-        return not self.done() and now >= self.next_due()
-
-    def run_slice(self, state, deadline, dms_out):
-        """Poll due targets until deadline, at least one. Polled guild
-        triggers are staged inside (stage_found); DMs are appended to
-        dms_out for the staging phase. Returns the number of targets
-        polled."""
-        n = 0
-        while self.due(time.time()) and not rest_backing_off():
-            if n and time.time() >= deadline:
-                break
-            target = self.targets[self.pos]
-            self.pos += 1
-            if self._poll(state, target, dms_out):
-                n += 1
-        return n
-
-    def _poll(self, state, target, dms_out):
-        if target[0] == "dms":
-            # DMs: every message not from the bot is addressed to the
-            # bot. Resolving the channels is a step; each DM channel is
-            # polled as the next ones.
-            self.targets[self.pos : self.pos] = [
-                ("dm", dm_id, dm_name) for dm_id, dm_name in list_dm_channels()
-            ]
-            return True
-        if target[0] == "dm":
-            _, dm_id, dm_name = target
-            dms_out.extend(
-                (m, "DM with " + dm_name) for m in check_dm_channel(dm_id, dm_name, state)
-            )
-            return True
-        cid = target[1]
-        info = CHANNELS.get(cid)
-        if info is None:
-            return False  # unmonitored since the rotation began
-        cname = channel_display(info)
-        gid = info["guild_id"]
-        try:
-            # Triggers are staged inside, in arrival order.
-            check_channel(cid, cname, state, gid)
-        except Exception as e:
-            print(f"Poll error in {cname}: {e}", flush=True)
-        return True
-
-
-class SweepPass:
-    """One reconciliation sweep pass (sweep_mentions), done in slices: a
-    step sweeps one channel (or the owners' DM channels), each against
-    the durable records as they are at that moment."""
-
-    name = "Sweep"
-
-    def __init__(self, channel_ids):
-        self.targets = [None, *channel_ids]  # None: the DMs
-        self.pos = 0
-
-    def done(self):
-        return self.pos >= len(self.targets)
-
-    def run_slice(self, state, deadline, queue_ok):
-        if not queue_ok:
-            # The queue could not be read this tick: the sweep must not
-            # write it. The pass ends, as a skipped sweep did.
-            self.pos = len(self.targets)
-            return 0
-        queue = load_queue()  # after this tick's sends' removals
-        n_before = len(queue)
-        changed = False
-        n = 0
-        while not self.done():
-            if rest_backing_off():
-                # A 429 (here or elsewhere) ends the pass: the sweep must
-                # not add request pressure (sweep_mentions logs it).
-                self.pos = len(self.targets)
-                break
-            if n and time.time() >= deadline:
-                break
-            cid = self.targets[self.pos]
-            self.pos += 1
-            if cid is None:
-                changed |= sweep_mentions(state, queue, {})
-            elif cid in CHANNELS:  # (else unmonitored since it began)
-                changed |= sweep_mentions(state, queue, {cid: CHANNELS[cid]}, dms=False)
-            else:
-                continue
-            n += 1
-        if changed:
-            publish_queue_additions(state, queue[n_before:])
-            save_state(state)
-        return n
-
-
-class GenJob:
-    """A background REST job written as a generator that yields after
-    each request (thread refresh, discovery)."""
-
-    def __init__(self, name, gen):
-        self.name = name
-        self.gen = gen
-        self.finished = False
-
-    def done(self):
-        return self.finished
-
-    def run_slice(self, state, deadline, queue_ok):
-        n = 0
-        while not self.finished and not rest_backing_off():
-            if n and time.time() >= deadline:
-                break
-            try:
-                next(self.gen)
-            except StopIteration:
-                self.finished = True
-                break
-            n += 1
-        return n
 
 
 def thread_refresh_iter(state):
@@ -4259,16 +4098,7 @@ def _wait_for_work(state, gateway_status, scheduler, outbox_pass_at):
     # REST slices are due (none while they are behind), a burst is
     # about to flush, or the outbox holds a reply.
     now = time.time()
-    if rest_backing_off():
-        wait_for = 2.0  # keep the fast path ticking during REST backoff
-    elif scheduler.jobs or (scheduler.rotation is not None and scheduler.rotation.due(now)):
-        wait_for = 0.0  # REST work is due: the next slice right away
-    elif scheduler.rotation is not None:
-        wait_for = min(2.0, max(POLL_TICK_SECS, scheduler.rotation.next_due() - now))
-    elif scheduler.rotation_started is not None:
-        wait_for = min(2.0, max(0.0, POLL_INTERVAL - (now - scheduler.rotation_started)))
-    else:
-        wait_for = 2.0
+    wait_for = scheduler.next_wait(now, rest_backing_off())
     burst_wait = pending_wait(state, now)
     if burst_wait is not None:
         # A burst can flush early (burst_quiet): wake when it may.
@@ -4286,104 +4116,30 @@ def _wait_for_work(state, gateway_status, scheduler, outbox_pass_at):
     gateway_status["wake"].clear()
 
 
-def _run_phase(label, work, *args):
-    """A broken phase must not skip sends, cleanup, or later heartbeats."""
-    try:
-        return work(*args)
-    except Exception as exc:
-        print(f"{label} error: {exc}", flush=True)
-        return None
-
-
-class RestScheduler:
-    """Alternate polling and background work within one REST slice budget."""
-
-    def __init__(self):
-        self.cycle = 0
-        self.rotation = None
-        self.rotation_started = None
-        self.backoff_seen = False
-        self.jobs = []
-        self.poll_turn_next = True
-        self.cycle_done = False
-
-    def begin_tick(self, now, backing):
-        self.cycle_done = False
-        self.backoff_seen = self.backoff_seen or backing
-        if (
-            self.rotation is None
-            and not backing
-            and (self.rotation_started is None or now - self.rotation_started >= POLL_INTERVAL)
-        ):
-            self.rotation = PollRotation(
-                poll_targets(), now, spread=0.0 if self.rotation_started is None else POLL_SPREAD
-            )
-            self.rotation_started = now
-
-    def poll_slice(self, state, now, backing, dm_items):
-        poll_ready = self.rotation is not None and self.rotation.due(now) and not backing
-        jobs_ready = bool(self.jobs) and not backing
-        poll_turn = poll_ready and (self.poll_turn_next or not jobs_ready)
-        if poll_ready and jobs_ready:
-            self.poll_turn_next = not self.poll_turn_next
-        spent = 0.0
-        if poll_turn:
-            started = time.time()
-            if self.rotation is not None:
-                _run_phase(
-                    "Poll", self.rotation.run_slice, state, started + REST_SLICE_SECS, dm_items
-                )
-            spent = time.time() - started
-        if self.rotation is not None and self.rotation.done():
-            self.rotation = None
-            self.cycle += 1
-            self.cycle_done = True
-        return poll_turn, spent
-
-    def recovery_cycle(self):
-        recovery = self.backoff_seen if self.cycle_done else False
-        if self.cycle_done:
-            self.backoff_seen = rest_backing_off()
-        return recovery
-
-    def schedule_jobs(self, state, recovery):
-        global _FORCE_DISCOVERY
-        if not self.cycle_done:
-            return
-        kinds = {job.name for job in self.jobs}
-        if (
-            self.cycle % SWEEP_EVERY_CYCLES == 0
-            and BOT_USER_ID is not None
-            and "Sweep" not in kinds
-        ):
-            self.jobs.append(SweepPass(list(CHANNELS)))
-        if (self.cycle % CHANNEL_REFRESH_CYCLES == 0 or _FORCE_DISCOVERY) and not recovery:
-            _FORCE_DISCOVERY = False
-            if "Channel refresh" not in kinds:
-                self.jobs.append(GenJob("Channel refresh", discovery_iter(state)))
-        elif (
-            self.cycle % THREAD_REFRESH_CYCLES == 0
-            and not recovery
-            and not kinds & {"Thread refresh", "Channel refresh"}
-        ):
-            self.jobs.append(GenJob("Thread refresh", thread_refresh_iter(state)))
-
-    def run_job(self, state, poll_turn, rest_spent, queue_known):
-        if not self.jobs:
-            return
-        if rest_backing_off():
-            if isinstance(self.jobs[0], SweepPass):
-                self.jobs.pop(0)
-            return
-        job = self.jobs[0]
-        try:
-            if not poll_turn or rest_spent < REST_SLICE_SECS:
-                job.run_slice(state, time.time() + REST_SLICE_SECS - rest_spent, queue_known)
-            if job.done():
-                self.jobs.pop(0)
-        except Exception as exc:
-            print(f"{job.name} error: {exc}", flush=True)
-            self.jobs.pop(0)
+def _rest_scheduler():
+    return RestScheduler(
+        RestContext(
+            RestSchedule(
+                POLL_INTERVAL, SWEEP_EVERY_CYCLES, CHANNEL_REFRESH_CYCLES, THREAD_REFRESH_CYCLES
+            ),
+            RestClock(time.time, rest_backing_off),
+            RestOperations(
+                lambda: CHANNELS,
+                lambda: BOT_USER_ID is not None,
+                poll_targets,
+                list_dm_channels,
+                check_dm_channel,
+                check_channel,
+                load_queue,
+                sweep_mentions,
+                publish_queue_additions,
+                save_state,
+                discovery_iter,
+                thread_refresh_iter,
+            ),
+        ),
+        _DISCOVERY_REFRESH,
+    )
 
 
 def _settings_upkeep(status):
@@ -4428,7 +4184,7 @@ def _start_monitor_threads(state):
 
 
 def _start_monitor():
-    global CHANNELS, GUILDS, _FORCE_DISCOVERY
+    global CHANNELS, GUILDS
     _acquire_singleton()
     TM.start()
     touch_heartbeat()
@@ -4509,7 +4265,7 @@ def initialize(config_path=None, token_override=None):
     global COALESCE_SECS, GUILD_ALLOWLIST, MAX_REPLY_CHARS, OWNER_USER_IDS, POLL_INTERVAL
     global PRO, SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
     global TM, TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
-    global _S0, _SETTINGS, _DIRECTORY_VIEW, _ACTIVITY
+    global _S0, _SETTINGS, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
@@ -4554,6 +4310,7 @@ def initialize(config_path=None, token_override=None):
         sys.exit(1)
     _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
     _ACTIVITY = GatewayActivity()
+    _DISCOVERY_REFRESH = DiscoveryRefresh()
     TM = _import_telemetry()
     PRO = _import_proactive()
     _INITIALIZED = True
@@ -4563,7 +4320,7 @@ def main():
     if not _INITIALIZED:
         initialize()
     state, inbox, status = _start_monitor()
-    scheduler = RestScheduler()
+    scheduler = _rest_scheduler()
     outbox_pass_at = 0.0
     while True:
         if _token_rejected or status.get("token_rejected"):

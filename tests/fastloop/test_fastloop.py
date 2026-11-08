@@ -15,8 +15,15 @@ import sys
 import time
 import unittest
 
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
+
+import common  # noqa: F401 (select the source tree under test)
+
+from muse_discord.rest_scheduler import GeneratorJob, RestClock
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 
 # scenario -> seconds of main() at most (each stops once it has seen
 # enough, see run_fast.py)
@@ -165,7 +172,11 @@ class SlicedJobs(unittest.TestCase):
 
     def test_discovery_job_sliced_and_keeps_gateway_channels(self):
         mod, H = self.mod, self.H
-        job = mod.GenJob("Channel refresh", mod.discovery_iter(self.st))
+        job = GeneratorJob(
+            "Channel refresh",
+            mod.discovery_iter(self.st),
+            RestClock(time.time, mod.rest_backing_off),
+        )
 
         def gateway_registers():
             mod.CHANNELS["GW"] = H.chan("gw")
@@ -178,7 +189,11 @@ class SlicedJobs(unittest.TestCase):
 
     def test_thread_refresh_job_and_backoff(self):
         mod = self.mod
-        job = mod.GenJob("Thread refresh", mod.thread_refresh_iter(self.st))
+        job = GeneratorJob(
+            "Thread refresh",
+            mod.thread_refresh_iter(self.st),
+            RestClock(time.time, mod.rest_backing_off),
+        )
         mod._rl_until = time.time() + 60  # REST back-off: the job waits
         self.assertEqual(job.run_slice(self.st, time.time() + 1, True), 0)
         self.assertFalse(job.done())
