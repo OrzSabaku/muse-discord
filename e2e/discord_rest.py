@@ -19,12 +19,16 @@ is retried a few times with growing gaps. Anything else raises
 DiscordError. Error messages never contain the token.
 """
 
+import contextlib
 import json
 import os
 import time
 import urllib.error
 import urllib.request
 import uuid
+from http import HTTPStatus
+
+MESSAGE_PAGE_SIZE = 100
 
 API = "https://discord.com/api/v10"
 USER_AGENT = "DiscordBot (https://github.com/cszach/muse-discord, e2e)"
@@ -130,11 +134,11 @@ class Bot:
                     raw = b""
                 finally:
                     e.close()
-                if status == 429 and n429 < MAX_429_RETRIES:
+                if status == HTTPStatus.TOO_MANY_REQUESTS and n429 < MAX_429_RETRIES:
                     n429 += 1
                     self._sleep(_retry_after(e, raw))
                     continue
-                if status >= 500 and n5xx < MAX_5XX_RETRIES:
+                if status >= HTTPStatus.INTERNAL_SERVER_ERROR and n5xx < MAX_5XX_RETRIES:
                     n5xx += 1
                     self._sleep(2 * n5xx)
                     continue
@@ -142,7 +146,8 @@ class Bot:
                 raise DiscordError(
                     f"{method} {path} -> HTTP {status}: {detail}",
                     status=status,
-                    transient=status >= 500 or status == 429,
+                    transient=status >= HTTPStatus.INTERNAL_SERVER_ERROR
+                    or status == HTTPStatus.TOO_MANY_REQUESTS,
                 ) from None
             except (urllib.error.URLError, OSError) as e:
                 if n5xx < MAX_5XX_RETRIES:
@@ -189,7 +194,7 @@ class Bot:
             for m in page:
                 out[m["id"]] = m
             cursor = max((m["id"] for m in page), key=int)
-            if len(page) < 100:
+            if len(page) < MESSAGE_PAGE_SIZE:
                 break
         return sorted(out.values(), key=lambda m: int(m["id"]))
 
@@ -199,7 +204,7 @@ class Bot:
         try:
             return self.request("DELETE", f"/channels/{channel_id}/messages/{message_id}")
         except DiscordError as e:
-            if e.status == 404:
+            if e.status == HTTPStatus.NOT_FOUND:
                 return None
             raise
 
@@ -225,7 +230,7 @@ class Bot:
         try:
             return self.request("DELETE", f"/channels/{channel_id}")
         except DiscordError as e:
-            if e.status == 404:
+            if e.status == HTTPStatus.NOT_FOUND:
                 return None
             raise
 
@@ -238,10 +243,8 @@ def _retry_after(err, raw):
     """Seconds to wait on a 429: the JSON retry_after, else the header,
     else 2; capped so a bad value cannot hang the run."""
     secs = None
-    try:
+    with contextlib.suppress(ValueError, TypeError, AttributeError):
         secs = float(json.loads(raw or b"{}").get("retry_after"))
-    except ValueError, TypeError, AttributeError:
-        pass
     if secs is None:
         try:
             secs = float(err.headers.get("Retry-After"))

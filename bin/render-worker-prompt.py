@@ -29,6 +29,8 @@ import re
 import shlex
 import sys
 
+MEDIA_HELP_LINE_WIDTH = 70
+
 PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = "prompts/worker-prompt.template.md"
 OUTPUT = "worker-prompt.md"
@@ -51,12 +53,12 @@ def limits_bullet(media):
     words = MEDIA_LIMITS[media].split()
     lines, cur = [], "- Know and state your limits honestly:"
     for w in words:
-        if len(cur) + 1 + len(w) > 70:
+        if len(cur) + 1 + len(w) > MEDIA_HELP_LINE_WIDTH:
             lines.append(cur)
             cur = "  " + w
         else:
             cur += " " + w
-    return "\n".join(lines + [cur])
+    return "\n".join([*lines, cur])
 
 
 def media_arg(value):
@@ -71,7 +73,7 @@ def fill_seam(text, name, body):
     """Replace the body of `=== SEAM: name ===` (markers kept). Returns
     (text, found)."""
     pat = re.compile(
-        r"(=== SEAM: %s ===\n).*?(\n=== END SEAM: %s ===)" % (re.escape(name), re.escape(name)),
+        rf"(=== SEAM: {re.escape(name)} ===\n).*?(\n=== END SEAM: {re.escape(name)} ===)",
         re.DOTALL,
     )
     new, n = pat.subn(lambda m: m.group(1) + body + m.group(2), text, count=1)

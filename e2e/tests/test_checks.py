@@ -8,11 +8,11 @@ Run from the repo root: python3 -m unittest discover -s e2e/tests -t .
 import os
 import sys
 import unittest
+from datetime import UTC
 
 E2E = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, E2E)
 
-from datetime import UTC
 
 import checks  # noqa: E402
 import scenario  # noqa: E402
@@ -107,7 +107,7 @@ class Evaluate(unittest.TestCase):
 
 class Replies(unittest.TestCase):
     def test_counting_and_threading(self):
-        tr, q1, q2, r1 = basic()
+        tr, q1, q2, _r1 = basic()
         self.assertTrue(ok({"sut_reply_count": {"eq": 1}}, tr))
         self.assertTrue(ok({"replies_to": "q1"}, tr))
         self.assertTrue(ok({"no_sut_reply_to": "q2"}, tr))
@@ -124,18 +124,18 @@ class Replies(unittest.TestCase):
         self.assertFalse(ok({"replies_to_any": ["q1"]}, tr))
 
     def test_no_sut_before_and_duplicates(self):
-        tr, q1, q2, r1 = basic()
+        tr, q1, q2, _r1 = basic()
         self.assertTrue(ok({"no_sut_before": "q1"}, tr))
         tr["messages"].insert(1, msg("sut", 0.5, "jumping in!"))
         self.assertFalse(ok({"no_sut_before": "q2"}, tr))
-        tr, q1, q2, r1 = basic()
+        tr, q1, q2, _r1 = basic()
         tr["messages"].append(msg("sut", 5, "ack 1", reply_to=q2["id"]))
         self.assertTrue(ok({"no_duplicate_replies": True}, tr))
         tr["messages"].append(msg("sut", 9, "ack 1", reply_to=q1["id"]))
         self.assertFalse(ok({"no_duplicate_replies": True}, tr))
 
     def test_latency_uses_the_first_reply_to_the_label(self):
-        tr, q1, q2, r1 = basic()
+        tr, q1, _q2, _r1 = basic()
         self.assertTrue(ok({"latency": {"from": "q1", "max": 5}}, tr))
         self.assertFalse(ok({"latency": {"from": "q1", "max": 3}}, tr))
         self.assertFalse(ok({"latency": {"from": "q2", "max": 60}}, tr))
@@ -164,7 +164,7 @@ class Replies(unittest.TestCase):
 
 class Content(unittest.TestCase):
     def test_content_matches_all_or_per_label(self):
-        tr, q1, q2, r1 = basic()
+        tr, q1, q2, _r1 = basic()
         self.assertTrue(ok({"content_matches": "^ack 1$"}, tr))
         self.assertFalse(ok({"content_matches": "^ack 3$"}, tr))
         tr["messages"].append(msg("sut", 5, "ack 3", reply_to=q2["id"]))
@@ -209,7 +209,7 @@ class Content(unittest.TestCase):
 
 class SutFiles(unittest.TestCase):
     def test_quarantine_ledger_and_holds(self):
-        tr, q1, q2, r1 = basic()
+        tr, q1, q2, _r1 = basic()
         self.assertFalse(ok({"quarantined": "q1"}, tr))  # no file
         tr["sut_files"]["quarantine"] = [
             {"message_id": "5"},
@@ -232,7 +232,7 @@ class SutFiles(unittest.TestCase):
         self.assertTrue(ok({"held": "q1"}, tr))
 
     def test_queue_item(self):
-        tr, q1, q2, r1 = basic()
+        tr, q1, q2, _r1 = basic()
         chk = {"queue_item": {"label": "q2", "follow_up": True, "settings": {"speaker": "owner"}}}
         tr["sut_files"]["worker_items"] = None
         self.assertFalse(ok(chk, tr))  # not tier 1

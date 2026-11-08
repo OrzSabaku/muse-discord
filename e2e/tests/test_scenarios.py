@@ -108,9 +108,10 @@ class Shipped(unittest.TestCase):
             want = {c["quarantined"] for c in sc["expect"]["checks"] if "quarantined" in c}
             for step in sc["steps"]:
                 send = step.get("send") or {}
-                lines = [send.get("text") or ""] + list(
-                    (step.get("converse") or {}).get("lines") or []
-                )
+                lines = [
+                    send.get("text") or "",
+                    *list((step.get("converse") or {}).get("lines") or []),
+                ]
                 hit = any(
                     re.search(p, scenario.render(t, IDS).lower()) for t in lines for p in pats
                 )

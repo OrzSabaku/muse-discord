@@ -53,6 +53,7 @@ replaces discord.Client.connect. The real SDK HTTP transport remains usable,
 so REST fallback is tested without disabling Discord REST or editing the SUT.
 """
 
+import contextlib
 import copy
 import json
 import os
@@ -331,8 +332,7 @@ class SUT:
             self._log_offset = os.path.getsize(self.log_path)
         except OSError:
             self._log_offset = 0
-        log = open(self.log_path, "a")
-        try:
+        with open(self.log_path, "a") as log:
             log.write(
                 f"===== e2e: start monitor (gateway="
                 f"{'on' if gateway else 'off'}) "
@@ -349,8 +349,6 @@ class SUT:
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
-        finally:
-            log.close()
 
     def stop(self, kill=False, timeout=15):
         """Stop the monitor: SIGTERM (then SIGKILL after timeout), or
@@ -359,17 +357,13 @@ class SUT:
             return
         if self.proc.poll() is None:
             sig = signal.SIGKILL if kill else signal.SIGTERM
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(self.proc.pid, sig)
-            except ProcessLookupError:
-                pass
             try:
                 self.proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(self.proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
                 self.proc.wait(timeout=10)
         self.proc = None
 
@@ -462,7 +456,5 @@ class SUT:
         try:
             self.stop()
         finally:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(self.token_file)
-            except OSError:
-                pass

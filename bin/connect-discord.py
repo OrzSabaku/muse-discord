@@ -60,8 +60,11 @@ import stat
 import sys
 import tempfile
 import time
+from http import HTTPStatus
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import contextlib
+
 import setup_common as C
 
 PKG = C.PKG_DIR
@@ -152,19 +155,22 @@ def clean_paste(raw):
     return s
 
 
+WRONG_PASTE_PATTERNS = (
+    (r"(?is)(?:https?://|discord(app)?\.com/|www\.).*", "url"),
+    (r"\d{15,21}", "id"),
+    (r"[0-9a-fA-F]{64}", "public_key"),
+    (r"[A-Za-z0-9_-]{32}", "client_secret"),
+)
+
+
 def classify(s):
     """ "token" for something shaped like a bot token, else the kind of
     wrong paste (a WRONG_PASTE key)."""
     if not s:
         return "empty"
-    if re.match(r"(?i)https?://|discord(app)?\.com/|www\.", s):
-        return "url"
-    if re.fullmatch(r"\d{15,21}", s):
-        return "id"
-    if re.fullmatch(r"[0-9a-fA-F]{64}", s):
-        return "public_key"
-    if re.fullmatch(r"[A-Za-z0-9_-]{32}", s):
-        return "client_secret"
+    for pattern, kind in WRONG_PASTE_PATTERNS:
+        if re.fullmatch(pattern, s):
+            return kind
     if s.startswith("mfa."):
         return "user_token"
     if TOKEN_RE.fullmatch(s):
@@ -225,10 +231,8 @@ def write_private(path, text):
             f.write(text)
         os.replace(tmp, path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
@@ -263,7 +267,7 @@ def write_config(cfg, owner_id, rep):
         with open(cfg) as f:
             raw = yaml.safe_load(f) or {}
         before = [str(o) for o in raw.get("owners") or []]
-        raw["owners"] = before + [owner_id]
+        raw["owners"] = [*before, owner_id]
         text = MS.dump_config(raw)
         rep.line(
             f"NOTE: config.yaml listed {', '.join(before) or 'no owner'}"
@@ -368,10 +372,8 @@ def get_token(args, rep):
         return token, None
     if args.token_file:
         saved = None
-        try:
+        with contextlib.suppress(Exception):
             saved = C.token_file(C.load_settings(args.config))
-        except Exception:
-            pass
         if saved and os.path.realpath(os.path.expanduser(args.token_file)) == os.path.realpath(
             saved
         ):
@@ -397,62 +399,7 @@ def config_problem(cfg):
     return None
 
 
-def connect(args, rep):
-    token, code = get_token(args, rep)
-    if code is not None:
-        return code
-    token = clean_paste(token)
-    kind = classify(token)
-    if kind != "token":
-        return rep.fail(kind, f"{WRONG_PASTE[kind]} {AGAIN}", 2)
-    bad = config_problem(args.config)
-    if bad:
-        return rep.fail(
-            "config",
-            f"config.yaml has a problem, so nothing "
-            f"was changed. Fix config.yaml first (python3 "
-            f"bin/settings.py validate names each problem), "
-            f"then run this again. {bad}",
-            6,
-        )
-    try:
-        me = C.call("GET", "/users/@me", token)
-        if not (me or {}).get("bot"):
-            return rep.fail("user_token", f"{WRONG_PASTE['user_token']} {AGAIN}", 2)
-        app = C.call("GET", "/applications/@me", token) or {}
-    except C.ApiError as e:
-        if e.status == 401:
-            return rep.fail("rejected", f"{WRONG_PASTE['rejected']} {AGAIN}", 2)
-        return rep.fail("unreachable", f"Could not reach Discord ({e}). Try again in a minute.", 3)
-    app_id = str(app.get("id") or "")
-    owner_id, owner_name, team = app_owner(app)
-    if not app_id or not owner_id:
-        return rep.fail(
-            "unreachable", "Discord did not say which app this is. Try again in a minute.", 3
-        )
-    bot_name = me.get("username") or "the bot"
-    name = args.name or bot_name
-    rep.data.update(app_id=app_id, owner_id=owner_id, bot_name=bot_name)
-    rep.line(
-        f"OK: This is the bot {bot_name} (app {app_id}); its owner "
-        f"is Discord user {owner_id}" + (f" (@{owner_name})." if owner_name else ".")
-    )
-    if team:
-        rep.data["team"] = True
-        rep.line(
-            "NOTE: This app belongs to a Discord team, so the owner "
-            "set here is the team's owner, "
-            + (f"@{owner_name}" if owner_name else f"user {owner_id}")
-            + ". Ask the owner whether that is their Discord account; "
-            "if not, change owners in config.yaml."
-        )
-    if args.name and args.name.casefold() != bot_name.casefold():
-        rep.line(
-            f"NOTE: The app is named {bot_name!r}, not {args.name!r}. "
-            f"The bot still calls itself {args.name}; to change the "
-            f"name people see, rename it on the Bot page."
-        )
-
+def configure_intents(token, app, rep):
     # Message Content: GATEWAY_MESSAGE_CONTENT_LIMITED (an unverified
     # app's form of the intent) is one of the few flags the API lets an
     # app set itself. Either form counts as on.
@@ -468,7 +415,7 @@ def connect(args, rep):
                     {"flags": flags | C.MESSAGE_CONTENT_LIMITED},
                 )
             except C.ApiError as e:
-                if e.status != 400:
+                if e.status != HTTPStatus.BAD_REQUEST:
                     raise
                 # Some flags in the app's value may not be ours to send
                 # back: send only the editable ones.
@@ -494,6 +441,8 @@ def connect(args, rep):
     if app.get("interactions_endpoint_url"):
         rep.step("interactions_url")
 
+
+def save_connection(args, token, owner_id, rep, name):
     # Save: token, config, persona.
     cfg = args.config
     MS = C.settings_module()
@@ -513,6 +462,80 @@ def connect(args, rep):
     if C.token_file(st) != path:
         rep.line(f"NOTE: config.yaml reads the token from {st.token_sources()}, not {path}.")
     name_persona(st, name, rep)
+
+
+def connected_identity(token, rep):
+    try:
+        me = C.call("GET", "/users/@me", token)
+        if not (me or {}).get("bot"):
+            return None, rep.fail("user_token", f"{WRONG_PASTE['user_token']} {AGAIN}", 2)
+        app = C.call("GET", "/applications/@me", token) or {}
+    except C.ApiError as e:
+        if e.status == HTTPStatus.UNAUTHORIZED:
+            return None, rep.fail("rejected", f"{WRONG_PASTE['rejected']} {AGAIN}", 2)
+        return None, rep.fail(
+            "unreachable", f"Could not reach Discord ({e}). Try again in a minute.", 3
+        )
+    app_id = str(app.get("id") or "")
+    owner_id, owner_name, team = app_owner(app)
+    if not app_id or not owner_id:
+        return None, rep.fail(
+            "unreachable", "Discord did not say which app this is. Try again in a minute.", 3
+        )
+    return (me, app, app_id, owner_id, owner_name, team), None
+
+
+def connect(args, rep):
+    token, code = get_token(args, rep)
+    if code is not None:
+        return code
+    token = clean_paste(token)
+    kind = classify(token)
+    if kind != "token":
+        return rep.fail(kind, f"{WRONG_PASTE[kind]} {AGAIN}", 2)
+    bad = config_problem(args.config)
+    if bad:
+        return rep.fail(
+            "config",
+            f"config.yaml has a problem, so nothing "
+            f"was changed. Fix config.yaml first (python3 "
+            f"bin/settings.py validate names each problem), "
+            f"then run this again. {bad}",
+            6,
+        )
+    identity, code = connected_identity(token, rep)
+    if code is not None:
+        return code
+    assert identity is not None
+    me, app, app_id, owner_id, owner_name, team = identity
+    bot_name = me.get("username") or "the bot"
+    name = args.name or bot_name
+    rep.data.update(app_id=app_id, owner_id=owner_id, bot_name=bot_name)
+    rep.line(
+        f"OK: This is the bot {bot_name} (app {app_id}); its owner "
+        f"is Discord user {owner_id}" + (f" (@{owner_name})." if owner_name else ".")
+    )
+    if team:
+        rep.data["team"] = True
+        rep.line(
+            "NOTE: This app belongs to a Discord team, so the owner "
+            "set here is the team's owner, "
+            + (f"@{owner_name}" if owner_name else f"user {owner_id}")
+            + ". Ask the owner whether that is their Discord account; "
+            "if not, change owners in config.yaml."
+        )
+    if args.name and args.name.casefold() != bot_name.casefold():
+        rep.line(
+            f"NOTE: The app is named {bot_name!r}, not {args.name!r}. "
+            f"The bot still calls itself {args.name}; to change the "
+            f"name people see, rename it on the Bot page."
+        )
+
+    configure_intents(token, app, rep)
+
+    code = save_connection(args, token, owner_id, rep, name)
+    if code is not None:
+        return code
 
     url = C.invite_url(app_id)
     rep.data["invite_url"] = url
@@ -606,8 +629,12 @@ def wait(args, rep):
             )
         found = [describe_guild(token, bot_id, g) for g in guilds[:10]]
     except C.ApiError as e:
-        code = 2 if e.status == 401 else 3
-        return rep.fail("rejected" if code == 2 else "unreachable", f"Discord: {e}", code)
+        code = 2 if e.status == HTTPStatus.UNAUTHORIZED else 3
+        return rep.fail(
+            "rejected" if e.status == HTTPStatus.UNAUTHORIZED else "unreachable",
+            f"Discord: {e}",
+            code,
+        )
     rep.data["servers"] = found
     for g in found:
         if not g["can_read"]:

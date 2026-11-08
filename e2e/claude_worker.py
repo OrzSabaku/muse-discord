@@ -370,7 +370,7 @@ def simple_command(cmd):
 
 
 def _tool_prefixes(pkg, name):
-    return ["python3 %s/bin/%s" % (pkg, name), "python3 bin/%s" % name, "python3 ./bin/%s" % name]
+    return [f"python3 {pkg}/bin/{name}", f"python3 bin/{name}", f"python3 ./bin/{name}"]
 
 
 def bash_allowed(pkg, cmd):
@@ -397,10 +397,10 @@ def bash_allowed(pkg, cmd):
             return True, "owner-command tool"
     return False, (
         "Only two commands are allowed, each run on its own: "
-        "`python3 %s/bin/outbox-append.py <<'EOF'` (a quoted heredoc "
-        "holding the JSON array) and `python3 %s/bin/discord-api.py "
+        f"`python3 {pkg}/bin/outbox-append.py <<'EOF'` (a quoted heredoc "
+        f"holding the JSON array) and `python3 {pkg}/bin/discord-api.py "
         "<subcommand> <args>` (no pipes, redirections, `cd`, `&&`, or "
-        "$-expansions)." % (pkg, pkg)
+        "$-expansions)."
     )
 
 
@@ -449,7 +449,7 @@ def check_tool(pkg, tool, tool_input, persona=None, reads=None):
         return bash_allowed(pkg, str(tool_input.get("command") or ""))
     if tool == "Read":
         return read_allowed(pkg, str(tool_input.get("file_path") or ""), persona, reads)
-    return False, "%s is not available to the reply worker." % tool
+    return False, f"{tool} is not available to the reply worker."
 
 
 def hook_main(pkg, persona=None, reads=None):
@@ -464,7 +464,7 @@ def hook_main(pkg, persona=None, reads=None):
             json.loads(reads) if reads else None,
         )
     except Exception as e:
-        ok, reason = False, "hook error: %s" % e
+        ok, reason = False, f"hook error: {e}"
     print(
         json.dumps(
             {
@@ -513,7 +513,8 @@ def worker_args(pkg, persona=None, items=None):
         "dontAsk",
         "--settings",
         json.dumps(settings),
-    ] + model_args()
+        *model_args(),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +566,7 @@ class Worker:
         self.stopping = False
 
     def log(self, msg):
-        line = "%s %s" % (time.strftime("%Y-%m-%dT%H:%M:%S"), msg)
+        line = "{} {}".format(time.strftime("%Y-%m-%dT%H:%M:%S"), msg)
         if self.echo:
             print(line, flush=True)
         try:
@@ -667,11 +668,11 @@ class Worker:
             with open(os.path.join(self.pkg, "prompts/worker-prompt.template.md")) as f:
                 template = f.read()
         except OSError as e:
-            self.log("wake %d: cannot read the worker template: %s" % (n, e))
+            self.log(f"wake {int(n)}: cannot read the worker template: {e!s}")
             return
         rendered, warnings = render_prompt(template, self.pkg)
         for w in warnings:
-            self.log("wake %d: template warning: %s" % (n, w))
+            self.log(f"wake {int(n)}: template warning: {w!s}")
         try:
             with open(persona_file(self.pkg, self.persona)) as f:
                 persona = f.read()
@@ -679,7 +680,7 @@ class Worker:
             persona = None  # the worker then reads the file itself
         prompt = wake_prompt(rendered, build_payload(items, persona, caps))
         args = worker_args(self.pkg, self.persona, items)
-        self.log("wake %d: start items=%s" % (n, ids))
+        self.log(f"wake {int(n)}: start items={ids!s}")
         start = time.monotonic()
         env = {k: v for k, v in os.environ.items() if k not in SCRUB_ENV}
         try:
@@ -695,8 +696,7 @@ class Worker:
             )
         except OSError as e:
             self.log(
-                "wake %d: done exit=error duration=0.0s items=%s "
-                "(cannot start %s: %s)" % (n, ids, args[0], e)
+                f"wake {n}: done exit=error duration=0.0s items={ids} (cannot start {args[0]}: {e})"
             )
             return
         with self.lock:
@@ -716,7 +716,7 @@ class Worker:
         summary = ""
         try:
             res = json.loads(out)
-            summary = " turns=%s is_error=%s ending=%s result=%r" % (
+            summary = " turns={} is_error={} ending={} result={!r}".format(
                 res.get("num_turns"),
                 res.get("is_error"),
                 run_ending(res.get("result")),
@@ -724,15 +724,15 @@ class Worker:
             )
         except ValueError, AttributeError:
             if out.strip():
-                summary = " stdout=%r" % out.strip()[:200]
+                summary = f" stdout={out.strip()[:200]!r}"
         if status not in (0, "timeout") and err.strip():
-            summary += " stderr=%r" % err.strip()[-300:]
+            summary += f" stderr={err.strip()[-300:]!r}"
         self.log(
-            "wake %d: done exit=%s duration=%.1fs items=%s%s" % (n, status, duration, ids, summary)
+            f"wake {int(n)}: done exit={status!s} duration={duration:.1f}s items={ids!s}{summary!s}"
         )
         try:
             os.makedirs(self.wake_dir, exist_ok=True)
-            with open(os.path.join(self.wake_dir, "wake-%03d.json" % n), "w") as f:
+            with open(os.path.join(self.wake_dir, f"wake-{n:03d}.json"), "w") as f:
                 json.dump(
                     {
                         "items": ids,
@@ -790,14 +790,15 @@ def main(argv=None):
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     worker.log(
-        "claude worker up: pkg=%s claude=%s timeout=%ss persona=%s"
-        % (pkg, claude_bin(), args.timeout, worker.persona or "config.yaml persona")
+        "claude worker up: pkg={} claude={} timeout={}s persona={}".format(
+            pkg, claude_bin(), args.timeout, worker.persona or "config.yaml persona"
+        )
     )
     while not stop.is_set():
         try:
             worker.poll()
         except Exception as e:  # keep polling; a bad pass is logged
-            worker.log("poll error: %s" % e)
+            worker.log(f"poll error: {e}")
         stop.wait(args.poll)
     worker.log("stopping")
     worker.shutdown()

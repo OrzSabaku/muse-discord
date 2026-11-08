@@ -71,7 +71,7 @@ def _iso_secs(ts):
     if not ts:
         return None
     try:
-        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(str(ts))
     except ValueError:
         return None
     if dt.tzinfo is None:

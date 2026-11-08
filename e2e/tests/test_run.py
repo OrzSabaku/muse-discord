@@ -24,6 +24,7 @@ import tempfile
 import types
 import unittest
 import urllib.error
+from typing import ClassVar
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 E2E = os.path.dirname(HERE)
@@ -261,7 +262,7 @@ class FakeSUT:
     """Stands in for sut.SUT in run.py tests."""
 
     fail_ready = False
-    instances = []
+    instances: ClassVar = []
 
     def __init__(self, tree=None, run_dir=None, base_config=None, token=None):
         self.pkg_dir = tempfile.mkdtemp(prefix="fakesut-")
@@ -552,7 +553,7 @@ class SUTTests(unittest.TestCase):
 class RunFlowBase(unittest.TestCase):
     """run.py end to end against a fake Discord and a fake SUT."""
 
-    ENV = {
+    ENV: ClassVar = {
         "E2E_GUILD_ID": "10",
         "E2E_SUT_TOKEN": FAKE_TOKEN,
         "E2E_DRIVER_A_TOKEN": "tokA-secret",
@@ -781,7 +782,7 @@ class RunFlowTests(RunFlowBase):
                 "expect": {"checks": [{"sut_reply_count": {"eq": 1}}]},
             }
         ]
-        code, out = self.main()
+        code, _out = self.main()
         self.assertEqual(code, 1)
         r = self.outputs()[0][0]
         self.assertEqual((r["status"], r["error"]), ("fail", None))
@@ -831,9 +832,9 @@ class RunFlowTests(RunFlowBase):
     def test_missing_secrets_skip(self):
         os.environ.pop("E2E_DRIVER_B_TOKEN")
         self.sc.SCENARIOS = [{"id": "s1", "tier": 1, "title": "t", "steps": []}]
-        code, out = self.main()
+        code, _out = self.main()
         self.assertEqual(code, 0)
-        results, summary = self.outputs()
+        results, _summary = self.outputs()
         self.assertEqual(results[0]["status"], "skip")
         self.assertEqual(self.guild.channels, {})
 
@@ -943,7 +944,7 @@ class SettingsStepTests(RunFlowBase):
 
         FakeSUT.wait_ready = ready
         try:
-            code, out = self.main()
+            _code, _out = self.main()
         finally:
             FakeSUT.wait_ready = orig
         results, _ = self.outputs()

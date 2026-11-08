@@ -29,7 +29,7 @@ def venv_python():
 # Python happens to have compatible packages. A matching prefix prevents loops.
 _venv = venv_python()
 if _venv and os.path.realpath(sys.prefix) != os.path.realpath(os.path.join(PKG_DIR, ".venv")):
-    os.execv(_venv, [_venv] + sys.argv)
+    os.execv(_venv, [_venv, *sys.argv])
 
 API = "https://discord.com/api/v10"
 # Tests point the scripts at a local fake with this variable. Only a
@@ -44,7 +44,6 @@ TIMEOUT = 20
 PERMISSIONS = (
     (1 << 10) | (1 << 11) | (1 << 38) | (1 << 16) | (1 << 15) | (1 << 14) | (1 << 6) | (1 << 51)
 )
-assert PERMISSIONS == 2252074691710016
 VIEW_CHANNEL = 1 << 10
 SEND_MESSAGES = 1 << 11
 ADMINISTRATOR = 1 << 3

@@ -24,6 +24,7 @@ reported, or never issued), saying so. Never needs the bot token and
 never touches the network.
 """
 
+import contextlib
 import fcntl
 import hmac
 import json
@@ -34,7 +35,11 @@ import time
 
 PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
+
 from muse_discord import muse_watches as W  # noqa: E402
+
+REPORT_ARGUMENTS = ("watch_id", "nonce", "status", "summary")
+
 
 DUE = os.path.join(PACKAGE_DIR, "web_watches_due.json")
 RESULTS = os.path.join(PACKAGE_DIR, "web_watch_results.json")
@@ -59,7 +64,7 @@ def live(rep):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != 4:
+    if len(argv) != len(REPORT_ARGUMENTS):
         print(
             "usage: watch-report.py <id> <nonce> met|not-met|unknown|refused --stdin|'<summary>'",
             file=sys.stderr,
@@ -97,7 +102,7 @@ def main(argv=None):
                 reps = []
         except OSError, ValueError:
             reps = []
-        reps = (reps + [rep])[-200:]
+        reps = ([*reps, rep])[-200:]
         tfd, tmp = tempfile.mkstemp(
             dir=PACKAGE_DIR, prefix=".web_watch_results.json.", suffix=".tmp"
         )
@@ -107,10 +112,8 @@ def main(argv=None):
                 json.dump(reps, f)
             os.replace(tmp, RESULTS)
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp)
-            except OSError:
-                pass
             raise
     finally:
         os.close(fd)
