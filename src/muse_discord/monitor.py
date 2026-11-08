@@ -70,14 +70,25 @@ from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord import secret_scan as SCAN
 from muse_discord.channel_access import ChannelAccess
-from muse_discord.conversation import THREAD_TYPES as _THREAD_TYPES
 from muse_discord.conversation import (
+    PRIVATE_THREAD_TYPE,
     Conversation,
     channel_display,
     is_forwarded,
+    now_snowflake,
 )
+from muse_discord.conversation import THREAD_TYPES as _THREAD_TYPES
 from muse_discord.conversation import _snowflake_ts as _snowflake_ts
 from muse_discord.conversation import _who as _who
+from muse_discord.directory.discovery import (
+    Discovery,
+    DiscoveryState,
+    ThreadSnapshot,
+)
+from muse_discord.directory.lifecycle import GuildLifecycle
+from muse_discord.directory.membership import AuthorRoles
+from muse_discord.directory.scopes import DirectoryScopes
+from muse_discord.directory.snapshot import DirectorySnapshot
 from muse_discord.ingest import MessageEnqueuer
 from muse_discord.interactions import ephemeral, interaction_user_id
 from muse_discord.message_models import (
@@ -109,10 +120,8 @@ from muse_discord.owner.targets import CommandTargets
 from muse_discord.owner.updates import UpdateNotices, version_installed
 from muse_discord.paths import project_root
 from muse_discord.reply_delivery import OutboxDelivery
-from muse_discord.reply_protocol import is_snowflake as _is_snowflake
 from muse_discord.response_policy import (
     ResponsePolicy,
-    note_guild_joined,
     predates_join,
 )
 from muse_discord.response_policy import _iso_ts as _iso_ts
@@ -128,13 +137,11 @@ from muse_discord.watches.runtime import WatchRuntime
 from muse_discord.watches.web import WebWatchWork
 
 CONFIG_PATH_ARGUMENT = 2
-PRIVATE_THREAD_TYPE = 12
 APPLICATION_COMMAND_TYPE = 2
 HEARTBEAT_INTERVAL_SECS = 30
 MEMBER_CACHE_LIMIT = 2000
 ACTIVITY_CACHE_LIMIT = 1000
 PENDING_MESSAGE_ATTEMPTS = 3
-TYPING_CACHE_TTL_SECS = 60
 GENERATED_SEND_HISTORY_LIMIT = 50
 GENERATED_PATH_PAIR_LENGTH = 2
 EMPTY_OUTBOX_MAX_BYTES = 4  # JSON [] with optional whitespace/newline
@@ -161,6 +168,9 @@ OUTBOX_PROCESSING_FILE = os.path.join(BASE_DIR, "reply_outbox.processing.json")
 OUTBOX_REJECTED_FILE = os.path.join(BASE_DIR, "reply_outbox.rejected.json")
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
 GENERATED_DIR = os.path.join(BASE_DIR, "generated")
+
+
+TYPING_CACHE_TTL_SECS = 60
 
 
 def _config_path():
@@ -406,10 +416,8 @@ GUILDS = {}
 
 
 # Channel types the bot can meaningfully read: 0 = text, 5 = announcement.
-READABLE_CHANNEL_TYPES = (0, 5)
 # Forum (15) and media (16) channels hold no messages themselves, only
 # threads (posts), whose send permission comes from them.
-THREAD_PARENT_TYPES = (15, 16)
 
 # Re-check for brand-new threads this often (in poll cycles). Threads are
 # where forum posts live; a new post should be picked up within a few
@@ -417,230 +425,42 @@ THREAD_PARENT_TYPES = (15, 16)
 THREAD_REFRESH_CYCLES = 5
 
 
+def _discovery_state():
+    return DiscoveryState(
+        guilds=GUILDS,
+        member_counts=_MEMBER_COUNTS,
+        guild_channels=_GUILD_CHANNELS,
+        categories=CHANNEL_CATEGORY,
+        threads_listed=_THREADS_LISTED,
+        new_threads=_NEW_THREADS,
+        started_at=MONITOR_STARTED,
+    )
+
+
+def _discovery():
+    return Discovery(
+        api_get,
+        rest_backing_off,
+        lambda: BOT_ID,
+        GUILD_ALLOWLIST,
+        _discovery_state(),
+        _channel_access(),
+    )
+
+
 def get_guilds():
-    """Return [(guild_id, guild_name)] for every guild the bot is in
-    (restricted to bot.guild_ids when that config list is non-empty), or
-    None when the list could not be fetched: a failure is not "in no
-    guilds", and must not unmonitor everything."""
-    try:
-        out = [(g["id"], g.get("name") or g["id"]) for g in api_get("/users/@me/guilds")]
-    except Exception as e:
-        print(f"Guild discovery failed: {e}", flush=True)
-        return None
-    if GUILD_ALLOWLIST:
-        out = [g for g in out if g[0] in GUILD_ALLOWLIST]
-    return out
+    return _discovery().guilds()
 
 
 # Discord permission bits used by the talk-scope computation.
-PERM_SEND_MESSAGES = 1 << 11
-PERM_SEND_IN_THREADS = 1 << 38
-
-
-def _guild_base_perms(gid, gobj):
-    """(base_permissions, member_role_ids, joined_at) for the bot in one
-    guild. base_permissions is None (with no roles) when it cannot be
-    determined (callers then treat send permission as unknown and rely on
-    the send-time 403 safety net); joined_at is the bot's ISO join
-    timestamp from the member object, or None when the fetch failed."""
-    if not BOT_ID:
-        return None, [], None
-    try:
-        member = api_get(f"/guilds/{gid}/members/{BOT_ID}")
-    except Exception:
-        return None, [], None
-    joined_at = member.get("joined_at")
-    roles = gobj.get("roles") or []
-    if not roles:
-        return None, [], joined_at
-    member_roles = set(map(str, member.get("roles") or []))
-    role_values = {}
-    for role in roles:
-        try:
-            role_values[str(role["id"])] = int(role.get("permissions") or 0)
-        except KeyError, TypeError, ValueError:
-            continue
-    member_roles.intersection_update(role_values)
-    try:
-        from muse_discord.discord_permissions import PermissionSnapshot
-
-        perms = PermissionSnapshot(gid, role_values, gobj.get("owner_id")).guild_permissions(
-            BOT_ID, member_roles
-        )
-    except KeyError, TypeError, ValueError:
-        return None, [], joined_at
-    return perms, member_roles, joined_at
-
-
-def _channel_perms(gid, base_perms, overwrites, member_role_ids, member_id=None):
-    from muse_discord.discord_permissions import PermissionSnapshot
-
-    roles = dict.fromkeys(map(str, member_role_ids), 0)
-    roles[str(gid)] = base_perms
-    try:
-        return PermissionSnapshot(gid, roles, None).channel_permissions(
-            member_id or BOT_ID, member_role_ids, overwrites
-        )
-    except KeyError, TypeError, ValueError:
-        return None
-
-
-def _no_access(e):
-    """True when a read probe failed because the bot cannot read the
-    channel (403 Missing Access, 404 Unknown Channel). Anything else (429,
-    timeout, 5xx) is transient and says nothing about access."""
-    return getattr(e, "code", None) in (403, 404)
 
 
 def discover_channels(previous=None):
-    """Return ({channel_id: info}, {guild_id: guild_info}).
-
-    Covers every guild text channel the bot can actually read right now,
-    across every guild it belongs to. Read access is probed per channel
-    (private channels answer 403 and are skipped quietly). Each channel
-    info carries can_send: the bot's effective Send Messages permission
-    (for threads, Send Messages in Threads on the parent channel),
-    computed from guild roles + channel overwrites; None when the
-    computation was unavailable.
-
-    previous is what a refresh monitored so far (None at startup). Only
-    a 403/404 means "no access": when the guild list, a guild's channel
-    list, or one channel's probe fails transiently (or REST is backing
-    off from a 429), the previous entries are kept as they were instead
-    of unmonitoring those channels (no poll, no sweep) until the next
-    refresh."""
-    gen = discover_channels_iter(previous)
-    while True:
-        try:
-            next(gen)
-        except StopIteration as e:
-            return e.value
-
-
-@dataclass
-class ChannelProbe:
-    gid: str
-    gname: str
-    base_perms: int | None
-    member_roles: list | set[str]
-    previous: dict
-    found: dict
-
-    def scan(self, channels):
-        self.permissions = {}
-        for ch in channels:
-            ctype = ch.get("type")
-            if ctype not in READABLE_CHANNEL_TYPES + THREAD_PARENT_TYPES:
-                continue
-            cid = ch["id"]
-            perms = None
-            if self.base_perms is not None:
-                perms = _channel_perms(
-                    self.gid, self.base_perms, ch.get("permission_overwrites"), self.member_roles
-                )
-                self.permissions[cid] = perms
-            if ctype not in READABLE_CHANNEL_TYPES:
-                continue  # forum/media: only their threads are read
-            if rest_backing_off():
-                if cid in self.previous:
-                    self.found[cid] = self.previous[cid]
-                continue  # probing on would only extend the rate limit
-            try:
-                api_get(f"/channels/{cid}/messages?limit=1")
-            except Exception as e:
-                if not _no_access(e) and cid in self.previous:
-                    self.found[cid] = self.previous[cid]  # transient: keep it
-                continue  # no read access; skip quietly
-            finally:
-                yield
-            can_send = None
-            if perms is not None:
-                can_send = bool(perms & PERM_SEND_MESSAGES)
-            self.found[cid] = {
-                "name": ch["name"],
-                "guild_id": self.gid,
-                "guild_name": self.gname,
-                "can_send": can_send,
-            }
+    return _discovery().channels(previous)
 
 
 def discover_channels_iter(previous=None):
-    """discover_channels as a generator that yields after each request,
-    so the main loop can spread a refresh over many ticks."""
-    previous = previous or {}
-    found = {}
-    guilds_out = {}
-    guild_list = get_guilds()
-    yield
-    if guild_list is None:
-        return dict(previous), dict(GUILDS)
-    for gid, gname in guild_list:
-        try:
-            # with_counts: approximate_member_count, for /settings.
-            gobj = api_get(f"/guilds/{gid}?with_counts=true")
-        except Exception as e:
-            print(f"Guild fetch failed for {gname}: {e}", flush=True)
-            gobj = {}
-        yield
-        watch_note_guild(gid, gobj)  # reminders and watches: role perms
-        base_perms, member_roles, joined_at = _guild_base_perms(gid, gobj)
-        yield
-        guilds_out[gid] = {
-            "name": gname,
-            "joined_at": joined_at,
-        }
-        count = gobj.get("approximate_member_count")
-        if isinstance(count, int):
-            _MEMBER_COUNTS[gid] = count
-        try:
-            channels = api_get(f"/guilds/{gid}/channels")
-        except Exception as e:
-            print(f"Channel list failed for {gname}: {e}", flush=True)
-            found.update({c: i for c, i in previous.items() if i.get("guild_id") == gid})
-            continue  # (its _GUILD_CHANNELS entry stays as it was)
-        finally:
-            yield
-        # Every channel of the guild, categories included, for the
-        # /settings channel and category pickers (threads are not
-        # listed: they follow their parent).
-        _GUILD_CHANNELS[gid] = [
-            {
-                "id": ch["id"],
-                "name": ch.get("name") or ch["id"],
-                "type": ch.get("type"),
-                "parent_id": ch.get("parent_id"),
-                "position": ch.get("position"),
-            }
-            for ch in channels
-            if isinstance(ch, dict) and ch.get("id")
-        ]
-        names_by_id = {ch["id"]: ch.get("name", "?") for ch in channels}
-        for ch in channels:
-            if ch.get("parent_id"):
-                CHANNEL_CATEGORY[ch["id"]] = ch["parent_id"]
-            # Who else can read it (watches: the requester's view).
-            _CHANNEL_OVERWRITES[ch["id"]] = ch.get("permission_overwrites") or []
-        probe = ChannelProbe(gid, gname, base_perms, member_roles, previous, found)
-        yield from probe.scan(channels)
-        perms_by_id = probe.permissions
-        # Threads (forum posts, text-channel threads) never appear in the
-        # guild channel list, so they need their own discovery or the bot
-        # is blind inside every post.
-        found.update(
-            (
-                yield from discover_threads_iter(
-                    gid,
-                    gname,
-                    snapshot=ThreadSnapshot(
-                        names=names_by_id,
-                        known_ids=found,
-                        permissions=perms_by_id,
-                        previous=previous,
-                    ),
-                )
-            )
-        )
-    return found, guilds_out
+    return _discovery().channels_iter(previous)
 
 
 # Brand-new threads. A thread created since the previous successful
@@ -653,129 +473,16 @@ def discover_channels_iter(previous=None):
 # reply. Older threads seen for the first time keep the usual seeding:
 # their history is history.
 MONITOR_STARTED = time.time()
-NEW_THREAD_SLACK_SECS = 60  # clock skew between us and Discord
 _THREADS_LISTED = {}  # guild id -> when its threads were last listed
 _NEW_THREADS = set()  # thread ids to seed at their start
 
 
-def _thread_info(t, gid, gname, names_by_id, perms_by_id):
-    can_send = None
-    if perms_by_id is not None:
-        parent_perms = perms_by_id.get(t.get("parent_id"))
-        if parent_perms is not None:
-            can_send = bool(parent_perms & (PERM_SEND_IN_THREADS | PERM_SEND_MESSAGES))
-    parent = names_by_id.get(t.get("parent_id"), "thread")
-    return {
-        "name": f"{parent} > {t.get('name', 'thread')}",
-        "guild_id": gid,
-        "guild_name": gname,
-        "can_send": can_send,
-        "thread": True,
-        "parent_id": t.get("parent_id"),
-        "private": t.get("type") == PRIVATE_THREAD_TYPE,
-    }
-
-
-@dataclass
-class ThreadSnapshot:
-    names: dict
-    known_ids: object
-    permissions: dict | None = None
-    previous: dict | None = None
-
-
 def discover_threads_iter(gid, gname, snapshot):
-    """{thread_id: info} for the active threads in one guild that the bot
-    can read and whose ids aren't in known_ids yet, as a generator that
-    yields after each request (see discover_channels_iter).
-
-    Forum posts and threads never appear in /guilds/{id}/channels, so
-    they come from the active-threads endpoint. The display name is
-    parent-qualified ("help > <post title>"). Archived threads are
-    skipped: a reply un-archives a thread, and the next refresh picks it
-    up. A thread's send permission comes from its parent (Send Messages
-    in Threads, or Send Messages; the send-time 403 net catches the
-    rest): perms_by_id maps parent id -> permissions, and None (the
-    thread-only refresh) leaves can_send unknown. previous: as in
-    discover_channels, kept on transient failures."""
-    names_by_id = snapshot.names
-    known_ids = snapshot.known_ids
-    perms_by_id = snapshot.permissions
-    previous = snapshot.previous
-    out = {}
-    previous = previous or {}
-    listed_at = time.time()
-    try:
-        resp = api_get(f"/guilds/{gid}/threads/active")
-    except Exception as e:
-        print(f"Thread list failed for {gname}: {e}", flush=True)
-        return {
-            t: i
-            for t, i in previous.items()
-            if i.get("guild_id") == gid and i.get("thread") and t not in known_ids
-        }
-    finally:
-        yield
-    since = _THREADS_LISTED.get(gid, MONITOR_STARTED) - NEW_THREAD_SLACK_SECS
-    _THREADS_LISTED[gid] = listed_at
-    for t in resp.get("threads", []):
-        tid = t["id"]
-        if tid in known_ids or tid in out:
-            continue
-        if rest_backing_off():
-            if tid in previous:
-                out[tid] = previous[tid]
-            continue
-        try:
-            api_get(f"/channels/{tid}/messages?limit=1")
-        except Exception as e:
-            if not _no_access(e) and tid in previous:
-                out[tid] = previous[tid]  # transient: keep it
-            continue  # no read access; skip quietly
-        finally:
-            yield
-        out[tid] = _thread_info(t, gid, gname, names_by_id, perms_by_id)
-        if tid not in previous and _snowflake_ts(tid) >= since:
-            _NEW_THREADS.add(tid)
-    return out
-
-
-def now_snowflake():
-    """A message id for "now": every later message is newer than it."""
-    return str((int(time.time() * 1000) - 1420070400000) << 22)
+    return _discovery().threads_iter(gid, gname, snapshot)
 
 
 def seed_channel_seen(cid, cname, state):
-    """Mark a newly discovered channel's current messages as seen so its
-    history is not treated as fresh mentions. Only a channel with no
-    last_seen is seeded: one dropped and re-added by discovery, or an
-    archived thread a new message brought back, keeps its watermark so
-    the poll still reads what arrived in between. When the channel is
-    empty or the read fails, the watermark is "now": the history stays
-    seen and the next message is still new. A brand-new thread (see
-    _NEW_THREADS) is seeded just below its own id instead, so the poll
-    reads every message in it (a forum post's first message has the
-    thread's id)."""
-    brand_new = cid in _NEW_THREADS
-    _NEW_THREADS.discard(cid)
-    if cid in state["last_seen"]:
-        return
-    if brand_new and _is_snowflake(cid):
-        state["last_seen"][cid] = str(int(cid) - 1)
-        print(f"Tracking new thread #{cname} from its start.", flush=True)
-        return
-    try:
-        msgs = api_get(f"/channels/{cid}/messages?limit=5")
-    except Exception as e:
-        print(f"Init error #{cname}: {e}", flush=True)
-        msgs = None
-    if msgs:
-        newest = max(msgs, key=lambda m: int(m["id"]))
-        state["last_seen"][cid] = newest["id"]
-        print(f"Tracking new channel #{cname} from message {newest['id']}.", flush=True)
-    else:
-        state["last_seen"][cid] = now_snowflake()
-        print(f"Tracking new channel #{cname} from now.", flush=True)
+    return _discovery().seed(cid, cname, state)
 
 
 # Prompt-injection / exfiltration patterns. A match means the message is
@@ -1413,53 +1120,26 @@ _FORCE_DISCOVERY = False  # set when the gateway reports a new guild
 CHANNEL_CATEGORY = {}
 
 
+def _directory_scopes():
+    return DirectoryScopes(CHANNELS, GUILDS, CHANNEL_CATEGORY)
+
+
 def scope_for(guild_id=None, channel_id=None, dm=False):
-    """The settings scope of a message or event."""
-    if dm:
-        return MS.Scope.dm()
-    info = CHANNELS.get(channel_id) or {}
-    gid = guild_id or info.get("guild_id")
-    chan = channel_id
-    if info.get("thread") and info.get("parent_id"):
-        chan = info["parent_id"]  # threads and forum posts: the parent
-    cat = CHANNEL_CATEGORY.get(chan) or (CHANNELS.get(chan) or {}).get("category_id")
-    gname = (GUILDS.get(gid) or {}).get("name") or info.get("guild_name")
-    return MS.Scope.server(gid, gname, chan, cat)
+    return _directory_scopes().for_message(guild_id, channel_id, dm)
 
 
 def scope_of_channel(channel_id):
-    """The scope of a channel a reply goes to: a monitored server
-    channel, else a DM."""
-    if channel_id in CHANNELS:
-        return scope_for(None, channel_id)
-    return MS.Scope.dm()
+    return _directory_scopes().for_channel(channel_id)
 
 
 # (guild, user) -> (role ids, fetched at): roles of authors whose messages
 # carry no member object (the REST poll), for role entries in who.allow /
 # who.ignore. Only fetched when such a list names a role.
 _MEMBER_ROLES = {}
-MEMBER_ROLES_TTL_SECS = 600
 
 
 def member_roles(guild_id, user_id):
-    if not guild_id or not user_id:
-        return set()
-    key = (str(guild_id), str(user_id))
-    hit = _MEMBER_ROLES.get(key)
-    if hit and time.time() - hit[1] < MEMBER_ROLES_TTL_SECS:
-        return hit[0]
-    if rest_backing_off():
-        return hit[0] if hit else set()
-    try:
-        roles = set((api_get(f"/guilds/{guild_id}/members/{user_id}") or {}).get("roles") or [])
-    except Exception:
-        roles = hit[0] if hit else set()
-    _MEMBER_ROLES[key] = (roles, time.time())
-    if len(_MEMBER_ROLES) > MEMBER_CACHE_LIMIT:
-        for k in sorted(_MEMBER_ROLES, key=lambda k: _MEMBER_ROLES[k][1])[:500]:
-            del _MEMBER_ROLES[k]
-    return roles
+    return AuthorRoles(api_get, rest_backing_off, _MEMBER_ROLES).get_roles(guild_id, user_id)
 
 
 def people_match(value, user_id, roles=lambda: set()):
@@ -1681,61 +1361,29 @@ def owners_absent(gid):
     return _owner_presence().absent(gid)
 
 
-def sync_guilds(state, guilds, channels):
-    """Record each guild's join watermark and greet newly joined guilds
-    (owner DM). The first run seeds the known set silently, but checks
-    every server for an owner (see check_owner_presence)."""
-    if not guilds:
-        return  # discovery failed; a partial view must not look like joins
-    first_run = "known_guilds" not in state
-    known = state.setdefault("known_guilds", {})
-    notices = state.setdefault("join_notices", [])
-    # Approximate member counts, for bin/settings.py's risk checks.
-    state["guild_members"] = {
-        gid: _MEMBER_COUNTS[gid] for gid in guilds if isinstance(_MEMBER_COUNTS.get(gid), int)
-    }
-    for gid, ginfo in guilds.items():
-        note_guild_joined(state, gid, ginfo.get("joined_at"))
-        is_new = gid not in known
-        known[gid] = ginfo.get("name") or gid
-        if is_new and not first_run:
-            print(
-                f"Joined server {known[gid]} ({gid}): its settings "
-                f"come from all_servers until it has its own.",
-                flush=True,
-            )
-            if gid not in notices:
-                notices.append(gid)
-    check_owner_presence(
-        state,
-        guilds,
-        list(guilds) if first_run else [g for g in notices if g in guilds],
-        every=first_run,
+def _guild_lifecycle():
+    presence = _owner_presence()
+    return GuildLifecycle(
+        _discovery_state(),
+        CHANNELS,
+        presence,
+        JoinNotices(presence, _owner_messenger(), rest_backing_off, SETTINGS_PREFIX),
+        settings,
+        publish_directory,
+        GUILD_ALLOWLIST,
+        _stale_labels,
     )
-    flush_join_notices(state, guilds, channels)
-    try:
-        warn_stale_labels()
-    except Exception as e:
-        print(f"Label check failed: {e}", flush=True)
+
+
+def sync_guilds(state, guilds, channels):
+    return _guild_lifecycle().sync(state, guilds, channels)
 
 
 _stale_labels = set()
 
 
 def warn_stale_labels():
-    """A `name:` label in config.yaml is only for people; say so once
-    when Discord calls that server or channel something else now."""
-    for sid, label in settings().labels.items():
-        now = (GUILDS.get(sid) or {}).get("name") or (CHANNELS.get(sid) or {}).get("name")
-        if not now or not label or str(label).lstrip("#") == now or (sid, label) in _stale_labels:
-            continue
-        _stale_labels.add((sid, label))
-        print(
-            f'Note: config.yaml labels {sid} "{label}", but Discord '
-            f'calls it "{now}" now (the label is only for you; '
-            f"the id is what counts).",
-            flush=True,
-        )
+    return _guild_lifecycle().warn_labels()
 
 
 def flush_join_notices(state, guilds, channels):
@@ -1743,33 +1391,9 @@ def flush_join_notices(state, guilds, channels):
 
 
 def on_guild_event(state, ev):
-    """Gateway GUILD_CREATE / GUILD_DELETE. A create for an unknown guild
-    is a join: record its watermark and request a discovery pass, which
-    then sends the owner summary via sync_guilds."""
     global _FORCE_DISCOVERY
-    gid = ev.get("id")
-    if not gid or (GUILD_ALLOWLIST and gid not in GUILD_ALLOWLIST):
-        return
-    if ev.get("op") == "create":
-        note_guild_joined(state, gid, ev.get("joined_at"))
-        if isinstance(ev.get("member_count"), int):
-            _MEMBER_COUNTS[gid] = ev["member_count"]
-            publish_directory()
-        known = state.get("known_guilds")
-        if known is None or gid not in known:
-            # A join, or a first run whose discovery has not finished (a
-            # lost state.json): ownerless until the owner check
-            # (sync_guilds).
-            note_guild_join_for_owners(state, gid)
-            if known is not None:
-                _FORCE_DISCOVERY = True
-    else:
-        name = state.get("known_guilds", {}).pop(gid, None)
-        state.get("owner_in_guild", {}).pop(gid, None)
-        OWNER_IN_GUILD.pop(gid, None)
-        state.get("guild_joined", {}).pop(gid, None)
-        state.get("guild_first_seen", {}).pop(gid, None)
-        print(f"Removed from server {name or gid}.", flush=True)
+    if _guild_lifecycle().on_event(state, ev):
+        _FORCE_DISCOVERY = True
 
 
 # ---------------------------------------------------------------------------
@@ -1972,58 +1596,17 @@ WHY_COMMAND = {
 }
 
 # Directory for SettingsCtx, built on the main loop from discovery and
-# the gateway, published as one immutable snapshot under _DIRECTORY_LOCK.
+# the gateway, published through the thread-safe _DIRECTORY_VIEW snapshot.
 _MEMBER_COUNTS = {}  # guild id -> member count (approximate)
 _GUILD_CHANNELS = {}  # guild id -> [{"id","name","type","parent_id",..}]
-_DIRECTORY = {"guilds": [], "channels": {}, "where": {}}
-_DIRECTORY_LOCK = threading.Lock()
+_DIRECTORY_VIEW: DirectorySnapshot
 # The same snapshot on disk, for bin/settings.py (places, names in its
 # sentences): written atomically, only when it changed.
 DIRECTORY_FILE = os.path.join(BASE_DIR, "directory.json")
-_DIRECTORY_WRITTEN: dict[str, object] = {"body": None}
 
 
 def publish_directory():
-    """Snapshot GUILDS, member counts and channel lists for /settings
-    (main loop only; the interaction thread reads the snapshot). A
-    channel carries whether the bot can read it (readable: a text
-    channel the monitor polls) and send there (can_send, None when
-    unknown); where maps every monitored channel and thread to (guild,
-    parent)."""
-    guilds = []
-    for gid, info in GUILDS.items():
-        g = {
-            "id": gid,
-            "name": (info or {}).get("name") or gid,
-            "member_count": _MEMBER_COUNTS.get(gid),
-        }
-        guilds.append(g)
-    guilds.sort(key=lambda g: (str(g["name"]).lower(), g["id"]))
-    channels = {}
-    for gid in GUILDS:
-        out = []
-        for c in _GUILD_CHANNELS.get(gid) or []:
-            c = dict(c)
-            mon = CHANNELS.get(c.get("id"))
-            if c.get("type") in READABLE_CHANNEL_TYPES:
-                c["readable"] = mon is not None
-            c["can_send"] = (mon or {}).get("can_send")
-            out.append(c)
-        channels[gid] = out
-    where = {
-        cid: (info.get("guild_id"), info.get("parent_id") if info.get("thread") else None)
-        for cid, info in CHANNELS.items()
-    }
-    global _DIRECTORY
-    with _DIRECTORY_LOCK:
-        _DIRECTORY = {"guilds": guilds, "channels": channels, "where": where}
-    body = {"guilds": guilds, "channels": channels}
-    if body != _DIRECTORY_WRITTEN["body"]:
-        try:
-            atomic_write(DIRECTORY_FILE, dict(body, updated=int(time.time())))
-            _DIRECTORY_WRITTEN["body"] = body
-        except OSError as e:
-            print(f"Could not write directory.json: {e}", flush=True)
+    return _DIRECTORY_VIEW.update(GUILDS, CHANNELS, _MEMBER_COUNTS, _GUILD_CHANNELS)
 
 
 # Private settings screens and drafts, keyed by (user_id, random token).
@@ -2055,12 +1638,10 @@ class SettingsCtx:
         return settings()
 
     def guilds(self):
-        with _DIRECTORY_LOCK:
-            return [dict(g) for g in _DIRECTORY["guilds"]]
+        return _DIRECTORY_VIEW.guilds()
 
     def channels(self, guild_id):
-        with _DIRECTORY_LOCK:
-            return [dict(c) for c in _DIRECTORY["channels"].get(str(guild_id)) or []]
+        return _DIRECTORY_VIEW.channels(guild_id)
 
     def write(self, key, value, by):
         """One change by `by` (its role inferred: a non-owner is an
@@ -2139,11 +1720,7 @@ class SettingsCtx:
         newest first: message_id, channel_id, guild_id, parent_id,
         author_id (None in old entries), author,
         status, code, detail, reason, at."""
-        with _DIRECTORY_LOCK:
-            where = dict(_DIRECTORY.get("where") or {})
-            for gid, chans in _DIRECTORY["channels"].items():
-                for c in chans:
-                    where.setdefault(str(c.get("id")), (gid, None))
+        where = _DIRECTORY_VIEW.locations(include_unmonitored=True)
         out = []
         fired = watch_store().read()["fired"]  # reminders: not messages
         for mid, e in _ledger_load()["entries"].items():
@@ -2169,8 +1746,7 @@ class SettingsCtx:
         e = _ledger_load()["entries"].get(str(message_id))
         if not isinstance(e, dict):
             return None
-        with _DIRECTORY_LOCK:
-            where = dict(_DIRECTORY.get("where") or {})
+        where = _DIRECTORY_VIEW.locations()
         return _outcome(str(message_id), e, where)
 
     def names(self, some_id):
@@ -2227,17 +1803,7 @@ def _outcome(mid, e, where):
 
 
 def _directory_name(some_id):
-    """A server's or channel's name from discovery, else None."""
-    some_id = str(some_id)
-    with _DIRECTORY_LOCK:
-        for g in _DIRECTORY["guilds"]:
-            if g["id"] == some_id:
-                return g.get("name")
-        for chans in _DIRECTORY["channels"].values():
-            for c in chans:
-                if str(c.get("id")) == some_id:
-                    return c.get("name")
-    return None
+    return _DIRECTORY_VIEW.name(some_id)
 
 
 def admin_digest_text(gid, changes):
@@ -2925,6 +2491,12 @@ def flush_pending(state, queue, force=False):
                         flush=True,
                     )
     return flushed
+
+
+# What a monitor send may ping: users (the worker addresses people with
+# <@id>) and the author of the message replied to. Never roles,
+# @everyone or @here, whatever the text says; the zero-width rewrite in
+# sanitize_reply is a second layer, not the only one.
 
 
 def send_nonce(channel_id, reply_to, parts, index):
@@ -5345,7 +4917,7 @@ def initialize(config_path=None, token_override=None):
     global COALESCE_SECS, GUILD_ALLOWLIST, MAX_REPLY_CHARS, OWNER_USER_IDS, POLL_INTERVAL
     global PRO, SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
     global TM, TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
-    global _S0, _SETTINGS
+    global _S0, _SETTINGS, _DIRECTORY_VIEW
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
@@ -5388,6 +4960,7 @@ def initialize(config_path=None, token_override=None):
             file=sys.stderr,
         )
         sys.exit(1)
+    _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
     TM = _import_telemetry()
     PRO = _import_proactive()
     _INITIALIZED = True

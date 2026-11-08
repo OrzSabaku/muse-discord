@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 FOLLOW_UP_WINDOW_SECS = 120
 THREAD_TYPES = (10, 11, 12)
+PRIVATE_THREAD_TYPE = 12
 HISTORY_ATTACHED = 8
 HISTORY_PER_CHANNEL = 12
 HISTORY_TEXT_CHARS = 300
@@ -234,3 +235,8 @@ def channel_display(info):
 
 def msg_link(gid, cid, mid):
     return f"https://discord.com/channels/{gid or '@me'}/{cid}/{mid}"
+
+
+def now_snowflake():
+    """A message id for "now": every later message is newer than it."""
+    return str((int(time.time() * 1000) - 1420070400000) << 22)

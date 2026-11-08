@@ -18,6 +18,7 @@
 | 受信添付の取得・文書抽出・動画フレーム抽出 | `src/muse_discord/media_ingest.py` |
 | 生成添付のパス検証・圧縮・期限切れ削除 | `src/muse_discord/generated_media.py` |
 | ファイル排他・原子的な保存 | `src/muse_discord/storage.py` |
+| サーバー・チャンネルの探索・所属・設定用スナップショット | `src/muse_discord/directory/` |
 | 所有者DMの認可・権限・記憶・通知・承認 | `src/muse_discord/owner/` |
 | 通知の権限・登録・発火・復旧・送信先 | `src/muse_discord/watches/` |
 | 監視入力の型・検証 | `src/muse_discord/muse_watches.py`（Pydantic） |
@@ -98,6 +99,7 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 通知の登録と対象者判定は `watches.requests`・`watches.audience`、発火と復旧は `watches.runtime` が持つ。閲覧権限の確認は保存ロックの前、キュー登録は保存後に行う。
 所有者DMの認可は `owner.authorization`、権限発行・再発行は `owner.capabilities`、原文からのコマンド対象解決は `owner.targets`、記憶への保存は `owner.memory` が持つ。権限の消費はoutboxの確定時に行う。
 所有者の在籍確認は `owner.presence`、通知は `owner.messaging`・`owner.admin_digest`・`owner.join_notices`・`owner.updates`、返信の保留と承認は `owner.review` が持つ。更新通知も共通の設定Watcherを通す。
+サーバーとチャンネルの探索は `directory.discovery`、参加退出は `directory.lifecycle`、設定画面への公開は `directory.snapshot` が持つ。スナップショットはロック内で交換し、読み手にはコピーを返す。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査
