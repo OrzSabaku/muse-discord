@@ -51,7 +51,6 @@ except ImportError:
     print("PyYAML and Pydantic v2 are required: run uv sync", file=sys.stderr)
     sys.exit(1)
 
-from muse_discord import media_ingest
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord.admission import AdmissionPolicy, SharedServers
@@ -87,6 +86,7 @@ from muse_discord.interaction_dispatch import (
     InteractionWorker,
 )
 from muse_discord.interactions import ephemeral
+from muse_discord.media import collector as media
 from muse_discord.message_ledger import MessageLedger
 from muse_discord.message_models import (
     LedgerContext,
@@ -1094,11 +1094,11 @@ def _generated_replies():
 
 def collect_media(msg):
     """Collect bounded attachments into this monitor's media directory."""
-    return media_ingest.collect_media(msg, MEDIA_DIR)
+    return media.collect_media(msg, MEDIA_DIR)
 
 
 def sweep_media():
-    media_ingest.sweep_media(MEDIA_DIR)
+    media.sweep_media(MEDIA_DIR)
 
 
 # Shared REST/Gateway reception and gap repair.

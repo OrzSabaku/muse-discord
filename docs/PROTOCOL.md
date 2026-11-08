@@ -39,7 +39,9 @@
 | 共有キューの読み取り・差分更新 | `src/muse_discord/message_queue.py` |
 | outboxの取得・再起動復旧・送信後の確定 | `src/muse_discord/outbox_store.py` |
 | 段階間で受け渡すメッセージの型 | `src/muse_discord/message_models.py` |
-| 受信添付の取得・文書抽出・動画フレーム抽出 | `src/muse_discord/media_ingest.py` |
+| 受信添付の選別・収集・期限切れ削除 | `src/muse_discord/media/collector.py` |
+| 受信添付の安全な取得・URLと転送先の検査 | `src/muse_discord/media/fetch.py` |
+| 文書のテキスト抽出・動画フレーム抽出 | `src/muse_discord/media/documents.py`・`video.py` |
 | 生成添付の依頼・チャンネル承認・再試行時の確認 | `src/muse_discord/generated_replies.py` |
 | 生成添付のパス検証・圧縮・期限切れ削除 | `src/muse_discord/generated_media.py` |
 | ファイル排他・原子的な保存 | `src/muse_discord/storage.py` |
