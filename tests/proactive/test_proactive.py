@@ -284,7 +284,9 @@ class OffByDefault(Base):
         self.assertEqual(self.targets(slot), {CH, CH2})
         # Work turns it off again.
         self.apply(preset_changes(MS.load(self.m.cfg_path), "work", place))
-        self.assertFalse(self.m.settings().get("proactive.enabled", self.m.scope_for(G1, CH)))
+        self.assertFalse(
+            self.m.settings().get("proactive.enabled", self.m._DIRECTORY.scopes.for_message(G1, CH))
+        )
 
 
 class Schedule(Base):

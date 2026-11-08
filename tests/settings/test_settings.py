@@ -619,10 +619,10 @@ class LiveReload(MonitorBase):
         self.rewrite(NEW_BASE + "everywhere:\n  style:\n    length: normal\n")
         with quiet():
             self.assertEqual(
-                m._SETTINGS.retire_changes(m._OWNER_MESSAGES.notify, m.rest_backing_off), 1
+                m._SETTINGS.retire_changes(m._OWNER_MESSAGES.notify, m._BACKOFF.active), 1
             )
             self.assertEqual(
-                m._SETTINGS.retire_changes(m._OWNER_MESSAGES.notify, m.rest_backing_off), 0
+                m._SETTINGS.retire_changes(m._OWNER_MESSAGES.notify, m._BACKOFF.active), 0
             )
         self.assertEqual(len(m.api.dm_posts()), 1)  # the owner is told
         self.assertEqual(m.settings().get("style.length", MS.Scope.everywhere()), "normal")
@@ -1097,7 +1097,7 @@ servers:
             gmsg(U2, "draw", mention=True, roles=[ROLE], channel=CH_G2, guild=G2), guild=G2
         )
         self.assertTrue(item["may_generate"])
-        m._response_policy().note_media_sent(self.st, m.scope_for(G2, CH_G2))
+        m._response_policy().note_media_sent(self.st, m._DIRECTORY.scopes.for_message(G2, CH_G2))
         _ok, item = self.enqueue(
             gmsg(U2, "again", mention=True, roles=[ROLE], channel=CH_G2, guild=G2), guild=G2
         )

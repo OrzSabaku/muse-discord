@@ -175,7 +175,7 @@ class SlicedJobs(unittest.TestCase):
         job = GeneratorJob(
             "Channel refresh",
             mod._directory_refresh().channels(self.st),
-            RestClock(time.time, mod.rest_backing_off),
+            RestClock(time.time, mod._BACKOFF.active),
         )
 
         def gateway_registers():
@@ -192,7 +192,7 @@ class SlicedJobs(unittest.TestCase):
         job = GeneratorJob(
             "Thread refresh",
             mod._directory_refresh().threads(self.st),
-            RestClock(time.time, mod.rest_backing_off),
+            RestClock(time.time, mod._BACKOFF.active),
         )
         mod._BACKOFF.until = time.time() + 60  # REST back-off: the job waits
         self.assertEqual(job.run_slice(self.st, time.time() + 1, True), 0)

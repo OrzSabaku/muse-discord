@@ -236,13 +236,13 @@ def _proactive_context():
         owners_absent=lambda *args, **kwargs: _OWNER_PRESENCE.absent(*args, **kwargs),
         queue_edit=lambda add=(), drop=None: _queue_files().edit(add, drop),
         queued_item_meta=lambda *args, **kwargs: _REPLIES.queued_meta(*args, **kwargs),
-        rest_backing_off=lambda *args, **kwargs: rest_backing_off(*args, **kwargs),
-        scope_for=lambda *args, **kwargs: scope_for(*args, **kwargs),
+        rest_backing_off=_BACKOFF.active,
+        scope_for=_DIRECTORY.scopes.for_message,
         send_fragmented=lambda *args, **kwargs: _PARTS.send(*args, **kwargs),
         send_reply=lambda *args, **kwargs: _SENDER.reply(*args, **kwargs),
         settings=lambda *args, **kwargs: settings(*args, **kwargs),
         settings_card=lambda *args, **kwargs: _worker_context().settings_card(*args, **kwargs),
-        started_item_id=lambda *args, **kwargs: started_item_id(*args, **kwargs),
+        started_item_id=W.new_fire_id,
     )
 
 
@@ -305,19 +305,12 @@ def _directory_refresh():
 def _discovery():
     return Discovery(
         api_get,
-        rest_backing_off,
+        _BACKOFF.active,
         lambda: _IDENTITY.user_id,
         GUILD_ALLOWLIST,
         _DIRECTORY,
         _ACCESS,
     )
-
-
-def get_guilds():
-    return _discovery().guilds()
-
-
-# Discord permission bits used by the talk-scope computation.
 
 
 def discover_channels(previous=None):
@@ -333,14 +326,6 @@ _HEALTH: MonitorHealth
 _DISCORD: DiscordCalls
 
 
-def rest_backing_off():
-    return _BACKOFF.active()
-
-
-def touch_heartbeat():
-    return _HEALTH.progress()
-
-
 def api_get(path):
     return _DISCORD.get(path)
 
@@ -354,14 +339,6 @@ def _live_nonces():
         (_WATCH_STATE.web_cache.get("body"),),
         lambda: PRO.store.secret_nonces(),
     )
-
-
-def secret_in(text):
-    return _OUTPUT.find(text)
-
-
-def guard_outgoing(data, where):
-    return _OUTPUT.guard(data, where)
 
 
 def api_post(path, data):
@@ -446,8 +423,8 @@ def _response_policy():
         settings,
         lambda: _SETTINGS.owners,
         _conversation(),
-        scope_for,
-        scope_of_channel,
+        _DIRECTORY.scopes.for_message,
+        _DIRECTORY.scopes.for_channel,
         _AUTHOR_ROLES.get_roles,
         TM.count,
     )
@@ -455,14 +432,6 @@ def _response_policy():
 
 _DISCOVERY_REFRESH: DiscoveryRefresh
 # channel id -> its category id (from discovery), for category settings.
-
-
-def scope_for(guild_id=None, channel_id=None, dm=False):
-    return _DIRECTORY.scopes.for_message(guild_id, channel_id, dm)
-
-
-def scope_of_channel(channel_id):
-    return _DIRECTORY.scopes.for_channel(channel_id)
 
 
 _SHARED_MEMBERSHIP: SharedServers
@@ -681,7 +650,7 @@ def _gateway_ingress(state, channels):
         _receiver(state),
         channels,
         _ACCESS,
-        GatewayEvents(on_guild_event, watch_perm_event, note_activity, apply_record),
+        GatewayEvents(on_guild_event, _ACCESS.permission_event, note_activity, apply_record),
         GUILD_ALLOWLIST,
     )
 
@@ -703,13 +672,6 @@ def list_dm_channels():
 
 def check_dm_channel(dm_id, dm_name, state):
     return _receiver(state).poll_dm(dm_id, dm_name)
-
-
-def started_item_id(now=None):
-    """The queue id of an item the monitor starts (a reminder or watch
-    fire, a heartbeat slot): a snowflake for now with random low bits,
-    so it passes every id check and never names a real message."""
-    return W.new_fire_id(now)
 
 
 def _worker_context():
@@ -769,13 +731,6 @@ WATCHES_FILE = os.path.join(BASE_DIR, "watches.json")
 # the checker's reports from bin/watch-report.py (drained each tick).
 WEB_DUE_FILE = os.path.join(BASE_DIR, "web_watches_due.json")
 WEB_RESULTS_FILE = os.path.join(BASE_DIR, "web_watch_results.json")
-
-
-# -- what a requester can read -------------------------------------------
-
-
-def watch_perm_event(ev):
-    return _ACCESS.permission_event(ev)
 
 
 # -- asking for one ---------------------------------------------------------
@@ -875,7 +830,7 @@ def sweep_mentions(state, queue, channels, dms=True):
             _SETTINGS.engine.sweep.max_age_seconds,
             _SETTINGS.engine.sweep.max_recoveries,
         ),
-        backing_off=rest_backing_off,
+        backing_off=_BACKOFF.active,
         now=time.time,
     ).run(state, queue, channels, dms)
 
@@ -930,7 +885,7 @@ def _rest_scheduler():
                 _SETTINGS.engine.discovery_refresh_cycles,
                 THREAD_REFRESH_CYCLES,
             ),
-            RestClock(time.time, rest_backing_off),
+            RestClock(time.time, _BACKOFF.active),
             RestOperations(
                 lambda: _DIRECTORY.channels,
                 lambda: _IDENTITY.user_id is not None,
@@ -975,7 +930,7 @@ def _start_monitor_threads(state):
 def _start_monitor():
     _PROCESS_LOCK.acquire()
     TM.start()
-    touch_heartbeat()
+    _HEALTH.progress()
     # The watchdog waits for identity before slow channel discovery.
     _IDENTITY.start()
     _DIRECTORY.adopt(*discover_channels())
@@ -1024,14 +979,14 @@ def _initialize_owner_services():
     global _ADMIN_DIGESTS, _JOIN_NOTICES, _GUILD_LIFECYCLE
     _OWNER_MESSAGES = OwnerMessenger(
         lambda: _SETTINGS.owners,
-        lambda data, where: guard_outgoing(data, where),
+        _OUTPUT.guard,
         lambda path, body: api_post(path, body),
     )
     _OWNER_PRESENCE = OwnerPresence(
         lambda: _SETTINGS.owners,
         settings,
         lambda path: api_get(path),
-        lambda: rest_backing_off(),
+        _BACKOFF.active,
     )
     _OWNER_AUTH = OwnerAuthorization(
         lambda: _SETTINGS.owners,
@@ -1044,7 +999,7 @@ def _initialize_owner_services():
         lambda: MEMORY_FILE,
         _OWNER_AUTH,
         lambda: bool(settings().top("memory.save_dms")),
-        lambda text: secret_in(text),
+        _OUTPUT.find,
     )
     _CAPABILITIES = CapabilityIssuer(
         CapabilityFiles(
@@ -1063,7 +1018,7 @@ def _initialize_owner_services():
         lambda: UPDATE_REQUEST_FILE,
         _OWNER_MESSAGES,
         updates_enabled,
-        lambda: rest_backing_off(),
+        _BACKOFF.active,
         lambda *args, **kwargs: _version_installed(*args, **kwargs),
     )
     _ADMIN_DIGESTS = AdminDigests(
@@ -1071,11 +1026,9 @@ def _initialize_owner_services():
         _LEDGER.names,
         _DIRECTORY.guilds,
         _OWNER_MESSAGES.notify,
-        lambda: rest_backing_off(),
+        _BACKOFF.active,
     )
-    _JOIN_NOTICES = JoinNotices(
-        _OWNER_PRESENCE, _OWNER_MESSAGES, lambda: rest_backing_off(), SETTINGS_PREFIX
-    )
+    _JOIN_NOTICES = JoinNotices(_OWNER_PRESENCE, _OWNER_MESSAGES, _BACKOFF.active, SETTINGS_PREFIX)
     _GUILD_LIFECYCLE = GuildLifecycle(
         _DIRECTORY,
         _DIRECTORY.channels,
@@ -1096,21 +1049,6 @@ def _initialize_services():
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
     global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTIONS, _INTERACTION_RESPONDER, _INTERACTION_WORKER
-    _IDENTITY = BotIdentity(
-        lambda path: api_get(path),
-        lambda: _BACKOFF.clean_cycle(),
-        lambda where: token_rejected_exit(where),
-    )
-    _PROCESS_LOCK = MonitorLock(lambda: PIDFILE)
-    _GATEWAY = GatewaySession(TOKEN, settings_context, guard_outgoing)
-    _DIRECTORY = DirectoryState()
-    _ACCESS = ChannelAccess(
-        _DIRECTORY.channels, lambda path: api_get(path), lambda: rest_backing_off()
-    )
-    _AUTHOR_ROLES = AuthorRoles(lambda path: api_get(path), lambda: rest_backing_off())
-    _WATCH_STORE = W.Store(lambda: WATCHES_FILE)
-    _WATCH_STATE = WatchState()
-    _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _STATE_STORE = StateFile(lambda: STATE_FILE)
     _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
     _BACKOFF = RestBackoff(
@@ -1118,24 +1056,35 @@ def _initialize_services():
         _SETTINGS.engine.backoff.max_seconds,
         lambda: time.time(),
     )
+    _IDENTITY = BotIdentity(
+        lambda path: api_get(path),
+        _BACKOFF.clean_cycle,
+        token_rejected_exit,
+    )
+    _PROCESS_LOCK = MonitorLock(lambda: PIDFILE)
+    _DIRECTORY = DirectoryState()
+    _ACCESS = ChannelAccess(_DIRECTORY.channels, lambda path: api_get(path), _BACKOFF.active)
+    _AUTHOR_ROLES = AuthorRoles(lambda path: api_get(path), _BACKOFF.active)
+    _WATCH_STORE = W.Store(lambda: WATCHES_FILE)
+    _WATCH_STATE = WatchState()
+    _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _OUTPUT = OutgoingGuard(
         lambda: TOKEN,
         _live_nonces,
         lambda text: _OWNER_MESSAGES.notify(text),
         lambda: time.strftime("%Y-%m-%d"),
     )
-    _DISCORD = DiscordCalls(
-        lambda: TOKEN, _BACKOFF, _HEALTH, lambda data, where: guard_outgoing(data, where)
-    )
+    _DISCORD = DiscordCalls(lambda: TOKEN, _BACKOFF, _HEALTH, _OUTPUT.guard)
+    _GATEWAY = GatewaySession(TOKEN, settings_context, _OUTPUT.guard)
     _SENDER = MessageSender(
-        lambda data, where: guard_outgoing(data, where),
+        _OUTPUT.guard,
         lambda path, body: api_post(path, body),
         lambda path, payload, blobs: _DISCORD.upload(path, payload, blobs),
         lambda path: _DISCORD.put(path),
     )
     _TYPING = TypingIndicators(
         lambda path, body: api_post(path, body),
-        lambda: rest_backing_off(),
+        _BACKOFF.active,
         lambda: _queue_files().load(),
         lambda: time.time(),
         lambda seconds: time.sleep(seconds),
@@ -1171,7 +1120,7 @@ def _initialize_services():
         lambda: time.time(),
         lambda state, now: pending_wait(state, now),
         lambda since: _OUTBOX.waiting(since),
-        lambda: rest_backing_off(),
+        _BACKOFF.active,
     )
     _INTERACTIONS = InteractionRouter(lambda: _SETTINGS.owners)
     _INTERACTIONS.register("mdupd", _UPDATE_NOTICES.on_button)
@@ -1183,7 +1132,7 @@ def _initialize_services():
     _DISCOVERY_REFRESH = DiscoveryRefresh()
     _SHARED_MEMBERSHIP = SharedServers(
         lambda path: api_get(path),
-        lambda: rest_backing_off(),
+        _BACKOFF.active,
         lambda: list(_DIRECTORY.guilds),
         lambda gid: _OWNER_PRESENCE.absent(gid),
         lambda: time.time(),
@@ -1193,7 +1142,7 @@ def _initialize_services():
         post=lambda path, data: api_post(path, data),
         patch=lambda path, data: api_patch(path, data),
         identity_ready=lambda: _IDENTITY.user_id is not None,
-        backing_off=lambda: rest_backing_off(),
+        backing_off=_BACKOFF.active,
         now=lambda: time.time(),
     )
     TM = _import_telemetry()
@@ -1260,14 +1209,14 @@ def main():
         if _HEALTH.rejected or status.get("token_rejected"):
             _STATE_STORE.save(state)
             token_rejected_exit(_HEALTH.rejected or "gateway closed with code 4004")
-        touch_heartbeat()
+        _HEALTH.progress()
         _IDENTITY.from_gateway(status)
-        now, backing = time.time(), rest_backing_off()
+        now, backing = time.time(), _BACKOFF.active()
         scheduler.begin_tick(now, backing)
         dm_items = []
         _run_phase("Gateway drain", _drain_live_messages, state, inbox)
         _run_phase(
-            "Settings overlay", _SETTINGS.retire_changes, _OWNER_MESSAGES.notify, rest_backing_off
+            "Settings overlay", _SETTINGS.retire_changes, _OWNER_MESSAGES.notify, _BACKOFF.active
         )
         _run_phase("/settings upkeep", _settings_upkeep, status)
         _run_phase("Owner DM upkeep", _CAPABILITIES.upkeep, state)

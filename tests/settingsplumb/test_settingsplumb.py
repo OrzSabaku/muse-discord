@@ -380,7 +380,7 @@ class Ctx(unittest.TestCase):
                     st = self.mod.settings()
                     st.resolve(sc)
                     self.mod._SETTINGS.retire_changes(
-                        self.mod._OWNER_MESSAGES.notify, self.mod.rest_backing_off
+                        self.mod._OWNER_MESSAGES.notify, self.mod._BACKOFF.active
                     )
             except Exception as e:  # pragma: no cover
                 errors.append(e)
@@ -442,7 +442,7 @@ class Ctx(unittest.TestCase):
         self.assertTrue(stale.retire)
         with quiet():
             mod.settings_context().write("everywhere.style.length", "detailed", OWNER)
-            n = mod._SETTINGS.retire_changes(mod._OWNER_MESSAGES.notify, mod.rest_backing_off)
+            n = mod._SETTINGS.retire_changes(mod._OWNER_MESSAGES.notify, mod._BACKOFF.active)
         self.assertEqual(n, 0)
         e = overlay(mod)["values"]["everywhere.style.length"]
         self.assertEqual((e["value"], e["base"]), ("detailed", "brief"))

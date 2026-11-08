@@ -97,7 +97,9 @@ class WatchPermissionPolicy(H.Base):
         m = self.mod
         self.assertTrue(self.access.can_view(H.G1, H.U2, H.CH2))
         self.assertIn((H.G1, H.U2), m._ACCESS.members)
-        m.watch_perm_event({"t": "GUILD_ROLE_DELETE", "d": {"guild_id": H.G1, "role_id": H.ROLE}})
+        m._ACCESS.permission_event(
+            {"t": "GUILD_ROLE_DELETE", "d": {"guild_id": H.G1, "role_id": H.ROLE}}
+        )
         self.assertFalse(self.access.can_view(H.G1, H.U2, H.CH2))
 
     def test_role_and_channel_events_change_view_immediately(self):
@@ -105,14 +107,14 @@ class WatchPermissionPolicy(H.Base):
         m._ACCESS.overwrites[H.CH2] = []
         m._ACCESS.guilds[H.G1]["roles"][H.G1] = 0
         self.assertFalse(self.access.can_view(H.G1, H.U2, H.CH2))
-        m.watch_perm_event(
+        m._ACCESS.permission_event(
             {
                 "t": "GUILD_ROLE_UPDATE",
                 "d": {"guild_id": H.G1, "role": {"id": H.ROLE, "permissions": str(VIEW)}},
             }
         )
         self.assertTrue(self.access.can_view(H.G1, H.U2, H.CH2))
-        m.watch_perm_event(
+        m._ACCESS.permission_event(
             {
                 "t": "CHANNEL_UPDATE",
                 "d": {
@@ -127,9 +129,9 @@ class WatchPermissionPolicy(H.Base):
     def test_owner_transfer_invalidates_owner_bypass(self):
         m = self.mod
         m._ACCESS.guilds[H.G1]["roles"] = {H.G1: 0}
-        m.watch_perm_event({"t": "GUILD_UPDATE", "d": {"id": H.G1, "owner_id": H.U1}})
+        m._ACCESS.permission_event({"t": "GUILD_UPDATE", "d": {"id": H.G1, "owner_id": H.U1}})
         self.assertTrue(self.access.can_view(H.G1, H.U1, H.CH))
-        m.watch_perm_event({"t": "GUILD_UPDATE", "d": {"id": H.G1, "owner_id": H.U2}})
+        m._ACCESS.permission_event({"t": "GUILD_UPDATE", "d": {"id": H.G1, "owner_id": H.U2}})
         self.assertFalse(self.access.can_view(H.G1, H.U1, H.CH))
 
     def test_unknown_nonmember_private_thread_and_malformed_overwrite_deny_view(self):
