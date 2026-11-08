@@ -943,16 +943,7 @@ def _start_monitor():
             flush=True,
         )
     state = load_state()
-    # Join watermarks for every guild, plus the owner summary for any
-    # guild joined while the monitor was down.
-    _GUILD_LIFECYCLE.sync(state, _DIRECTORY.guilds, _DIRECTORY.channels)
-
-    # Seed last_seen for any monitored channel not tracked yet, so its
-    # history is never mistaken for fresh mentions (first run, or a
-    # newly discovered channel after a permission grant).
-    for cid, info in _DIRECTORY.channels.items():
-        if cid not in state["last_seen"]:
-            seed_channel_seen(cid, channel_display(info), state)
+    _directory_refresh().restore(state)
 
     # Gateway fast path (realtime MESSAGE_CREATE for all guilds + DMs).
     # Daemon thread: it only enqueues raw messages and sets the wake event;

@@ -17,6 +17,13 @@ class DirectoryRefresh:
     sync: Callable[[dict, dict, dict], Any]
     save: Callable[[dict], Any]
 
+    def restore(self, state):
+        """Restore guild admission and seed new receive positions before workers start."""
+        self.sync(state, self.registry.guilds, self.registry.channels)
+        for cid, info in self.registry.channels.items():
+            if cid not in state["last_seen"]:
+                self.discovery.seed(cid, channel_display(info), state)
+
     def threads(self, state):
         """Light thread-only refresh: pick up brand-new posts and threads
         minutes after they appear instead of waiting for the full channel
