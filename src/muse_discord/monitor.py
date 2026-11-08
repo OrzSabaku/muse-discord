@@ -43,14 +43,12 @@ import fcntl
 import hmac
 import os
 import queue as pyqueue
-import re
 import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import UTC, datetime
 from http import HTTPStatus
 
 try:
@@ -128,6 +126,7 @@ from muse_discord.receiving.cursor import ReceiveCursor
 from muse_discord.receiving.direct import DirectChannels
 from muse_discord.receiving.gateway import GatewayEvents, GatewayIngress
 from muse_discord.receiving.messages import ReceivedMessages, ReceptionEffects
+from muse_discord.receiving.quarantine import MessageQuarantine, is_suspicious
 from muse_discord.receiving.reconciliation import MentionReconciler, RecoveryWindow
 from muse_discord.reply_delivery import OutboxDelivery
 from muse_discord.reply_state import ReplyState
@@ -146,7 +145,6 @@ from muse_discord.rest_scheduler import (
 from muse_discord.rest_scheduler import run_phase as _run_phase
 from muse_discord.storage import PrivateFile, SharedLockTimeout, atomic_write
 from muse_discord.storage import publish_private as _publish
-from muse_discord.storage import read_json as _read_json
 from muse_discord.watches.audience import WatchAudience
 from muse_discord.watches.delivery import WatchDelivery
 from muse_discord.watches.fires import WatchFireBuilder
@@ -498,35 +496,6 @@ def seed_channel_seen(cid, cname, state):
     return _discovery().seed(cid, cname, state)
 
 
-# Prompt-injection / exfiltration patterns. A match means the message is
-# quarantined for the owner's review instead of queued for auto-reply.
-# Deliberately conservative: false positives just skip one auto-reply.
-INJECTION_PATTERNS = [
-    r"ignore\s+(all\s+)?(previous|prior|above|earlier)\s+instructions",
-    r"disregard\s+(all\s+)?(previous|prior|above)?\s*instructions",
-    r"forget\s+(all\s+)?(previous|prior|above)?\s*instructions",
-    r"\byour\s+system\s*prompt\b",
-    r"(reveal|share|send|show|tell|give|leak|paste|print|post|drop|output).{0,40}\bsystem\s*prompt\b",
-    r"\byou\s+are\s+now\b",
-    r"\breveal\b.{0,50}\b(instructions|prompt|secrets?)\b",
-    r"\bjailbreak\b",
-    r"\bdeveloper\s+mode\b",
-    r"pretend\s+(you'?re|you\s+are|to\s+be)\b",
-    r"act\s+as\s+(a\s+)?(different|new|another)\b",
-    r"output\s+(your|the)\s+(initial|original|system)\s+(prompt|instructions)",
-    r"(read|cat|open|print)\s+~?/",
-    r"MEMORY\.md",
-    r"\.env\b",
-    # Credential terms need solicitation context: the bare term
-    # "api key" shows up constantly in legitimate dev talk, so it only
-    # matches with a request verb aimed at the key, "your ... api key",
-    # or an assignment.
-    r"(reveal|share|send|show|tell|give|leak|paste|print|post|drop|output).{0,40}\bapi[\s_-]?key\b",
-    r"\byour\b.{0,25}\bapi[\s_-]?key\b",
-    r"\bapi[\s_-]?key\b\s*(is|=|:)",
-]
-
-
 _BACKOFF: RestBackoff
 _HEALTH: MonitorHealth
 _DISCORD: DiscordCalls
@@ -656,56 +625,12 @@ def save_state(state):
     return _STATE_STORE.save(state)
 
 
-def is_suspicious(content):
-    """The injection pattern content matches, else False."""
-    lowered = content.lower()
-    for pat in INJECTION_PATTERNS:
-        if re.search(pat, lowered):
-            return pat
-    return False
+def _quarantine_store():
+    return MessageQuarantine(QUARANTINE_FILE, _message_ledger())
 
 
 def quarantine(msg, channel_name, matched_pattern, fragments=()):
-    """Hold a message (and its burst fragments: a split injection must
-    not have its second half swept back in alone) for the owner."""
-    entry = {
-        "message_id": msg["id"],
-        "channel_id": msg.get("channel_id"),
-        "channel_name": channel_name,
-        "author": msg.get("author", {}).get("username"),
-        "author_id": msg.get("author", {}).get("id"),
-        "content": msg.get("content", ""),
-        "matched_pattern": matched_pattern,
-        "timestamp": msg.get("timestamp"),
-        "quarantined_at": datetime.now(UTC).isoformat(),
-    }
-    if fragments:
-        entry["fragments"] = [
-            {"message_id": f["id"], "content": f.get("content", "")} for f in fragments
-        ]
-    q = _read_json(QUARANTINE_FILE, list)
-    if q is None:  # kept for the owner, never silently emptied
-        with contextlib.suppress(OSError):
-            os.replace(QUARANTINE_FILE, QUARANTINE_FILE + ".bad")
-        print("quarantine.json was unreadable; moved to quarantine.json.bad.", flush=True)
-        q = []
-    q.append(entry)
-    atomic_write(QUARANTINE_FILE, q[-100:])  # keep last 100
-    ledger_record_many(
-        [msg["id"]] + [f["id"] for f in fragments],
-        "quarantined",
-        matched_pattern,
-        context=LedgerContext(
-            channel_id=msg.get("channel_id"),
-            author=entry["author"],
-            author_id=(msg.get("author") or {}).get("id"),
-        ),
-    )
-    print(
-        f"Quarantined suspicious message from {entry['author']} in #{channel_name} "
-        f"(matched: {matched_pattern}): {entry['content'][:80]}",
-        flush=True,
-    )
+    return _quarantine_store().hold(msg, channel_name, matched_pattern, fragments)
 
 
 # ---------------------------------------------------------------------------
@@ -753,14 +678,7 @@ def _ledger_terminal(mid):
 
 
 def _quarantine_ids():
-    ids = set()
-    for e in _read_json(QUARANTINE_FILE, list) or []:
-        if isinstance(e, dict):
-            ids.add(e.get("message_id"))
-            ids.update(
-                fr.get("message_id") for fr in e.get("fragments") or [] if isinstance(fr, dict)
-            )
-    return ids
+    return _quarantine_store().ids()
 
 
 def _response_policy():

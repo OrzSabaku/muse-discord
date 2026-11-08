@@ -10,6 +10,7 @@
 | REST巡回・時間配分・定期ジョブの実行管理 | `src/muse_discord/rest_scheduler.py` |
 | 起動・イベント処理・各機能の接続 | `src/muse_discord/monitor.py` |
 | メッセージの処理結果・診断理由の永続化 | `src/muse_discord/message_ledger.py` |
+| 受信内容の検査・連投全体の隔離・破損記録の退避 | `src/muse_discord/receiving/quarantine.py` |
 | REST・Gateway受信の分類・確認位置・重複排除 | `src/muse_discord/receiving/` |
 | 連投の集約・到着順序・登録失敗の再試行 | `src/muse_discord/bursts.py` |
 | 受信バーストの検証・キュー項目の組み立て | `src/muse_discord/ingest.py` |
@@ -125,6 +126,7 @@ HTTPの長い制限待ちと認証失敗は `http_runtime`、稼働記録は `mo
 状態ファイルの保存は `durable_state.StateFile`、未反映の依頼を共有キューへ反映する順序は `QueuePublication` が持つ。キュー更新前に復旧可能な状態を保存し、ロック待ちや書き込みの失敗では未反映の依頼を残す。保存済み内容のキャッシュは保存先と組にする。
 依頼のメタデータ・時刻・連投全体の完了記録は `reply_state.ReplyState` が持つ。完了対象はその依頼のトリガーと断片だけに限り、別の連投への参照で処理済みにしない。保存ロックと権限の消費は呼び出し元のoutbox確定処理が担う。
 プリセットは `settings_presets` が通常の変更案へ変換する。UIとCLIはその変更案を共通の評価・権限確認・保存処理へ渡し、プリセット自体は設定を書き込まない。利用統計へは定義を値として渡し、設定エンジンの内部属性から探さない。
+受信内容の検査と隔離は `receiving.quarantine` が持つ。隔離する連投はトリガーと全断片を台帳へ記録し、隔離ファイルが読めない場合は元の内容を `.bad` へ退避してから新しい記録を書く。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査
