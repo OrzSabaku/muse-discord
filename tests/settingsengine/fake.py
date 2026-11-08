@@ -15,9 +15,9 @@ MUT = os.path.abspath(os.environ.get("MUT_DIR") or os.path.join(HERE, "..", ".."
 sys.path.insert(0, os.path.join(MUT, "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 sys.dont_write_bytecode = True
-from muse_discord import muse_settings as MS  # noqa: E402
 from common import redirect_files  # noqa: E402
 
+from muse_discord import muse_settings as MS  # noqa: E402
 
 OWNER = "11100000000000000001"
 OWNER2 = "11100000000000000002"

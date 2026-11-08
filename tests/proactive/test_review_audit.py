@@ -10,8 +10,8 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import test_proactive as tp  # noqa: E402
-from settings_harness import HTTPErr, U1, sf  # noqa: E402
+import test_proactive as tp
+from settings_harness import U1, HTTPErr, sf
 
 HOUR = 3600
 

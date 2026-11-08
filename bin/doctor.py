@@ -36,7 +36,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import setup_common as C  # noqa: E402
+import setup_common as C
 
 HOOKS = (
     # (stamp, what it is, how often it runs, older than this = problem)

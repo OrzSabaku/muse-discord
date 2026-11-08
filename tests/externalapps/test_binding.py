@@ -1,15 +1,16 @@
 """Monitor stamps original owner DMs, independent of Discord owner commands."""
 
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 ROOT = Path(os.environ.get("MUT_DIR", Path(__file__).resolve().parents[2]))
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "tests/_lib")]
-from muse_discord.external_apps.binding import card  # noqa: E402 (local import path bootstrap)
 from settings_harness import OWNER, dmsg, load_monitor, quiet  # noqa: E402 (local import path bootstrap)
+
+from muse_discord.external_apps.binding import card  # noqa: E402 (local import path bootstrap)
 
 
 class Binding(unittest.TestCase):

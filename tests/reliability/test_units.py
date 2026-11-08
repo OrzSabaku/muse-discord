@@ -14,16 +14,16 @@ from unittest import mock
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import signed  # noqa: E402
-import monitor_harness as H  # noqa: E402
+import monitor_harness as H
+from common import signed
 from monitor_harness import (
     BOT,
-    OWNER,
     G1,
-    msg,
-    chan,
-    sf,  # noqa: E402
+    OWNER,
     HTTPErr,
+    chan,
+    msg,
+    sf,
 )
 
 

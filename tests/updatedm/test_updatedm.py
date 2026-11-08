@@ -21,10 +21,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 import monitor_harness as H  # noqa: E402
 from common import (  # noqa: E402 (local import path bootstrap)
     FAKE_PROC,
-    HOOK_RUNTIME as RUNTIME,  # noqa: E402
     MUT_DIR,
     copy_watchdog,
     scratch,
+)
+from common import (
+    HOOK_RUNTIME as RUNTIME,
 )
 
 V0 = "v1.0.0"
@@ -583,7 +585,7 @@ updates:
         commits)."""
         with open(os.path.join(MUT_DIR, "docs/UPDATING.md")) as f:
             doc = f.read()
-        blocks = re.findall(r"```bash\n(.*?)```", doc, re.S)
+        blocks = re.findall(r"```bash\n(.*?)```", doc, re.DOTALL)
         find = [b for b in blocks if "ls-remote" in b]
         self.assertEqual(len(find), 1)
         step1 = [b for b in blocks if "fetch --no-tags origin tag" in b]

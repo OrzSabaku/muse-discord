@@ -5,14 +5,13 @@ forward decoded dispatch events without changing ingestion/dedup semantics.
 Legacy approval/update buttons still use the monitor's interaction worker.
 """
 
-from collections.abc import Callable
-from typing import Any
-
 import asyncio
 import json
 import os
 import time
 import urllib.request
+from collections.abc import Callable
+from typing import Any
 
 import discord
 from discord.ext import tasks

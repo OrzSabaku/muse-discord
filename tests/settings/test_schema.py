@@ -8,9 +8,10 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from settings_harness import MS, G1, CH, OWNER, tmpdir, write  # noqa: E402
-from muse_discord.settings_schema import SettingsSchema  # noqa: E402
-from pydantic import ValidationError  # noqa: E402
+from pydantic import ValidationError
+from settings_harness import CH, G1, MS, OWNER, tmpdir, write
+
+from muse_discord.settings_schema import SettingsSchema
 
 
 class Schema(unittest.TestCase):

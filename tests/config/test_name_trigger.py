@@ -15,7 +15,8 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR as REPO, scratch  # noqa: E402
+from common import MUT_DIR as REPO
+from common import scratch
 
 OLD_CFG = """token_from: /nonexistent
 """

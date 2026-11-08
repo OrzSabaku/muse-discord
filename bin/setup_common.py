@@ -4,11 +4,10 @@ Discord facts for setup, a shared REST helper, and token lookup.
 Not a command.
 """
 
-from typing import Any
-
 import os
 import sys
 import urllib.parse
+from typing import Any
 
 PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(PKG_DIR, "src")
@@ -89,7 +88,7 @@ def call(method: str, path: str, token: str, body: Any = None) -> Any:
     """One REST call as the bot. Returns the parsed JSON (None for an
     empty body). Raises ApiError. Never puts the token in an error."""
     ensure_src_on_path()
-    from muse_discord.discord_rest import transport, DiscordError
+    from muse_discord.discord_rest import DiscordError, transport
 
     try:
         value = transport(token, api_base()).request(method, path, body, timeout=TIMEOUT)

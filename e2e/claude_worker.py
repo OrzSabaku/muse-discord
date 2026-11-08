@@ -319,7 +319,7 @@ def run_ending(result):
     text = text.strip("`*_ .")
     if text.lower() == "done":
         return "done"
-    if re.match(r"done\s*;\s*flag\b", text, re.I):
+    if re.match(r"done\s*;\s*flag\b", text, re.IGNORECASE):
         return "flag"
     return "other"
 

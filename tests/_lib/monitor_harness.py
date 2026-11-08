@@ -9,7 +9,6 @@ import time
 
 from common import MUT_DIR, redirect_files, scratch
 
-
 BOT = "999"
 OWNER = "111"
 G1 = "G1"

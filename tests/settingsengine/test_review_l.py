@@ -10,7 +10,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fake import G1, MS, OWNER, SPAM, config, load  # noqa: E402
+from fake import G1, MS, OWNER, SPAM, config, load
 
 P = MS.Place
 C = MS.Change

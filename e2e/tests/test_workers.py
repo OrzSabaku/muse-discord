@@ -332,7 +332,7 @@ class ClaudeWorker(ClaudeBase):
             tuple(x.strip() for x in m.group(1).split(",")), claude_worker.PAYLOAD_FIELDS
         )
         self.assertEqual(
-            int(re.search(r"^LEASE_SECS=(\d+)$", hook, re.M).group(1)), claude_worker.LEASE_SECS
+            int(re.search(r"^LEASE_SECS=(\d+)$", hook, re.MULTILINE).group(1)), claude_worker.LEASE_SECS
         )
         for rule in (
             "owner_dm_nonces.json",

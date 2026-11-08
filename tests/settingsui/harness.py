@@ -6,16 +6,17 @@ Only Discord interactions are faked; writes use the real settings engine.
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR as MUT, scratch  # noqa: E402
+from common import MUT_DIR as MUT
+from common import scratch
 
 sys.path.insert(0, os.path.join(MUT, "src"))
-from muse_discord import muse_settings as MS  # noqa: E402
-from muse_discord import settings_ui as UI  # noqa: E402,F401 (re-exported)
+from muse_discord import muse_settings as MS
+from muse_discord import settings_ui as UI
 
 # Native UI component prefix.
 P = UI.PREFIX
@@ -47,7 +48,7 @@ HOMEWORK = "70000000000000000101"  # Study Group
 ART = "70000000000000000201"  # Pixel Plaza
 MANAGE = str(1 << 5)
 FIXED_AT = "2026-10-19T10:00:00Z"
-NOW = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc).timestamp()
+NOW = datetime(2026, 10, 19, 12, 0, tzinfo=UTC).timestamp()
 
 NAMES = {
     OWNER: "Zach",

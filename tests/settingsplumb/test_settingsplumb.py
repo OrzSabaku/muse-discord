@@ -12,20 +12,19 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
+import yaml  # noqa: E402
 from settings_harness import (  # noqa: E402 (local import path bootstrap)
     CH,
     G1,
     G2,
     MS,
     OWNER,
-    U1,  # noqa: E402
+    U1,
     HTTPErr,
     load_monitor,
     quiet,
     state,
 )
-
-import yaml  # noqa: E402
 
 CFG = f"""version: 1
 owners: ["{OWNER}"]
@@ -405,7 +404,7 @@ class Ctx(unittest.TestCase):
         )
         with quiet():
             self.assertEqual(
-                self.mod.settings().get("dms.who.dms_from".split(".", 1)[1], MS.Scope.dm()),
+                self.mod.settings().get(["dms", "who.dms_from"][1], MS.Scope.dm()),
                 "owners" if n % 2 == 0 else "anyone",
             )
 

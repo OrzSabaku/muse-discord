@@ -30,12 +30,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 from settings_harness import (  # noqa: E402 (local import path bootstrap)
     BOT,
     CH,
+    EPOCH,
     G1,
-    OTHER_BOT,  # noqa: E402
+    OTHER_BOT,
     OWNER,
     U1,
     U2,
-    EPOCH,
     HTTPErr,
     bump,
     dmsg,

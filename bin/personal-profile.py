@@ -4,14 +4,15 @@
 import argparse
 import datetime
 import os
-from pathlib import Path
 import re
 import sys
 import tempfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 import yaml  # noqa: E402 (local import path bootstrap)
+
 from muse_discord import muse_settings as MS  # noqa: E402 (local import path bootstrap)
 
 
@@ -68,7 +69,7 @@ def apply(directory, owner=None):
             yaml.safe_dump(data, out, allow_unicode=True, sort_keys=False)
         MS.load(str(staged))
         if target.exists():
-            stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%S%fZ")
             backup = directory / ("config.yaml.bak-personal-" + stamp)
             with backup.open("x") as out:
                 os.chmod(backup, 0o600)

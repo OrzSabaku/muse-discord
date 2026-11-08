@@ -20,7 +20,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 from common import (  # noqa: E402 (local import path bootstrap)
     HOOK_RUNTIME as RUNTIME,
-    MUT_DIR,  # noqa: E402
+)
+from common import (
+    MUT_DIR,
     copy_watchdog,
 )
 

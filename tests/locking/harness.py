@@ -2,6 +2,7 @@
 with every network call stubbed and every state file pointed at a fresh
 scratch package dir."""
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -10,12 +11,12 @@ import re
 import shutil
 import sys
 import time
-import contextlib
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR as WORKTREE, redirect_files, scratch  # noqa: E402
+from common import MUT_DIR as WORKTREE
+from common import redirect_files, scratch
 
 ARGV = list(sys.argv)  # before the monitor import overwrites it
 SCRATCH = scratch("muse-locking-")

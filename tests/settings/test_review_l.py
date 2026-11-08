@@ -16,7 +16,7 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR, scratch  # noqa: E402
+from common import MUT_DIR, scratch
 
 OWNER = "11100000000000000001"
 
@@ -38,8 +38,8 @@ class VenvReexec(unittest.TestCase):
             [sys.executable, "-m", "venv", "--without-pip", venv], check=True, capture_output=True
         )
         self.assertTrue(os.path.islink(os.path.join(venv, "bin", "python3")))
-        import yaml  # the packages "installed" in it: a .pth to them
         import pydantic
+        import yaml  # the packages "installed" in it: a .pth to them
 
         site = os.path.join(venv, "lib", "python%d.%d" % sys.version_info[:2], "site-packages")
         with open(os.path.join(site, "review_l.pth"), "w") as f:

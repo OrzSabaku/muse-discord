@@ -6,8 +6,7 @@ Each layer validates only supplied values, so defaults never erase inheritance.
 """
 
 from dataclasses import dataclass
-from pydantic.fields import FieldInfo
-from typing import Annotated, Literal, TypedDict, Required, cast
+from typing import Annotated, Literal, Required, TypedDict, cast
 from zoneinfo import ZoneInfo
 
 from pydantic import (
@@ -20,6 +19,7 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
 )
+from pydantic.fields import FieldInfo
 
 NOTES_MAX = 500
 PRESENCE_KINDS = ("watching", "playing", "listening", "streaming", "competing", "custom")

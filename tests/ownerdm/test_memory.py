@@ -19,7 +19,7 @@ from test_binding import (
     DM,
     DM2,
     OWNER2,
-    Base,  # noqa: E402
+    Base,
     HTTPErr,
 )
 

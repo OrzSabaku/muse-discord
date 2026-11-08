@@ -14,10 +14,11 @@ from email.parser import BytesParser
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-import common  # noqa: F401 (initialize paths and safe test environment)
 from unittest.mock import patch
 
-from muse_discord.discord_rest import Rest, DiscordError, route_for, _proxy_for
+import common  # noqa: F401 (initialize paths and safe test environment)
+
+from muse_discord.discord_rest import DiscordError, Rest, _proxy_for, route_for
 
 
 class Handler(http.server.BaseHTTPRequestHandler):

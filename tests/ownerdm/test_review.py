@@ -19,7 +19,7 @@ from settings_harness import (  # noqa: E402 (local import path bootstrap)
     OWNER,
     U1,
     dmsg,
-    quiet,  # noqa: E402
+    quiet,
     state,
 )
 from test_binding import DM, DM_U1, Base  # noqa: E402

@@ -14,20 +14,20 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from common import signed
 from harness import (
     ARGV,
-    monitor,
-    fresh_pkg,
-    new_state,  # noqa: E402
-    snowflake,
-    msg,
-    read,
-    write,
     capture,
+    fresh_pkg,
+    monitor,
+    msg,
+    new_state,
+    read,
     sent_texts,
+    snowflake,
     typing_calls,
+    write,
 )
-from common import signed  # noqa: E402
 
 m = monitor
 

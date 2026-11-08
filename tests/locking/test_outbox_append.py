@@ -15,7 +15,7 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR, scratch  # noqa: E402
+from common import MUT_DIR, scratch
 
 N = "ab" * 16
 CHANGE = {"op": "set", "place": "defaults", "key": "who.replies", "value": "off"}

@@ -38,8 +38,6 @@ from Discord), both read through muse_settings.py. See
 config.example.yaml for the schema.
 """
 
-from typing import Any
-
 import contextlib
 import fcntl
 import hashlib
@@ -59,9 +57,10 @@ import tempfile
 import threading
 import time
 import urllib.error
-import urllib.request
 import urllib.parse
-from datetime import datetime, timezone
+import urllib.request
+from datetime import UTC, datetime
+from typing import Any
 
 try:
     import yaml  # noqa: F401 (muse_settings needs it)
@@ -72,8 +71,8 @@ except ImportError:
 
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(CODE_DIR))
-from muse_discord.paths import project_root  # noqa: E402 (local import path bootstrap)
 from muse_discord import reply_protocol  # noqa: E402 (local import path bootstrap)
+from muse_discord.paths import project_root  # noqa: E402 (local import path bootstrap)
 from muse_discord.reply_protocol import is_snowflake as _is_snowflake  # noqa: E402 (local import path bootstrap)
 
 BASE_DIR = str(project_root(__file__))
@@ -940,8 +939,7 @@ def _note_rate_limit(exc):
         ) + random.uniform(0, 5)
         _rl_backoff_step = min(_rl_backoff_step + 1, 5)
     delay = max(1.0, min(float(delay), 3600.0))
-    if now + delay > _rl_until:
-        _rl_until = now + delay
+    _rl_until = max(_rl_until, now + delay)
     if now >= _rl_storm_logged_until:
         print(f"RATE LIMITED: backing off REST for {delay:.0f}s.", flush=True)
         _rl_storm_logged_until = _rl_until
@@ -1315,7 +1313,7 @@ def quarantine(msg, channel_name, matched_pattern, fragments=()):
         "content": msg.get("content", ""),
         "matched_pattern": matched_pattern,
         "timestamp": msg.get("timestamp"),
-        "quarantined_at": datetime.now(timezone.utc).isoformat(),
+        "quarantined_at": datetime.now(UTC).isoformat(),
     }
     if fragments:
         entry["fragments"] = [
@@ -1536,7 +1534,7 @@ def rate_block(state, user_id, channel_id=None, scope=None):
     if scope is None:
         scope = scope_of_channel(channel_id)
     st = settings()
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     rate = state["rate"]
 
     if rate["day"] != today:
@@ -1554,7 +1552,7 @@ def rate_block(state, user_id, channel_id=None, scope=None):
             return {"key": "limits.per_day", "counter": cid, "cap": cap}
 
     day_start = (
-        datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     )
     for cid, cap in st.cap_layers("limits.per_person_per_day", scope):
         users = (
@@ -3028,7 +3026,7 @@ def admin_digest_text(gid, changes):
     )
     lines = []
     for c in changes:
-        when = datetime.fromtimestamp(c["at"], timezone.utc).strftime("%H:%M UTC")
+        when = datetime.fromtimestamp(c["at"], UTC).strftime("%H:%M UTC")
         words = _digest_words(c)
         if words:
             lines.append(f"- <@{c['user']}>: {words}, {when}")
@@ -3566,7 +3564,7 @@ def owner_own_words(content):
     and code (``` blocks and `inline`), which may be someone else's
     text pasted in."""
     text = content if isinstance(content, str) else ""
-    text = re.sub(r"```.*?(```|$)", " ", text, flags=re.S)
+    text = re.sub(r"```.*?(```|$)", " ", text, flags=re.DOTALL)
     text = re.sub(r"`[^`\n]*`", " ", text)
     return "\n".join(ln for ln in text.split("\n") if not ln.lstrip().startswith(">"))
 
@@ -3578,9 +3576,7 @@ def _norm_name(text):
 
 # Bare channel names ("post this in announcements") that are never one.
 BARE_NAME_STOPWORDS = frozenset(
-    "the a an to in into on of for and or but this that these those it "
-    "its here there me you him her us them my your our their all any "
-    "some channel server thread".split()
+    ["the", "a", "an", "to", "in", "into", "on", "of", "for", "and", "or", "but", "this", "that", "these", "those", "it", "its", "here", "there", "me", "you", "him", "her", "us", "them", "my", "your", "our", "their", "all", "any", "some", "channel", "server", "thread"]
 )
 _THREAD_TYPES = (10, 11, 12)
 
@@ -4501,8 +4497,8 @@ def send_fragmented(
                 got = send_reply(channel_id, part, nonce=nonce, **kw)
         except Exception as e:
             try:
-                setattr(e, "failed_part", i)
-                setattr(e, "sent_ids", list(sent))
+                e.failed_part = i
+                e.sent_ids = list(sent)
             except Exception:
                 pass
             raise
@@ -4690,7 +4686,7 @@ def _media_counts(state):
     """Today's media.per_day counts in state ("media_sent": day,
     sent_today = the everywhere total, counts by server / dms), reset
     each UTC day."""
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     g = state.get("media_sent")
     if not isinstance(g, dict):
         g = state["media_sent"] = {}
@@ -4971,7 +4967,7 @@ def extract_document_text(path, content_type, filename):
         or ctype in ("application/json", "application/x-sh")
     ):
         try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 return _truncate(f.read())
         except Exception as e:
             print("Text read failed (%s): %s" % (filename, e), flush=True)
@@ -6114,7 +6110,7 @@ def _scrub_nonces(value):
 def _reject_outbox(rejects):
     """Set malformed outbox items aside for the owner's review."""
     kept = _read_json(OUTBOX_REJECTED_FILE, list) or []
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     kept += [
         {"rejected_at": now, "reason": reason, "item": _scrub_nonces(item)}
         for item, reason in rejects

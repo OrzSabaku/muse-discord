@@ -37,28 +37,29 @@ import secrets
 import shutil
 import tempfile
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import yaml
 
-from muse_discord.settings_schema import CORE, TOP, CORE_GROUPS
 from muse_discord.settings_display import (
+    CATEGORY_TYPE,
     LABELS,
     VALUE_LABELS,
-    CATEGORY_TYPE,
     ServerInfo,
     chain_names,
-    name_lookup,
-    people_text,
-    person_name,
     change_location,
     describe_change,
     label,
+    name_lookup,
     names_from,
+    people_text,
+    person_name,
     place_name,
     value_label,
 )
-from muse_discord.settings_schema import NOTES_MAX as NOTES_MAX, PRESENCE_KINDS as PRESENCE_KINDS
+from muse_discord.settings_schema import CORE, CORE_GROUPS, TOP
+from muse_discord.settings_schema import NOTES_MAX as NOTES_MAX
+from muse_discord.settings_schema import PRESENCE_KINDS as PRESENCE_KINDS
 
 OVERLAY_NAME = "config.discord.yaml"
 HISTORY_CAP = 100
@@ -757,7 +758,7 @@ def _retire_notice(keystr, entry, reason):
 
 
 def _now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _same_entry(a, b):
@@ -1595,7 +1596,7 @@ def undo(config_path, prefix, by, children=False, admin_gid=None, info=None, exp
 
 def backup(path):
     """Copy path to path.bak-<UTC timestamp>; returns the backup path."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     dest = f"{path}.bak-{stamp}"
     n = 1
     while os.path.exists(dest):
@@ -2709,12 +2710,12 @@ def admin_check(st, guild_id, changes, info=None, revert=False):
         if not revert and not ch.revert and ch.value != "inherit":
             ok, norm = normalize(st.spec(ch.key), ch.value)
             if (
-                ok
+                (ok
                 and ch.key == "who.replies"
-                and norm not in ADMIN_REPLIES
-                or ok
+                and norm not in ADMIN_REPLIES)
+                or (ok
                 and _is_enabled_key(ch.key)
-                and norm is not False
+                and norm is not False)
             ):
                 raise SettingsError(ADMIN_QUIETER)
     sim = simulate(st, changes, "admin")

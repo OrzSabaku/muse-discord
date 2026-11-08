@@ -1,7 +1,7 @@
 """Message presentation and splitting, with no network or settings imports."""
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def readable_content(text, mentions):
@@ -15,7 +15,7 @@ def readable_content(text, mentions):
 
     def timestamp(match):
         try:
-            return datetime.fromtimestamp(int(match[1]), timezone.utc).isoformat()
+            return datetime.fromtimestamp(int(match[1]), UTC).isoformat()
         except ValueError, OverflowError, OSError:
             return match[0]
 

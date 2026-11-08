@@ -26,19 +26,19 @@ from unittest import mock
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import HOOK_RUNTIME, MUT_DIR, scratch  # noqa: E402
+from common import HOOK_RUNTIME, MUT_DIR, scratch
 from settings_harness import (
     BOT,
     CH,
     CH2,
     CH_G2,
     G1,
-    OTHER_BOT,  # noqa: E402
+    G2,
+    MS,
+    OTHER_BOT,
     OWNER,
     U1,
     U2,
-    G2,
-    MS,
     HTTPErr,
     bump,
     dmsg,

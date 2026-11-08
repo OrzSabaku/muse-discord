@@ -13,9 +13,10 @@ from typing import TYPE_CHECKING, cast
 import discord
 
 if TYPE_CHECKING:
+    from discord.types.channel import PermissionOverwrite
+    from discord.types.channel import TextChannel as TextChannelPayload
     from discord.types.guild import Guild as GuildPayload
     from discord.types.member import MemberWithUser
-    from discord.types.channel import TextChannel as TextChannelPayload, PermissionOverwrite
 
 if not (2, 7, 1) <= discord.version_info[:3] < (2, 8, 0):
     raise ImportError("discord.py 2.7.x (>=2.7.1) is required; run uv sync")

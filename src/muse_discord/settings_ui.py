@@ -10,9 +10,9 @@ import asyncio
 import json
 import re
 import secrets
-from dataclasses import dataclass, field
 from collections.abc import Callable
-from typing import Any, Protocol, TypedDict, NotRequired, cast
+from dataclasses import dataclass, field
+from typing import Any, NotRequired, Protocol, TypedDict, cast
 
 import discord
 from discord import ui

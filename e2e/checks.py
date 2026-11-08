@@ -31,7 +31,7 @@ a failure in the PR comment is readable without opening the transcript.
 """
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 DISCORD_EPOCH_MS = 1420070400000
 SNIPPET = 60
@@ -75,7 +75,7 @@ def _iso_secs(ts):
     except ValueError:
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.timestamp()
 
 
@@ -382,7 +382,7 @@ def _scenario_log(tr):
 
 def check_log_contains(pattern, tr):
     log, what = _scenario_log(tr)
-    m = re.search(pattern, log, re.M)
+    m = re.search(pattern, log, re.MULTILINE)
     if m:
         line = log[log.rfind("\n", 0, m.start()) + 1 :].split("\n", 1)[0]
         return True, f"/{pattern}/ found in {what}: {line[:200]!r}"

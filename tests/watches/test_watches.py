@@ -26,14 +26,14 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import HOOK_RUNTIME, MUT_DIR, scratch, signed  # noqa: E402
+from common import HOOK_RUNTIME, MUT_DIR, scratch, signed
 from settings_harness import (
     BOT,
     CH,
     CH2,
     G1,
     OWNER,
-    ROLE,  # noqa: E402
+    ROLE,
     THREAD,
     U1,
     U2,

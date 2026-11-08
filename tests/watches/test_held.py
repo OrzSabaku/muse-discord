@@ -8,7 +8,7 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import test_watches as tw  # noqa: E402
+import test_watches as tw
 
 
 class Held(tw.Base):

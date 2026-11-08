@@ -60,8 +60,6 @@ package config.yaml (../config.yaml relative to this file, or
 MUSE_DISCORD_CONFIG), read through muse_settings.py. The token is never printed.
 """
 
-from typing import Any
-
 import hmac
 import json
 import os
@@ -70,6 +68,7 @@ import sqlite3
 import sys
 import urllib.parse
 import uuid
+from typing import Any
 
 PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GENERATED_DIR = os.path.join(PACKAGE_DIR, "generated")
@@ -78,8 +77,8 @@ OWNER_ITEMS_FILE = os.path.join(PACKAGE_DIR, "owner_items.json")
 DM_TYPES = (1, 3)  # DM, group DM
 sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
 from muse_discord import secret_scan as SCAN  # noqa: E402
-from muse_discord.discord_tools.tools import MessageTools, PartialSendError  # noqa: E402
 from muse_discord.discord_tools.media import MediaTools  # noqa: E402
+from muse_discord.discord_tools.tools import MessageTools, PartialSendError  # noqa: E402
 
 # --for / --nonce from the command line (main), for guard_channel.
 BINDING: dict[str, Any] = {"for": None, "nonce": None, "entry": None, "cmd": None}
@@ -326,7 +325,7 @@ def bot_id():
 
 
 def _request(method: str, path: str, data: Any = None, files=()) -> Any:
-    from muse_discord.discord_rest import transport, DiscordError
+    from muse_discord.discord_rest import DiscordError, transport
 
     try:
         result = transport(TOKEN, API).request(method, path, data, files=files, timeout=TIMEOUT)

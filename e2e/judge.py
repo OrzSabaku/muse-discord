@@ -130,7 +130,7 @@ def render_transcript(scenario, transcript):
         text = re.sub(r"<@!?(\d+)>", mention, text)
         if len(text) > MAX_CONTENT:
             text = text[:MAX_CONTENT] + " [...]"
-        line = head + ": " + (text if text else "(no text)")
+        line = head + ": " + (text or "(no text)")
         if msg.get("attachments"):
             line += "\n    attachments: " + ", ".join(str(a) for a in msg["attachments"])
         lines.append(line)
@@ -149,7 +149,7 @@ def build_prompt(scenario, transcript, persona=None):
     if persona is None:
         try:
             with open(PERSONA) as f:
-                persona = re.sub(r"<!--.*?-->\s*", "", f.read(), flags=re.S).strip()
+                persona = re.sub(r"<!--.*?-->\s*", "", f.read(), flags=re.DOTALL).strip()
         except OSError:
             persona = "(persona file missing)"
     rubric = (

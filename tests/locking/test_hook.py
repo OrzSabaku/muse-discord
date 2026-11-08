@@ -17,7 +17,7 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import HOOK_RUNTIME, MUT_DIR, scratch  # noqa: E402
+from common import HOOK_RUNTIME, MUT_DIR, scratch
 
 HOOK = os.path.join(MUT_DIR, "hooks", "mention-watch.sh")
 PERSONA = 'You are Pip.\nBe "nice".\n'

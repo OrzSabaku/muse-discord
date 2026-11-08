@@ -23,9 +23,9 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import test_watches as tw  # noqa: E402
-from common import HOOK_RUNTIME, scratch  # noqa: E402
-from settings_harness import OWNER, U1, U2  # noqa: E402
+import test_watches as tw
+from common import HOOK_RUNTIME, scratch
+from settings_harness import OWNER, U1, U2
 
 OTHER_OWNER = "100000000000000999"
 OPEN_DMS = "dms:\n  who:\n    dms_from: anyone\n"

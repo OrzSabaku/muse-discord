@@ -66,7 +66,7 @@ import random
 import secrets
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 VERSION = 1
 KIND = "proactive"
@@ -113,7 +113,7 @@ ASK_SEND_SECS = 10 * 60  # an ask not sent by then is dropped
 def iso(ts):
     if not ts:
         return None
-    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def snowflake_ts(mid):
@@ -126,13 +126,13 @@ def snowflake_ts(mid):
 # -- time ---------------------------------------------------------------------
 def zone(name):
     if not name or str(name).upper() == "UTC":
-        return timezone.utc
+        return UTC
     try:
         from zoneinfo import ZoneInfo
 
         return ZoneInfo(str(name))
     except Exception:
-        return timezone.utc
+        return UTC
 
 
 def parse_hours(text):
@@ -259,7 +259,6 @@ class Proactive:
             f"the bot reaches out to nobody."
         )
         print(f"Proactive: {self._alert}", flush=True)
-        return None
 
     @staticmethod
     def _slot_ok(s):

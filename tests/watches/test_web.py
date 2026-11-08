@@ -19,9 +19,9 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import test_watches as tw  # noqa: E402
-from common import HOOK_RUNTIME, MUT_DIR, scratch  # noqa: E402
-from settings_harness import OWNER, U1, U2  # noqa: E402
+import test_watches as tw
+from common import HOOK_RUNTIME, MUT_DIR, scratch
+from settings_harness import OWNER, U1, U2
 
 W_ = None  # muse_watches, from the monitor under test
 
@@ -272,7 +272,7 @@ class CheckerHook(unittest.TestCase):
         self.due([self.entry("wabcde", hostile)])
         prompt = self.wake()
         self.assertIsNotNone(prompt)
-        m = re.search(r"^BEGIN DATA (\w+)$(.*)^END DATA \1$", prompt, re.M | re.S)
+        m = re.search(r"^BEGIN DATA (\w+)$(.*)^END DATA \1$", prompt, re.MULTILINE | re.DOTALL)
         self.assertIsNotNone(m, prompt[-400:])
         outside = prompt[: m.start()] + prompt[m.end() :]
         for needle in ("evil.example", "wabcde", "ignore the rules"):

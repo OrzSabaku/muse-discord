@@ -9,7 +9,7 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "monitorfixes")
 )
-from test_monitorfixes import Base, U1  # noqa: E402
+from test_monitorfixes import U1, Base
 
 
 class SettingsWrite(Base):

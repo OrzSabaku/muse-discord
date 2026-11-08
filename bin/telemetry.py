@@ -29,11 +29,12 @@ import json
 import os
 import secrets
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(PKG, "src"), os.path.join(PKG, "bin")]
 import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
+
 from muse_discord import muse_settings as MS  # noqa: E402
 from muse_discord import telemetry as T  # noqa: E402
 
@@ -111,7 +112,7 @@ def cmd_status(args):
             and abs(retry) < 1e11
             and d.get("last_attempt") == T.utc_day()
         ):
-            at = datetime.fromtimestamp(retry, timezone.utc)
+            at = datetime.fromtimestamp(retry, UTC)
             then = f"; the rest is retried after {at:%H:%M} UTC"
         else:
             then = "; the rest is retried the next day"
@@ -133,7 +134,7 @@ def cmd_status(args):
         and isinstance(after, (int, float))
         and d.get("last_attempt") != T.utc_day()
     ):
-        at = datetime.fromtimestamp(after, timezone.utc)
+        at = datetime.fromtimestamp(after, UTC)
         print(f"Next send:   after {at:%Y-%m-%d %H:%M} UTC")
     print(f"Install id:  {T.read_install_id(ID_FILE, create=False) or '(none yet)'}")
     if not os.path.exists(DATA):

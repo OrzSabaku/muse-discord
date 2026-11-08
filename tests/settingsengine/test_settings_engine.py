@@ -24,7 +24,7 @@ from fake import (
     BASE,
     CAT,
     CH,
-    CH2,  # noqa: E402
+    CH2,
     CH_G2,
     G1,
     G2,
@@ -956,7 +956,7 @@ class ReviewMedium(unittest.TestCase):
         # the sweep recovers a lost DM from Sam, not one from Ann
         import time as _t
 
-        old = int(((_t.time() - 600) * 1000 - 1420070400000)) << 22
+        old = int((_t.time() - 600) * 1000 - 1420070400000) << 22
         sam_msg = {
             "id": str(old),
             "channel_id": sam_dm,

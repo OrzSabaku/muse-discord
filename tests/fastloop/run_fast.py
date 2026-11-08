@@ -21,9 +21,9 @@ for k in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "all_proxy",
     os.environ.pop(k, None)
 os.environ["NO_PROXY"] = os.environ["no_proxy"] = "*"
 
-from common import signed  # noqa: E402
 import monitor_harness as H  # noqa: E402
-from monitor_harness import G1, OWNER, BOT, msg, chan  # noqa: E402
+from common import signed  # noqa: E402
+from monitor_harness import BOT, G1, OWNER, chan, msg  # noqa: E402
 
 scenario = sys.argv[1]
 seconds = float(sys.argv[2])

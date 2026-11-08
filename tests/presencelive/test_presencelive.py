@@ -13,10 +13,11 @@ from unittest.mock import AsyncMock
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
+import discord
 from common import scratch
+
 from muse_discord import muse_settings as MS
 from muse_discord.discord_connection import Connection
-import discord
 
 
 def config(status="first", kind="watching", enabled=True):

@@ -56,7 +56,7 @@ def data_block(entries, token=None):
 def render(template, pkg, entries, python="python3", token=None):
     """The checker prompt with entries in its data block (ValueError
     when the template has no data line)."""
-    m = re.search(r"^---[ \t]*$", template, re.M)
+    m = re.search(r"^---[ \t]*$", template, re.MULTILINE)
     text = template[m.end() :].lstrip("\n") if m else template
     if text.count(DATA_LINE) != 1:
         raise ValueError(f"the template needs exactly one {DATA_LINE} line")

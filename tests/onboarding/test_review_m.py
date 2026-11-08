@@ -10,12 +10,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 import common  # noqa: E402,F401 (sets up sys.path for MUT_DIR)
 from settings_harness import (  # noqa: E402 (local import path bootstrap)
+    CH_G2,
     G1,
     G2,
-    CH_G2,
     OWNER,
     U1,
-    HTTPErr,  # noqa
+    HTTPErr,
     gmsg,
     load_monitor,
     quiet,

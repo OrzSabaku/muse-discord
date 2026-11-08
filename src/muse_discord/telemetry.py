@@ -38,8 +38,6 @@ the running monitor to send now (the SEND_NOW_FILE flag).
 Standard library only.
 """
 
-from typing import Any
-
 import json
 import math
 import os
@@ -55,7 +53,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 SCHEMA = 1
 # The maintainer's Worker (telemetry/worker). Empty = nothing is ever
@@ -143,14 +142,14 @@ NOTICE_TEXT = (
 # Small pure helpers
 # ---------------------------------------------------------------------------
 def utc_day(now=None):
-    return datetime.fromtimestamp(time.time() if now is None else now, timezone.utc).strftime(
+    return datetime.fromtimestamp(time.time() if now is None else now, UTC).strftime(
         "%Y-%m-%d"
     )
 
 
 def day_start(day):
     """The epoch second a UTC day ("YYYY-MM-DD") starts."""
-    return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
+    return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=UTC).timestamp()
 
 
 def day_secs(day):
@@ -889,7 +888,7 @@ class Recorder:
             d["last_send"]["error"] = error
             tries = d.get("tries") if isinstance(d.get("tries"), int) else 1
             d["retry_after"] = now + RETRY_SECS * 2 ** min(max(tries, 1) - 1, 5)
-            at = datetime.fromtimestamp(d["retry_after"], timezone.utc)
+            at = datetime.fromtimestamp(d["retry_after"], UTC)
             print(
                 f"Telemetry: send failed ({error}); trying again after {at:%Y-%m-%d %H:%M} UTC.",
                 flush=True,

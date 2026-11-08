@@ -2,11 +2,11 @@
 
 import hashlib
 import os
-from pathlib import Path
 import re
 import tempfile
+from pathlib import Path
 from urllib.parse import urlsplit
-from urllib.request import Request, HTTPRedirectHandler, build_opener
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 MAX_BYTES = 25 * 1024 * 1024
 INLINE_BYTES = 5 * 1024 * 1024

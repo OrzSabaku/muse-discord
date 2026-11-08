@@ -11,10 +11,11 @@ import re
 import sys
 import time
 
-from common import MUT_DIR as MUT, redirect_files, scratch
+from common import MUT_DIR as MUT
+from common import redirect_files, scratch
 
 sys.path.insert(0, os.path.join(MUT, "src"))
-from muse_discord import muse_settings as MS  # noqa: E402,F401 (re-exported)
+from muse_discord import muse_settings as MS  # noqa: F401 (re-exported)
 
 BOT = "999000000000000001"
 OWNER = "111000000000000001"

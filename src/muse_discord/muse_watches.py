@@ -35,16 +35,17 @@ Security properties (docs/PROTOCOL.md, Reminders and watches):
   active, and checks are budgeted per day.
 """
 
-import hmac
 import contextlib
 import fcntl
 import hashlib
+import hmac
 import json
 import os
 import re
 import secrets
 import tempfile
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -58,7 +59,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from datetime import datetime, timedelta, timezone
 
 VERSION = 1
 KINDS = ("remind", "watch")  # an `add`'s kind (a web watch is a

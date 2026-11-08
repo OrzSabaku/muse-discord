@@ -1,13 +1,14 @@
 """Discord permission rules on fresh snapshots, plus fail-closed watch policy."""
 
 import os
-import sys
 import subprocess
+import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import test_watches as H
-from common import MUT_DIR  # noqa: E402 (local import path bootstrap)
+from common import MUT_DIR
+
 from muse_discord.discord_permissions import channel_permissions, guild_permissions
 
 G, R1, R2, U, OWNER = "100", "200", "201", "300", "400"

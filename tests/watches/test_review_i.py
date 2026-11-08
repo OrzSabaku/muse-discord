@@ -12,8 +12,8 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import test_watches as tw  # noqa: E402
-from settings_harness import OWNER, U2  # noqa: E402
+import test_watches as tw
+from settings_harness import OWNER, U2
 
 
 class BorrowedOwnerItem(tw.Base):

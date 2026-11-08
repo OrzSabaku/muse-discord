@@ -12,6 +12,8 @@ import unittest
 E2E = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, E2E)
 
+from datetime import UTC
+
 import checks  # noqa: E402
 import scenario  # noqa: E402
 
@@ -25,9 +27,9 @@ def snowflake(secs):
 
 
 def iso(secs):
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.fromtimestamp(secs, timezone.utc).isoformat()
+    return datetime.fromtimestamp(secs, UTC).isoformat()
 
 
 def msg(author, at, content="", reply_to=None, **extra):

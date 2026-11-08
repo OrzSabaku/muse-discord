@@ -6,16 +6,16 @@ This keeps owner bindings, stdout, and token state isolated across calls.
 import asyncio
 import base64
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ImageContent, TextContent
 
-from .media import IMAGE_TYPES, INLINE_BYTES
-
 from muse_discord.paths import project_root
+
+from .media import IMAGE_TYPES, INLINE_BYTES
 
 ROOT = project_root(__file__)
 
@@ -36,7 +36,7 @@ async def invoke(command, for_id, nonce, *args):
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=360)
-    except asyncio.TimeoutError, asyncio.CancelledError:
+    except (TimeoutError, asyncio.CancelledError):
         if process.returncode is None:
             process.terminate()
             await process.wait()
@@ -78,7 +78,7 @@ async def invoke_external(command, for_id, nonce, *args, body=None):
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(data), timeout=90)
-    except asyncio.TimeoutError, asyncio.CancelledError:
+    except (TimeoutError, asyncio.CancelledError):
         if process.returncode is None:
             process.terminate()
             await process.wait()

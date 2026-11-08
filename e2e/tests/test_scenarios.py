@@ -21,9 +21,10 @@ REPO = os.path.dirname(E2E)
 sys.path.insert(0, E2E)
 sys.path.insert(0, os.path.join(REPO, "src"))
 
-from muse_discord import muse_settings  # noqa: E402
 import scenario  # noqa: E402
 import sut  # noqa: E402
+
+from muse_discord import muse_settings  # noqa: E402
 
 IDS = {"SUT": "111", "A": "222", "B": "333", "SUT_NAME": "muse-test"}
 GUILD, A, B, CHAN = "100", "200", "300", "400"

@@ -30,7 +30,8 @@ _ARGV = list(sys.argv)  # the monitor import below overwrites sys.argv
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR as SRC, redirect_files, scratch, signed  # noqa: E402,E501
+from common import MUT_DIR as SRC  # noqa: E402
+from common import redirect_files, scratch, signed
 
 WORK = scratch("muse-security-")
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))

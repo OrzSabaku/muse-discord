@@ -41,7 +41,7 @@ from settings_harness import (  # noqa: E402 (local import path bootstrap)
     MS,
     OWNER,
     U1,
-    U2,  # noqa: E402
+    U2,
     author,
     gmsg,
     load_monitor,

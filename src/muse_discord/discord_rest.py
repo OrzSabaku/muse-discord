@@ -6,9 +6,6 @@ limit buckets, HTTP retries and multipart encoding without model conversions.
 Internal SDK usage is confined here and covered by local HTTP contract tests.
 """
 
-from collections.abc import Iterable
-from typing import Any
-
 import asyncio
 import atexit
 import io
@@ -18,7 +15,9 @@ import re
 import secrets
 import threading
 import urllib.request
+from collections.abc import Iterable
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 import aiohttp
@@ -109,10 +108,10 @@ def route_for(method: str, path: str, base: str = API) -> tuple[Route, dict[str,
         if (
             piece.isdecimal()
             or major
-            or previous in ("interactions", "reactions")
-            and piece != "@me"
-            or i > 2
-            and pieces[i - 2] in ("webhooks", "interactions")
+            or (previous in ("interactions", "reactions")
+            and piece != "@me")
+            or (i > 2
+            and pieces[i - 2] in ("webhooks", "interactions"))
         ):
             key = major or (
                 "webhook_token" if i > 2 and pieces[i - 2] == "webhooks" else f"part_{i}"
@@ -161,7 +160,7 @@ class Rest:
         )
         try:
             return future.result(timeout=timeout + 1)
-        except FutureTimeoutError, asyncio.TimeoutError, TimeoutError:
+        except (FutureTimeoutError, TimeoutError):
             future.cancel()
             raise TimeoutError("Discord request timed out") from None
 
@@ -236,7 +235,7 @@ class Rest:
         except discord.HTTPException as exc:
             retry = exc.response.headers.get("Retry-After") if exc.status == 429 else None
             raise DiscordError(exc.status, exc.code, retry) from None
-        except asyncio.TimeoutError, TimeoutError:
+        except TimeoutError:
             # Cancellation during an SDK global-limit sleep can leave its gate
             # closed. Replace the session so later requests can recover.
             if self._http is http:

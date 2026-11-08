@@ -62,7 +62,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import setup_common as C  # noqa: E402
+import setup_common as C
 
 PKG = C.PKG_DIR
 DEFAULT_TOKEN_FILE = "~/.config/muse-discord/bot_token"
@@ -235,7 +235,7 @@ def write_private(path, text):
 def fresh_config_text(owner_id):
     with open(os.path.join(PKG, "config.example.yaml")) as f:
         text = f.read()
-    new, n = re.subn(r"^owners: \[\]", f'owners: ["{owner_id}"]', text, count=1, flags=re.M)
+    new, n = re.subn(r"^owners: \[\]", f'owners: ["{owner_id}"]', text, count=1, flags=re.MULTILINE)
     if n != 1:
         raise RuntimeError("config.example.yaml has no 'owners: []' line")
     return new

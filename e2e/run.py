@@ -52,11 +52,11 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import checks  # noqa: E402
-import discord_rest  # noqa: E402
-import judge  # noqa: E402
-import scenario  # noqa: E402
-import sut  # noqa: E402
+import checks
+import discord_rest
+import judge
+import scenario
+import sut
 
 E2E_DIR = os.path.dirname(os.path.abspath(__file__))
 SCENARIO_DIR = os.path.join(E2E_DIR, "scenarios")

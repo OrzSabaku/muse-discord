@@ -72,7 +72,7 @@ def fill_seam(text, name, body):
     (text, found)."""
     pat = re.compile(
         r"(=== SEAM: %s ===\n).*?(\n=== END SEAM: %s ===)" % (re.escape(name), re.escape(name)),
-        re.S,
+        re.DOTALL,
     )
     new, n = pat.subn(lambda m: m.group(1) + body + m.group(2), text, count=1)
     return new, n == 1
@@ -90,7 +90,7 @@ def render(template, pkg, media="none", python="python3"):
     """The installed worker prompt for package dir `pkg`, plus a list of
     warnings for seams the template no longer has."""
     warnings = []
-    m = re.search(r"^---[ \t]*$", template, re.M)
+    m = re.search(r"^---[ \t]*$", template, re.MULTILINE)
     text = template[m.end() :].lstrip("\n") if m else template
     text, ok = fill_seam(text, "PERSONA", PERSONA_SEAM)
     if not ok:
@@ -101,7 +101,7 @@ def render(template, pkg, media="none", python="python3"):
         lambda _m: limits_bullet(media),
         text,
         count=1,
-        flags=re.S,
+        flags=re.DOTALL,
     )
     if not n:
         warnings.append("GENERATION POLICY limits bullet not found")

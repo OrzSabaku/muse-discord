@@ -62,6 +62,7 @@ import time
 PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(PKG, "src"), os.path.join(PKG, "bin")]
 import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
+
 from muse_discord import muse_settings as MS  # noqa: E402
 
 

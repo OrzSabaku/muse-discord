@@ -19,14 +19,14 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import test_binding as tb  # noqa: E402
+import test_binding as tb
 from settings_harness import (
     CH,
     CH2,
     CH_G2,
     G1,
     MS,
-    OWNER,  # noqa: E402
+    OWNER,
     THREAD,
     U1,
     U2,
