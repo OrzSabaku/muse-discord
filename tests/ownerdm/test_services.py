@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "_lib"))
 import common  # noqa: F401 (select the source tree under test)
@@ -32,7 +32,7 @@ def services(directory):
         PrivateFile(str(directory / "owner_items.json")),
         PrivateFile(str(directory / "item_nonces.json")),
     )
-    issuer = CapabilityIssuer(files, auth, CommandTargets({}, {}), queue, Mock())
+    issuer = CapabilityIssuer(files, auth, CommandTargets({}, {}), queue.load, Mock())
     return queue, auth, issuer, no_network
 
 
@@ -50,6 +50,32 @@ def owner_item():
 
 
 class Capabilities(unittest.TestCase):
+    def test_publication_follows_destination_and_retains_secrets_after_failed_replacement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            _queue, _auth, issuer, _no_network = services(directory)
+            destination = directory / "first.json"
+            issuer.files.replies.destination = lambda: str(destination)
+            state = {}
+            reply = issuer.mint_reply(state, ITEM)
+            issuer.mint_owner_dm(state, ITEM, DM)
+            issuer.note_command(state, "command")
+            known = {
+                reply,
+                state["nl_nonces"][ITEM]["nonce"],
+                state["owner_items"]["command"]["nonce"],
+            }
+            self.assertEqual(issuer.published_nonces(), known)
+            destination = directory / "second.json"
+            issuer.write_replies(state)
+            self.assertEqual(json.loads(destination.read_text()), {ITEM: reply})
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
+            with patch("muse_discord.storage.atomic_write", side_effect=OSError("disk full")):
+                unpublished = issuer.mint_reply(state, "new-item")
+            self.assertNotIn(unpublished, issuer.published_nonces())
+            self.assertEqual(issuer.published_nonces(), known)
+            self.assertEqual(json.loads(destination.read_text()), {ITEM: reply})
+
     def test_gate_checks_fragment_binding_without_spending_private_capabilities(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

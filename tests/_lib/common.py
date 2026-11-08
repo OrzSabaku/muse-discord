@@ -96,5 +96,5 @@ def signed(mod, state, item):
     qid = answered_id(state, item)
     if qid:
         frags = mod.queue_index(state)["frags"]
-        item["reply_nonce"] = mod.reply_nonce_mint(state, trigger_of(state, qid, frags))
+        item["reply_nonce"] = mod._CAPABILITIES.mint_reply(state, trigger_of(state, qid, frags))
     return item

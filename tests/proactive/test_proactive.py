@@ -614,7 +614,7 @@ class Posting(Base):
         listed for a reply_nonce, so the hook never waits for one or
         re-wakes it after a post."""
         with quiet():
-            self.m.owner_dm_upkeep(self.st, force=True)
+            self.m._CAPABILITIES.upkeep(self.st, force=True)
         self.assertNotIn(self.slot["message_id"], self.st.get("reply_nonces") or {})
 
     def test_secret_in_a_post_spends_the_slot(self):
@@ -793,7 +793,7 @@ class K1BatchedOptIn(Base):
             dm=False,
             guild=G1,
         )
-        self.m.reply_nonces_write(self.st)
+        self.m._CAPABILITIES.write_replies(self.st)
         d = scratch("muse-k1-")
         env = dict(
             os.environ,

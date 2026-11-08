@@ -10,6 +10,7 @@ import json
 import os
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -133,8 +134,12 @@ def publish_private(path, body, cache, check=False, create=True):
 class PrivateFile:
     """A private publication endpoint with its own change-detection cache."""
 
-    path: str
+    destination: str | Callable[[], str]
     cache: dict = field(default_factory=lambda: {"body": None})
+
+    @property
+    def path(self) -> str:
+        return self.destination() if callable(self.destination) else self.destination
 
     def publish(self, body, check=False, create=True) -> bool:
         return publish_private(self.path, body, self.cache, check, create)

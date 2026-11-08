@@ -318,13 +318,13 @@ class OwnerItems(_B):
         own = self.queue(gmsg(OWNER, "<@bot> post this", mention=True), dm=False, guild=G1)
         self.st["owner_items"] = {"1" + "0" * 17: {"nonce": "a" * 32, "at": 0}}
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertEqual(list(self.items_file()), [own["id"]])
         # A mangled file is written again.
         with open(self.mod.OWNER_ITEMS_FILE, "w") as f:
             f.write("{broken")
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertEqual(list(self.items_file()), [own["id"]])
 
     def test_off_where_owner_commands_are_off(self):

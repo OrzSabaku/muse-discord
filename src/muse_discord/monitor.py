@@ -462,9 +462,9 @@ _OUTPUT: OutgoingGuard
 
 
 def _live_nonces():
-    return collect_nonces(
-        (_OWNER_DM_NONCES_WRITTEN.get("body"), _ITEM_NONCES_WRITTEN.get("body")),
-        (_OWNER_ITEMS_WRITTEN.get("body"), _WATCH_STATE.web_cache.get("body")),
+    return _CAPABILITIES.published_nonces() | collect_nonces(
+        (),
+        (_WATCH_STATE.web_cache.get("body"),),
         lambda: PRO.store.secret_nonces(),
     )
 
@@ -498,15 +498,10 @@ def _outbox_files():
     return OutboxFiles(OUTBOX_FILE, OUTBOX_PROCESSING_FILE, OUTBOX_REJECTED_FILE, _queue_files())
 
 
-def _publish_reply_capabilities(state):
-    reply_nonces_write(state)
-    owner_dm_write_nonces(state)
-
-
 def _deliver_outbox_item(batch, item):
     policy = ReplyPolicy(
         binding=_reply_binding(),
-        owners=_owner_auth(),
+        owners=_OWNER_AUTH,
         review=_REVIEW,
         generated=_generated_replies(),
         watches=_watch_delivery(),
@@ -537,7 +532,7 @@ def _outbox_processor():
         _outbox_files(),
         queue_index,
         save_state,
-        _publish_reply_capabilities,
+        _CAPABILITIES.publish,
         _deliver_outbox_item,
         _OUTBOX_CURRENT,
         _OUTBOX_POISON,
@@ -917,65 +912,16 @@ def flush_admin_digests(force=False):
 # Owner-DM capabilities: handed only to the worker serving that DM.
 # The persisted "nl_nonces" key is retained for existing queued DMs.
 # ---------------------------------------------------------------------------
+_CAPABILITIES: CapabilityIssuer
+_OWNER_AUTH: OwnerAuthorization
+
 OWNER_DM_NONCES_FILE = os.path.join(BASE_DIR, "owner_dm_nonces.json")
-_OWNER_DM_NONCES_WRITTEN: dict[str, dict[str, str] | None] = {"body": None}
-
-
-def _capabilities():
-    return CapabilityIssuer(
-        files=CapabilityFiles(
-            PrivateFile(OWNER_DM_NONCES_FILE, _OWNER_DM_NONCES_WRITTEN),
-            PrivateFile(OWNER_ITEMS_FILE, _OWNER_ITEMS_WRITTEN),
-            PrivateFile(ITEM_NONCES_FILE, _ITEM_NONCES_WRITTEN),
-        ),
-        auth=_owner_auth(),
-        targets=_owner_targets(),
-        queue=_queue_files(),
-        notify=notify_owners,
-        upkeep_clock=_OWNER_DM_UPKEEP,
-        reply_alert=_ITEM_NONCES_ALERT,
-    )
-
-
-def owner_dm_write_nonces(state):
-    return _capabilities().write_owner_dms(state)
-
-
-# ---------------------------------------------------------------------------
-# Owner DMs are bound to their wake. Any wake can be started by anyone's
-# message, so a worker may be reading a stranger's prompt injection. The
-# owner-DM nonce (above) is handed only to a wake that holds nothing but
-# owner DMs (hooks/mention-watch.sh), so it proves that the outbox item
-# was written in such a run. Every outbox item that answers an owner's
-# DM, settles it (silent, reactions, a reply under one of its
-# fragments) or posts in an owner's DM channel must carry that item's
-# nonce as owner_dm_nonce. Without it the item is refused before anything else looks at
-# it: set aside in reply_outbox.rejected.json, logged, and the queue
-# item stays open for the owner-DM-only wake that really holds it.
-# Other items are untouched.
-# ---------------------------------------------------------------------------
-_OWNER_DM_UPKEEP = {"next": 0.0}
-
-
-def _owner_auth():
-    return OwnerAuthorization(
-        lambda: _SETTINGS.owners,
-        _DIRECTORY.channels,
-        _DIRECTORY.guild_channels,
-        _DIRECT_MESSAGES.users,
-        api_get,
-        _CHANNEL_LOOKUP,
-    )
-
-
-def _owner_targets():
-    return CommandTargets(_DIRECTORY.channels, _DIRECTORY.guild_channels)
 
 
 def _owner_memory():
     return OwnerMemory(
         MEMORY_FILE,
-        _owner_auth(),
+        _OWNER_AUTH,
         lambda: bool(settings().top("memory.save_dms")),
         secret_in,
         _MEMORY_MISSING,
@@ -984,11 +930,6 @@ def _owner_memory():
 
 def queue_index(state):
     return _queue_files().index(state, _SETTINGS.owners)
-
-
-# Channels looked up from the API (OwnerAuthorization.gate): channel id -> (is a
-# DM, its recipients). Neither changes; who the owners are can.
-_CHANNEL_LOOKUP = {}
 
 
 # ---------------------------------------------------------------------------
@@ -1005,53 +946,10 @@ MEMORY_FILE = os.environ.get("MUSE_MEMORY_FILE") or os.path.expanduser("~/MEMORY
 _MEMORY_MISSING = {"logged": False}
 
 
-def owner_dm_upkeep(state, force=False):
-    return _capabilities().upkeep(state, force)
-
-
-# ---------------------------------------------------------------------------
-# Owner commands are bound to their wake too. bin/discord-api.py acts in
-# a channel (read, post, thread, react, pin, unpin, edit, delete-own)
-# only for an open queue item the monitor stamped owner_command (an
-# owner's own message, where abilities.owner_commands is on), with that
-# item's owner_command_nonce: 128 random bits kept in state.json
-# (owner_items) and in owner_items.json (mode 600, the open
-# owner-command items only), never in reply_queue.json. An owner's DM
-# uses its owner_dm_nonce. The wake hook hands the nonce only to a run
-# that holds nothing but owner items (they wake alone), so a run woken
-# by someone else's message cannot act through the tool even when it
-# knows the owner's message id (it is in the channel history).
-# ---------------------------------------------------------------------------
 OWNER_ITEMS_FILE = os.path.join(BASE_DIR, "owner_items.json")
-_OWNER_ITEMS_WRITTEN = {"body": None}
-# A new owner item is kept this long even before the queue file shows
-# it (it is noted before the queue write).
 
 
-# Bare channel names ("post this in announcements") that are never one.
-
-
-# ---------------------------------------------------------------------------
-# Every queue item is bound to the wake that holds it. The monitor mints
-# each queued item (fires included) a reply_nonce: 128 random bits, kept
-# in state.json (reply_nonces) and item_nonces.json (mode 600, the open
-# items only, read by the wake hook), never in reply_queue.json. The hook
-# adds it only to the wake that holds the item's lease, and every outbox
-# item must echo its item's (own_channel_problem), so a run can answer,
-# silence or put a schedule action on only the items it was handed, not
-# on ones whose ids it saw in history. Spent when the item settles.
-# ---------------------------------------------------------------------------
 ITEM_NONCES_FILE = os.path.join(BASE_DIR, "item_nonces.json")
-_ITEM_NONCES_WRITTEN: dict[str, dict[str, str] | None] = {"body": None}
-_ITEM_NONCES_ALERT: dict[str, str | None] = {"day": None}
-
-
-def reply_nonce_mint(state, mid):
-    return _capabilities().mint_reply(state, mid)
-
-
-def reply_nonces_write(state, check=False):
-    return _capabilities().write_replies(state, check)
 
 
 _COMMANDS: CommandRegistrar
@@ -1281,7 +1179,7 @@ def _worker_context():
 
 
 def _ingest_journal():
-    return IngestJournal(_message_ledger(), _quarantine_store(), _reply_state(), _capabilities())
+    return IngestJournal(_message_ledger(), _quarantine_store(), _reply_state(), _CAPABILITIES)
 
 
 def enqueue_message(msg, cname, state, queue, context=None):
@@ -1320,7 +1218,7 @@ STALE_PROMPT_FILE = os.path.join(BASE_DIR, "prompt_outdated.json")
 
 def _reply_binding():
     return ReplyBinding(
-        PrivateFile(ITEM_NONCES_FILE, _ITEM_NONCES_WRITTEN),
+        _CAPABILITIES.files.replies,
         lambda item: PRO.names_slot(item),
         StalePrompt(STALE_PROMPT_FILE, notify_owners, time.time, lambda: time.strftime("%Y-%m-%d")),
     )
@@ -1406,9 +1304,9 @@ def _watch_runtime():
         queue=WatchQueue(
             _queue_files(),
             _reply_state(),
-            _capabilities(),
+            _CAPABILITIES,
             lambda: _SETTINGS.owners,
-            owner_dm_write_nonces,
+            _CAPABILITIES.write_owner_dms,
         ),
         web=WebWatchWork(
             WEB_RESULTS_FILE,
@@ -1762,6 +1660,7 @@ def _start_monitor():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
+    global _CAPABILITIES, _OWNER_AUTH
     global _OWNER_MESSAGES, _OWNER_PRESENCE, _REVIEW, _UPDATE_NOTICES
     global _ADMIN_DIGESTS, _JOIN_NOTICES, _GUILD_LIFECYCLE
     global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
@@ -1806,6 +1705,24 @@ def _initialize_services():
         settings,
         lambda path: api_get(path),
         lambda: rest_backing_off(),
+    )
+    _OWNER_AUTH = OwnerAuthorization(
+        lambda: _SETTINGS.owners,
+        _DIRECTORY.channels,
+        _DIRECTORY.guild_channels,
+        _DIRECT_MESSAGES.users,
+        lambda path: api_get(path),
+    )
+    _CAPABILITIES = CapabilityIssuer(
+        CapabilityFiles(
+            PrivateFile(lambda: OWNER_DM_NONCES_FILE),
+            PrivateFile(lambda: OWNER_ITEMS_FILE),
+            PrivateFile(lambda: ITEM_NONCES_FILE),
+        ),
+        _OWNER_AUTH,
+        CommandTargets(_DIRECTORY.channels, _DIRECTORY.guild_channels),
+        lambda: load_queue(),
+        lambda text: notify_owners(text),
     )
     _REVIEW = ReplyReview(settings, _OWNER_MESSAGES, _DIRECT_MESSAGES.users, _settle)
     _UPDATE_NOTICES = UpdateNotices(
@@ -1920,7 +1837,7 @@ def main():
         _run_phase("Gateway drain", _drain_live_messages, state, inbox)
         _run_phase("Settings overlay", retire_overlay_changes)
         _run_phase("/settings upkeep", _settings_upkeep, status)
-        _run_phase("Owner DM upkeep", owner_dm_upkeep, state)
+        _run_phase("Owner DM upkeep", _CAPABILITIES.upkeep, state)
         _run_phase("Reminders and watches", watch_tick, state)
         _run_phase("Proactive", PRO.tick, state)
         poll_turn, rest_spent = scheduler.poll_slice(state, now, backing, dm_items)

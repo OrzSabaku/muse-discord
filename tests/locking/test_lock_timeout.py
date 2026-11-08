@@ -142,14 +142,14 @@ class LockTimeout(unittest.TestCase):
         write(m.QUEUE_FILE, [{"message_id": mid, "channel_id": "101"}])
         item = signed(m, state, {"item": mid, "reply_to": mid, "channel_id": "101", "text": "hi"})
         write(m.OUTBOX_FILE, [item])
-        original_publish = m.reply_nonces_write
+        original_publish = m._CAPABILITIES.write_replies
 
         def publish(current):
             with held_lock():
                 pass  # another writer can acquire the lock while publication runs
             return original_publish(current)
 
-        with patch.object(m, "reply_nonces_write", publish), capture():
+        with patch.object(m._CAPABILITIES, "write_replies", publish), capture():
             m.outbox_pass(state)
         self.assertEqual(sent_texts(), ["hi"])
         self.assertEqual(read(m.QUEUE_FILE), [])

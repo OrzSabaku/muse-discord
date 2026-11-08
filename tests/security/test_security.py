@@ -219,7 +219,7 @@ def reset():
     SEND_FILES_FAIL[0] = 0
     M.collect_media = ORIG_COLLECT
     M._SETTINGS.engine = M._SETTINGS.engine.model_copy(update={"max_reply_chars": 1800})
-    M._OWNER_ITEMS_WRITTEN["body"] = None
+    M._CAPABILITIES.files.commands.cache["body"] = None
     D.OWNER_ITEMS_FILE = M.OWNER_ITEMS_FILE
     st = M.load_state()
     st["guild_joined"] = {GUILD: 0}

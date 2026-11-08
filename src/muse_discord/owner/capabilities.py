@@ -1,8 +1,11 @@
 """Issue, publish and recover capabilities for verified worker queue items.
 
 Owner-DM, owner-command and reply capabilities stay in monitor-owned state and
-private files. The queue never receives their secrets. Authorization and final
-consumption are separate responsibilities; issuance alone spends nothing.
+private files. The queue never receives their secrets. The wake hook hands
+owner capabilities only to runs holding owner items, and reply capabilities only
+to the run holding that item's lease. Each item has a random 128-bit capability;
+settlement spends it, while upkeep repairs lost files and queued capabilities.
+Authorization and consumption are separate; issuance alone spends nothing.
 """
 
 import secrets
@@ -11,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from muse_discord.message_models import PROACTIVE_KIND, OwnerCommand
-from muse_discord.message_queue import QueueFiles, keep_last, queued_owner_dm
+from muse_discord.message_queue import keep_last, queued_owner_dm
 from muse_discord.owner.authorization import OwnerAuthorization
 from muse_discord.owner.targets import CommandTargets
 from muse_discord.storage import PrivateFile
@@ -33,10 +36,27 @@ class CapabilityIssuer:
     files: CapabilityFiles
     auth: OwnerAuthorization
     targets: CommandTargets
-    queue: QueueFiles
+    load_queue: Callable[[], list]
     notify: Callable[[str], object]
     upkeep_clock: dict = field(default_factory=lambda: {"next": 0.0})
     reply_alert: dict = field(default_factory=lambda: {"day": None})
+
+    def publish(self, state):
+        """Publish remaining capabilities after settlement has spent completed items."""
+        self.write_replies(state)
+        self.write_owner_dms(state)
+
+    def published_nonces(self) -> set[str]:
+        """Last published capabilities, including those whose replacement failed."""
+        nonces = set()
+        for endpoint in (self.files.owner_dms, self.files.replies):
+            nonces.update((endpoint.cache.get("body") or {}).values())
+        nonces.update(
+            record.get("nonce")
+            for record in (self.files.commands.cache.get("body") or {}).values()
+            if isinstance(record, dict)
+        )
+        return {nonce for nonce in nonces if isinstance(nonce, str) and nonce}
 
     def mint_owner_dm(self, state, mid, channel_id=None, fragments=()):
         """A capability for one owner-DM queue item (see owner_dm_gate and
@@ -80,7 +100,7 @@ class CapabilityIssuer:
             return
         self.upkeep_clock["next"] = now + OWNER_DM_UPKEEP_SECS
         try:
-            queue = self.queue.load()
+            queue = self.load_queue()
         except OSError, ValueError:
             return
         n = state.setdefault("nl_nonces", {})

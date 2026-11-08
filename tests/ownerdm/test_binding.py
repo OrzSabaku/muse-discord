@@ -519,14 +519,14 @@ class NonceLifetime(Base):
         n = self.nonce(m["id"])
         self.st["nl_nonces"][m["id"]]["at"] -= 2 * 86400
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertEqual(self.nonce(m["id"]), n)
         with open(self.mod.OWNER_DM_NONCES_FILE) as f:
             self.assertEqual(json.load(f), {m["id"]: n})
         # A spent one (not queued any more) is pruned after a day.
         self.st["nl_nonces"]["123"] = {"nonce": "b" * 32, "at": time.time() - 2 * 86400}
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertNotIn("123", self.st["nl_nonces"])
 
     def test_state_lost_mints_a_new_nonce(self):
@@ -541,9 +541,9 @@ class NonceLifetime(Base):
         self.assert_refused("none live")
         self.assertEqual(self.sends(DM), [])
         # The main loop's upkeep mints a new one, for owner DMs only.
-        self.mod._OWNER_DM_UPKEEP["next"] = 0
+        self.mod._CAPABILITIES.upkeep_clock["next"] = 0
         with quiet():
-            self.mod.owner_dm_upkeep(self.st)
+            self.mod._CAPABILITIES.upkeep(self.st)
         self.assertEqual(list(self.st["nl_nonces"]), [m["id"]])
         self.assertIn(s["id"], self.queued())
         self.assertIn(u["id"], self.queued())

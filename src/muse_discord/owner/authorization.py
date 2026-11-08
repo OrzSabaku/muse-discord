@@ -2,6 +2,9 @@
 
 Directory snapshots and REST access are explicit inputs. A gate never consumes a
 nonce: only successful settlement can spend it, after acquiring the queue lock.
+Any reply, silence or reaction that settles an owner DM, or posts in its channel,
+needs that item's owner_dm_nonce before other effects are considered. A refused
+item stays open for an owner-only wake to answer it.
 """
 
 import hmac

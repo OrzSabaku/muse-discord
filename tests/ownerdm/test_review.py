@@ -80,7 +80,7 @@ class BurstFragments(Base):
         self.outbox({"channel_id": CH, "reply_to": frag["id"], "silent": True})
         self.assertIn(trig["id"], self.queued(), self.out)
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertEqual(self.st["nl_nonces"][trig["id"]]["fragments"], [frag["id"]])
         self.outbox({"channel_id": CH, "reply_to": frag["id"], "silent": True})
         self.assertIn(trig["id"], self.queued(), self.out)
@@ -151,7 +151,7 @@ class ForgottenChannels(Base):
         self.assert_refused("could not be looked up")
         # The API says it is a DM with an owner (or with nobody listed).
         for recips in ([{"id": OWNER}], []):
-            self.mod._CHANNEL_LOOKUP.clear()
+            self.mod._OWNER_AUTH.lookup.clear()
             self.mod.api_get = lambda path, r=recips: {"id": DM, "type": 1, "recipients": r}
             self.outbox({"channel_id": DM, "standalone": True, "text": "unsolicited"})
             self.assertEqual(len(self.sends(DM)), 1, self.out)
@@ -211,9 +211,9 @@ class UpkeepFirst(Base):
     def test_owner_dm_upkeep_refreshes_missing_nonce(self):
         m = self.owner_dm()
         self.st["nl_nonces"].clear()
-        self.mod._OWNER_DM_UPKEEP["next"] = 0
+        self.mod._CAPABILITIES.upkeep_clock["next"] = 0
         with quiet():
-            self.mod.owner_dm_upkeep(self.st)
+            self.mod._CAPABILITIES.upkeep(self.st)
         self.assertIn(m["id"], self.st["nl_nonces"])
 
 
