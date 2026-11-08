@@ -511,7 +511,7 @@ def _deliver_outbox_item(batch, item):
     )
     effects = ReplyEffects(
         state=_reply_state(),
-        memory=_owner_memory(),
+        memory=_MEMORY,
         schedules=_watch_requests(),
         watches=policy.watches,
         conversation=_conversation(),
@@ -905,32 +905,12 @@ _OWNER_AUTH: OwnerAuthorization
 OWNER_DM_NONCES_FILE = os.path.join(BASE_DIR, "owner_dm_nonces.json")
 
 
-def _owner_memory():
-    return OwnerMemory(
-        MEMORY_FILE,
-        _OWNER_AUTH,
-        lambda: bool(settings().top("memory.save_dms")),
-        secret_in,
-        _MEMORY_MISSING,
-    )
-
-
 def queue_index(state):
     return _queue_files().index(state, _SETTINGS.owners)
 
 
-# ---------------------------------------------------------------------------
-# What an owner tells the bot in their own DM reaches the Muse's memory:
-# the worker lists the lasting facts in the reply's "remember" field and
-# the monitor appends them to the Muse's memory file (MEMORY.md), which
-# the Muse loads in every chat. Only an owner's own DM, proved by its
-# live nonce: memory feeds the Muse itself, so a stranger's message must
-# never write there. Each fact becomes one plain bullet line; nothing
-# that looks like a secret; at most MEMORY_PER_DAY a day.
-# memory.save_dms: off turns it off.
-# ---------------------------------------------------------------------------
+_MEMORY: OwnerMemory
 MEMORY_FILE = os.environ.get("MUSE_MEMORY_FILE") or os.path.expanduser("~/MEMORY.md")
-_MEMORY_MISSING = {"logged": False}
 
 
 OWNER_ITEMS_FILE = os.path.join(BASE_DIR, "owner_items.json")
@@ -1565,13 +1545,80 @@ def _start_monitor():
     return state, inbox, status
 
 
+def _initialize_owner_services():
+    """Connect owner authorization, private capabilities, notices and reply review."""
+    global _MEMORY, _CAPABILITIES, _OWNER_AUTH
+    global _OWNER_MESSAGES, _OWNER_PRESENCE, _REVIEW, _UPDATE_NOTICES
+    global _ADMIN_DIGESTS, _JOIN_NOTICES, _GUILD_LIFECYCLE
+    _OWNER_MESSAGES = OwnerMessenger(
+        lambda: _SETTINGS.owners,
+        lambda data, where: guard_outgoing(data, where),
+        lambda path, body: api_post(path, body),
+    )
+    _OWNER_PRESENCE = OwnerPresence(
+        lambda: _SETTINGS.owners,
+        settings,
+        lambda path: api_get(path),
+        lambda: rest_backing_off(),
+    )
+    _OWNER_AUTH = OwnerAuthorization(
+        lambda: _SETTINGS.owners,
+        _DIRECTORY.channels,
+        _DIRECTORY.guild_channels,
+        _DIRECT_MESSAGES.users,
+        lambda path: api_get(path),
+    )
+    _MEMORY = OwnerMemory(
+        lambda: MEMORY_FILE,
+        _OWNER_AUTH,
+        lambda: bool(settings().top("memory.save_dms")),
+        lambda text: secret_in(text),
+    )
+    _CAPABILITIES = CapabilityIssuer(
+        CapabilityFiles(
+            PrivateFile(lambda: OWNER_DM_NONCES_FILE),
+            PrivateFile(lambda: OWNER_ITEMS_FILE),
+            PrivateFile(lambda: ITEM_NONCES_FILE),
+        ),
+        _OWNER_AUTH,
+        CommandTargets(_DIRECTORY.channels, _DIRECTORY.guild_channels),
+        lambda: load_queue(),
+        lambda text: notify_owners(text),
+    )
+    _REVIEW = ReplyReview(settings, _OWNER_MESSAGES, _DIRECT_MESSAGES.users, _settle)
+    _UPDATE_NOTICES = UpdateNotices(
+        lambda: UPDATE_CHECK_FILE,
+        lambda: UPDATE_REQUEST_FILE,
+        _OWNER_MESSAGES,
+        updates_enabled,
+        lambda: rest_backing_off(),
+        lambda *args, **kwargs: _version_installed(*args, **kwargs),
+    )
+    _ADMIN_DIGESTS = AdminDigests(
+        _directory_name,
+        _USER_NAMES,
+        _DIRECTORY.guilds,
+        _OWNER_MESSAGES.notify,
+        lambda: rest_backing_off(),
+    )
+    _JOIN_NOTICES = JoinNotices(
+        _OWNER_PRESENCE, _OWNER_MESSAGES, lambda: rest_backing_off(), SETTINGS_PREFIX
+    )
+    _GUILD_LIFECYCLE = GuildLifecycle(
+        _DIRECTORY,
+        _DIRECTORY.channels,
+        _OWNER_PRESENCE,
+        _JOIN_NOTICES,
+        settings,
+        publish_directory,
+        GUILD_ALLOWLIST,
+    )
+
+
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
     global _OUTBOX
     global _SENDER, _PARTS, _TYPING
-    global _CAPABILITIES, _OWNER_AUTH
-    global _OWNER_MESSAGES, _OWNER_PRESENCE, _REVIEW, _UPDATE_NOTICES
-    global _ADMIN_DIGESTS, _JOIN_NOTICES, _GUILD_LIFECYCLE
     global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
@@ -1618,69 +1665,13 @@ def _initialize_services():
     _PARTS = PartDelivery(_SENDER, lambda cid: _TYPING.send(cid), lambda secs: time.sleep(secs))
     _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
     _DIRECT_MESSAGES = DirectChannels()
-    _OWNER_MESSAGES = OwnerMessenger(
-        lambda: _SETTINGS.owners,
-        lambda data, where: guard_outgoing(data, where),
-        lambda path, body: api_post(path, body),
-    )
-    _OWNER_PRESENCE = OwnerPresence(
-        lambda: _SETTINGS.owners,
-        settings,
-        lambda path: api_get(path),
-        lambda: rest_backing_off(),
-    )
-    _OWNER_AUTH = OwnerAuthorization(
-        lambda: _SETTINGS.owners,
-        _DIRECTORY.channels,
-        _DIRECTORY.guild_channels,
-        _DIRECT_MESSAGES.users,
-        lambda path: api_get(path),
-    )
-    _CAPABILITIES = CapabilityIssuer(
-        CapabilityFiles(
-            PrivateFile(lambda: OWNER_DM_NONCES_FILE),
-            PrivateFile(lambda: OWNER_ITEMS_FILE),
-            PrivateFile(lambda: ITEM_NONCES_FILE),
-        ),
-        _OWNER_AUTH,
-        CommandTargets(_DIRECTORY.channels, _DIRECTORY.guild_channels),
-        lambda: load_queue(),
-        lambda text: notify_owners(text),
-    )
+    _initialize_owner_services()
     _OUTBOX = OutboxProcessor(
         _outbox_files,
         lambda state: queue_index(state),
         lambda state: save_state(state),
         _CAPABILITIES.publish,
         _deliver_outbox_item,
-    )
-    _REVIEW = ReplyReview(settings, _OWNER_MESSAGES, _DIRECT_MESSAGES.users, _settle)
-    _UPDATE_NOTICES = UpdateNotices(
-        lambda: UPDATE_CHECK_FILE,
-        lambda: UPDATE_REQUEST_FILE,
-        _OWNER_MESSAGES,
-        updates_enabled,
-        lambda: rest_backing_off(),
-        lambda *args, **kwargs: _version_installed(*args, **kwargs),
-    )
-    _ADMIN_DIGESTS = AdminDigests(
-        _directory_name,
-        _USER_NAMES,
-        _DIRECTORY.guilds,
-        _OWNER_MESSAGES.notify,
-        lambda: rest_backing_off(),
-    )
-    _JOIN_NOTICES = JoinNotices(
-        _OWNER_PRESENCE, _OWNER_MESSAGES, lambda: rest_backing_off(), SETTINGS_PREFIX
-    )
-    _GUILD_LIFECYCLE = GuildLifecycle(
-        _DIRECTORY,
-        _DIRECTORY.channels,
-        _OWNER_PRESENCE,
-        _JOIN_NOTICES,
-        settings,
-        publish_directory,
-        GUILD_ALLOWLIST,
     )
     _INTERACTIONS = InteractionRouter(lambda: _SETTINGS.owners)
     _INTERACTIONS.register("mdupd", _UPDATE_NOTICES.on_button)

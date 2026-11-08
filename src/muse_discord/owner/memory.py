@@ -1,10 +1,15 @@
-"""Save plain, secret-free facts from authorized original owner DMs only."""
+"""Save plain, secret-free facts from authorized original owner DMs only.
+
+The live capability proves the reply belongs to that owner's original message.
+Facts become bounded bullet lines, once per item and within a daily limit. A
+missing memory file or disabled setting leaves the reply free to proceed.
+"""
 
 import hmac
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from muse_discord.message_queue import keep_last, trigger_of
 from muse_discord.owner.authorization import OwnerAuthorization, item_nonce
@@ -23,11 +28,11 @@ def memory_line(text):
 
 @dataclass
 class OwnerMemory:
-    path: str
+    path: Callable[[], str]
     auth: OwnerAuthorization
     enabled: Callable[[], bool]
     secret_in: Callable[[str], str | None]
-    missing: dict = field(default_factory=lambda: {"logged": False})
+    missing_logged: bool = False
 
     def check(self, state, item, qid, index):
         """(why the item is refused, or None; the owner DM whose facts to
@@ -66,14 +71,14 @@ class OwnerMemory:
             return None, None
         return None, t
 
-    def _append(self, lines):
+    def _append(self, lines, path):
         try:
-            with open(self.path, "rb") as f:
+            with open(path, "rb") as f:
                 end = f.seek(0, os.SEEK_END)
                 if end:
                     f.seek(end - 1)
                 gap = b"\n" if end and f.read(1) != b"\n" else b""
-            with open(self.path, "ab") as f:  # appended: one write
+            with open(path, "ab") as f:  # appended: one write
                 f.write(gap + "".join(lines).encode("utf-8", "replace"))
         except OSError as e:
             print(f"Could not save facts to memory: {e}", flush=True)
@@ -104,11 +109,12 @@ class OwnerMemory:
         if not self.enabled():
             print("Not saving facts to memory: memory.save_dms is off.", flush=True)
             return
-        if not os.path.isfile(self.path):
-            if not self.missing["logged"]:
-                self.missing["logged"] = True
+        path = self.path()
+        if not os.path.isfile(path):
+            if not self.missing_logged:
+                self.missing_logged = True
                 print(
-                    f"Not saving facts to memory: no {self.path} (set "
+                    f"Not saving facts to memory: no {path} (set "
                     f"MUSE_MEMORY_FILE to the Muse's memory file).",
                     flush=True,
                 )
@@ -118,9 +124,9 @@ class OwnerMemory:
         n = used.get("n", 0) if used.get("day") == today else 0
         lines = self._fact_lines(item, today, n)
         if lines:
-            if not self._append(lines):
+            if not self._append(lines, path):
                 return
-            print(f"Saved {len(lines)} fact(s) from owner DM {t} to {self.path}.", flush=True)
+            print(f"Saved {len(lines)} fact(s) from owner DM {t} to {path}.", flush=True)
         done[t] = int(time.time())
         keep_last(done, 300)
         state["remembered_day"] = {"day": today, "n": n + len(lines)}
