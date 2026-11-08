@@ -11,6 +11,8 @@
 | 受信バーストの検証・キュー項目の組み立て | `src/muse_discord/ingest.py` |
 | 返信の認可・副作用・送信結果の処理順 | `src/muse_discord/reply_delivery.py` |
 | 呼びかけ・会話履歴・会話参加者 | `src/muse_discord/conversation.py` |
+| 共有キューの読み取り・差分更新 | `src/muse_discord/message_queue.py` |
+| outboxの取得・再起動復旧・送信後の確定 | `src/muse_discord/outbox_store.py` |
 | 段階間で受け渡すメッセージの型 | `src/muse_discord/message_models.py` |
 | 受信添付の取得・文書抽出・動画フレーム抽出 | `src/muse_discord/media_ingest.py` |
 | 生成添付のパス検証・圧縮・期限切れ削除 | `src/muse_discord/generated_media.py` |

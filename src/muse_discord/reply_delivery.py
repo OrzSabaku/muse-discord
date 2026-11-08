@@ -4,8 +4,6 @@ The component depends on reply policy, effects and a batch transaction, never on
 monitor globals. Rejection must precede deduplication and every side effect.
 """
 
-import hashlib
-import json
 import time
 from http import HTTPStatus
 from typing import Any, Protocol
@@ -20,6 +18,7 @@ from muse_discord.message_models import (
     Settlement,
 )
 from muse_discord.reply_protocol import is_snowflake as _is_snowflake
+from muse_discord.reply_protocol import item_key as _outbox_key
 
 SEND_RETRY_SECS = 90
 
@@ -106,13 +105,6 @@ def _retry_later(item, retry, exc, **keep):
     item["_retry"] = dict(keep, first=first, n=n, next=now + min(30, 2**n))
     print(f"Send failed (attempt {n}; retrying, same nonce): {exc}", flush=True)
     return True
-
-
-def _outbox_key(item):
-    try:
-        return hashlib.sha256(json.dumps(item, sort_keys=True, default=str).encode()).hexdigest()
-    except Exception:
-        return None
 
 
 class OutboxDelivery:

@@ -85,9 +85,12 @@ from muse_discord.message_models import (
     Settlement,
     Speaker,
 )
+from muse_discord.message_queue import QueueFiles
+from muse_discord.message_queue import answered_id as _answered_id
+from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
+from muse_discord.outbox_store import redact_nonces as redact_nonces
 from muse_discord.paths import project_root
 from muse_discord.reply_delivery import OutboxDelivery
-from muse_discord.reply_delivery import _outbox_key as _outbox_key
 from muse_discord.reply_protocol import is_snowflake as _is_snowflake
 from muse_discord.storage import SharedLockTimeout, atomic_write
 from muse_discord.storage import read_json as _read_json
@@ -1045,37 +1048,43 @@ def shared_lock():
     return storage.shared_lock(LOCK_FILE, LOCK_WAIT_SECS)
 
 
+def _queue_files():
+    return QueueFiles(QUEUE_FILE, LOCK_FILE, LOCK_WAIT_SECS)
+
+
+def _outbox_files():
+    return OutboxFiles(OUTBOX_FILE, OUTBOX_PROCESSING_FILE, OUTBOX_REJECTED_FILE, _queue_files())
+
+
+def _publish_reply_capabilities(state):
+    reply_nonces_write(state)
+    owner_dm_write_nonces(state)
+
+
+def _deliver_outbox_item(batch, item):
+    OutboxDelivery(
+        batch, item, _MonitorReplyPolicy(), _MonitorReplyEffects(), _OUTBOX_CURRENT
+    ).process()
+
+
+def _outbox_processor():
+    return OutboxProcessor(
+        _outbox_files(),
+        queue_index,
+        save_state,
+        _publish_reply_capabilities,
+        _deliver_outbox_item,
+        _OUTBOX_CURRENT,
+        _OUTBOX_POISON,
+    )
+
+
 def load_queue():
-    """Read the shared queue snapshot without initializing any other service."""
-    return storage.load_queue(QUEUE_FILE)
-
-
-def _queue_apply(add=(), drop=None):
-    """queue_edit's body, for callers already holding shared_lock."""
-    queue = load_queue()
-    kept = [q for q in queue if not (drop and isinstance(q, dict) and drop(q))]
-    have = {q.get("message_id") for q in kept if isinstance(q, dict)}
-    added = 0
-    for item in add:
-        if item.get("message_id") in have:
-            continue
-        kept.append(item)
-        have.add(item.get("message_id"))
-        added += 1
-    if added or len(kept) != len(queue):
-        atomic_write(QUEUE_FILE, kept)
-    return added
+    return _queue_files().load()
 
 
 def queue_edit(add=(), drop=None):
-    """Apply a delta to reply_queue.json under the shared lock: re-read
-    it, remove the items drop(item) is true for, append the items in add
-    whose message_id is not queued yet. Never write back a copy loaded
-    before slow work (media downloads, the sweep): it would resurrect
-    removed items and drop ones appended meanwhile. Returns the number
-    of items appended."""
-    with shared_lock():
-        return _queue_apply(add, drop)
+    return _queue_files().edit(add, drop)
 
 
 def publish_queue_additions(state, additions=()):
@@ -3177,21 +3186,6 @@ def owner_dm_gate(state, item, index=None):
     return _owner_nonce_problem(state, item, qid)
 
 
-def redact_nonces(item):
-    """A copy of an outbox item for the rejected file and the log, its
-    nonces blanked (a refused item may still carry a live one)."""
-    if not isinstance(item, dict):
-        return item
-    out = dict(item)
-    if OWNER_DM_NONCE_FIELD in out:
-        out[OWNER_DM_NONCE_FIELD] = "(redacted)"
-    if REPLY_NONCE_FIELD in out:
-        out[REPLY_NONCE_FIELD] = "(redacted)"
-    if isinstance(out.get("settings"), dict) and "nonce" in out["settings"]:
-        out["settings"] = dict(out["settings"], nonce="(redacted)")
-    return out
-
-
 # ---------------------------------------------------------------------------
 # What an owner tells the bot in their own DM reaches the Muse's memory:
 # the worker lists the lasting facts in the reply's "remember" field and
@@ -5083,16 +5077,6 @@ def _settle(state, item, outcome):
     )
 
 
-def _answered_id(state, item):
-    """The queue item (its message_id) an outbox item answers: its "item"
-    field, else the burst trigger its reply_to belongs to, else reply_to.
-    None when it names neither."""
-    if item.get("item"):
-        return item["item"]
-    reply_to = item.get("reply_to")
-    return state.get("reply_aliases", {}).get(reply_to) or reply_to
-
-
 def _outbox_problem(item):
     """Why an outbox item cannot be processed, or None. Ids given as
     numbers are normalized to strings in place. Checked first, so a
@@ -5113,64 +5097,6 @@ def _outbox_problem(item):
     if item.get("silent"):
         return reply_protocol.content_problem(item)
     return reply_protocol.content_problem(item, has_text=bool(normalize_parts(item)))
-
-
-# An outbox file that does not parse but changed this recently is most
-# likely a worker writing it in place (not via a rename): wait for it.
-OUTBOX_SETTLE_SECS = 10
-
-
-def _outbox_load(path):
-    """The items in an outbox file, or None while it is mid-write (see
-    OUTBOX_SETTLE_SECS). A file that is not a JSON array (a bad write) is
-    set aside in the rejected file instead of blocking every later
-    reply."""
-    if not os.path.exists(path):
-        return []
-    with open(path, errors="replace") as f:
-        raw = f.read()
-    try:
-        data = json.loads(raw)
-        if isinstance(data, list):
-            return data
-        reason = "outbox file is not a JSON array"
-    except ValueError as e:
-        try:
-            if time.time() - os.path.getmtime(path) < OUTBOX_SETTLE_SECS:
-                return None
-        except OSError:
-            return None
-        data, reason = raw[:20000], f"outbox file is not valid JSON ({e})"
-    print(f"Rejected {os.path.basename(path)}: {reason}", flush=True)
-    _reject_outbox([(data, reason)])
-    return []
-
-
-_NONCE_LIKE = re.compile(r"[0-9a-f]{32,64}")
-
-
-def _scrub_nonces(value):
-    """value (any JSON, or raw text) with every nonce-like string (32 to
-    64 hex digits) blanked: what goes to the rejected file never holds a
-    live owner-DM nonce, however the outbox was mangled."""
-    if isinstance(value, str):
-        return _NONCE_LIKE.sub("(redacted)", value)
-    if isinstance(value, list):
-        return [_scrub_nonces(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _scrub_nonces(v) for k, v in value.items()}
-    return value
-
-
-def _reject_outbox(rejects):
-    """Set malformed outbox items aside for the owner's review."""
-    kept = _read_json(OUTBOX_REJECTED_FILE, list) or []
-    now = datetime.now(UTC).isoformat()
-    kept += [
-        {"rejected_at": now, "reason": reason, "item": _scrub_nonces(item)}
-        for item, reason in rejects
-    ]
-    atomic_write(OUTBOX_REJECTED_FILE, kept[-100:])
 
 
 def _log_latency(state, qid, picked, sent):
@@ -5203,58 +5129,13 @@ def _log_latency(state, qid, picked, sent):
     TM.latency(sent - t0)
 
 
-# A failed send is retried with growing gaps, but only for this long:
-# Discord's nonce check (send_nonce) only remembers a nonce for a few
-# minutes, and past that a retry of a send that actually landed would
-# post it twice.
-# A poison outbox item: one whose processing raises (a bug) would stay in
-# reply_outbox.processing.json and stop every later pass at the same
-# place, so no reply would ever go out again. outbox_pass counts the
-# failures per item and sets one aside after OUTBOX_POISON_TRIES.
-OUTBOX_POISON_TRIES = 3
-
-
+# Progress belongs to this running monitor; outbox_store owns recovery rules.
 _OUTBOX_CURRENT: dict[str, str | None] = {"key": None}
 _OUTBOX_POISON = {}
 
 
 def outbox_pass(state):
-    """process_outbox for the main loop: when it raises while handling
-    an item, that item's failure is counted, and after
-    OUTBOX_POISON_TRIES it is taken out of the outbox files and set
-    aside in reply_outbox.rejected.json; then the error is raised on."""
-    _OUTBOX_CURRENT["key"] = None
-    try:
-        process_outbox(state)
-    except SharedLockTimeout:
-        _OUTBOX_CURRENT["key"] = None
-        raise  # contention is not a malformed outbox item
-    except Exception as e:
-        key = _OUTBOX_CURRENT["key"]
-        _OUTBOX_CURRENT["key"] = None
-        if key:
-            n = _OUTBOX_POISON[key] = _OUTBOX_POISON.get(key, 0) + 1
-            if n >= OUTBOX_POISON_TRIES:
-                _set_aside_poison(key, e)
-        raise
-
-
-def _set_aside_poison(key, exc):
-    gone = []
-    with shared_lock():
-        for path in (OUTBOX_PROCESSING_FILE, OUTBOX_FILE):
-            items = _outbox_load(path)
-            if not items:
-                continue
-            keep = [i for i in items if _outbox_key(i) != key]
-            gone += [i for i in items if _outbox_key(i) == key]
-            if len(keep) != len(items):
-                atomic_write(path, keep)
-    _OUTBOX_POISON.pop(key, None)
-    if gone:
-        why = f"processing it failed {OUTBOX_POISON_TRIES} times ({exc.__class__.__name__})"
-        print(f"Set aside an outbox item: {why}.", flush=True)
-        _reject_outbox([(redact_nonces(i), why) for i in gone[:1]])
+    return _outbox_processor().pass_once(state, process_outbox)
 
 
 def _refuse(rejects, item, why, note=""):
@@ -5528,90 +5409,6 @@ def _reply_attachments(state, item, retry):
     return gen_id, approval, attachments, gen_files
 
 
-class OutboxBatch:
-    """One locked take/send/settle pass; worker appends remain independent."""
-
-    def __init__(self, state, picked):
-        self.state = state
-        self.picked = picked
-        self.remaining = []
-        self.rejects = []
-        self.settled = []
-        self.index = queue_index(state)
-
-    def defer_retries(self, originals):
-        """Keep retry progress in monitor-owned state while shared files are locked."""
-        remaining = {id(item) for item in self.remaining}
-        self.state["outbox_retries"] = {
-            key: item["_retry"]
-            for item, key in originals
-            if id(item) in remaining and key is not None and item.get("_retry")
-        }
-        save_state(self.state)
-
-    def settled_ids(self):
-        frags = self.index["frags"]
-        # The queue items the settled replies answer. Matched on the outbox
-        # item's "item" first; an older worker's item without it matches on
-        # reply_to, its burst trigger, or a burst fragment it replied under.
-        done_ids, done_frags = set(), set()
-        for item in self.settled:
-            qid = _answered_id(self.state, item)
-            if qid:
-                done_ids.add(frags.get(qid, qid))
-            if not item.get("item") and item.get("reply_to"):
-                done_ids.add(item["reply_to"])
-                done_frags.add(item["reply_to"])
-
-        return done_ids, done_frags
-
-    def finish(self):
-        with shared_lock():
-            _OUTBOX_CURRENT["key"] = None
-            # A released hold is used up however its item settled (sent, 403,
-            # a blocked secret, given up).
-            for item in self.settled:
-                if isinstance(item.get("_hold"), str):
-                    (self.state.get("hold_released") or {}).pop(item["_hold"], None)
-
-            done_ids, done_frags = self.settled_ids()
-
-            # Answered: every capability those items held is spent.
-            for key in ("nl_nonces", "owner_items", "reply_nonces"):
-                held = self.state.get(key) or {}
-                for qid in done_ids & set(held):
-                    del held[qid]
-
-            def answered(q):
-                return q.get("message_id") in done_ids or any(
-                    isinstance(f, dict) and f.get("message_id") in done_frags
-                    for f in q.get("burst_fragments") or []
-                )
-
-            if self.rejects:
-                _reject_outbox(self.rejects)
-            # Queue first, outbox second: the wake hook reads the outbox
-            # before the queue, so it never sees an answered item in the
-            # queue without its outbox entry.
-            if done_ids:
-                _queue_apply(drop=answered)
-            fresh = _outbox_load(OUTBOX_FILE)
-            if fresh is not None:
-                atomic_write(OUTBOX_FILE, self.remaining + fresh)
-                os.remove(OUTBOX_PROCESSING_FILE)
-            elif self.remaining:
-                # Mid-write: the retries wait in the processing file, which
-                # the next pass merges back in first.
-                atomic_write(OUTBOX_PROCESSING_FILE, self.remaining)
-            else:
-                os.remove(OUTBOX_PROCESSING_FILE)
-
-        # Publishing can notify owners on an I/O failure; do not hold the
-        # queue lock across that network call. The capabilities are already spent.
-        reply_nonces_write(self.state)
-        owner_dm_write_nonces(self.state)
-
-
 class _MonitorReplyPolicy:
     @staticmethod
     def _outbox_problem(item):
@@ -5720,53 +5517,8 @@ class _MonitorReplyEffects:
         return PRO.opt_action(state, item, index)
 
 
-def _restore_outbox_retries(state, items):
-    retries = state.get("outbox_retries") or {}
-    for item in items:
-        retry = retries.get(_outbox_key(item))
-        if retry is not None and isinstance(item, dict):
-            item["_retry"] = retry
-
-
 def process_outbox(state):
-    """Send replies drafted by the worker, with output guardrails + dedup.
-
-    Under the shared lock, the items are taken out of reply_outbox.json
-    into OUTBOX_PROCESSING_FILE (merged back on the next pass if the
-    monitor dies mid-send). They are sent with no lock held, since a
-    multi-part send takes several seconds. Then, under the lock again,
-    only the items still retrying go back, ahead of whatever the worker
-    appended meanwhile: writing back the copy read before the sends
-    deleted those appends. Settled items (sent, silent, or skipped) also
-    leave the queue here, so the worker never has to rewrite it."""
-    # (An unreadable outbox is not idle: _outbox_load sets it aside.)
-    idle = _read_json(OUTBOX_FILE, list) == []
-    if idle and not os.path.exists(OUTBOX_PROCESSING_FILE) and not state.get("released"):
-        return
-    picked = time.time()
-    with shared_lock():
-        fresh = _outbox_load(OUTBOX_FILE)
-        if fresh is None:
-            return  # mid-write; the next pass gets it
-        # Held replies an owner chose to send ride along (see hold_reply).
-        outbox = (_outbox_load(OUTBOX_PROCESSING_FILE) or []) + fresh + state.pop("released", [])
-        _restore_outbox_retries(state, outbox)
-        atomic_write(OUTBOX_PROCESSING_FILE, outbox)
-        atomic_write(OUTBOX_FILE, [])
-        if state.pop("outbox_retries", None) is not None:
-            save_state(state)  # restored progress is now in the locked processing file
-
-    batch = OutboxBatch(state, picked)
-    originals = [(item, _outbox_key(item)) for item in outbox]
-    for item, _key in originals:
-        OutboxDelivery(
-            batch, item, _MonitorReplyPolicy(), _MonitorReplyEffects(), _OUTBOX_CURRENT
-        ).process()
-    try:
-        batch.finish()
-    except SharedLockTimeout:
-        batch.defer_retries(originals)
-        raise
+    return _outbox_processor().process(state)
 
 
 # ---------------------------------------------------------------------------

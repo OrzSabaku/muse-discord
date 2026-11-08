@@ -16,6 +16,7 @@ from common import signed
 from harness import ARGV, capture, fresh_pkg, msg, new_state, read, sent_texts, snowflake, write
 from harness import monitor as m
 
+from muse_discord.outbox_store import OUTBOX_POISON_TRIES
 from muse_discord.reply_delivery import SEND_RETRY_SECS
 
 
@@ -175,7 +176,7 @@ class LockTimeout(unittest.TestCase):
         item = signed(m, state, {"item": mid, "reply_to": mid, "channel_id": "101", "text": "hi"})
         write(m.OUTBOX_FILE, [item])
         with patch.object(m.OutboxDelivery, "actions", side_effect=m.SharedLockTimeout("busy")):
-            for _ in range(m.OUTBOX_POISON_TRIES):
+            for _ in range(OUTBOX_POISON_TRIES):
                 with self.assertRaises(m.SharedLockTimeout):
                     m.outbox_pass(state)
         self.assertEqual(m._OUTBOX_POISON, {})

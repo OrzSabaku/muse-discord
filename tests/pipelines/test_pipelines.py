@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tempfile
 import time
 import unittest
 from types import SimpleNamespace
@@ -12,8 +13,11 @@ import common  # noqa: F401 (select the source tree under test)
 
 from muse_discord.ingest import IngestConversation, IngestJournal, IngestPolicy, MessageEnqueuer
 from muse_discord.message_models import QueueContext, SecretBlocked
+from muse_discord.message_queue import QueueFiles
 from muse_discord.muse_settings import Scope, Settings
+from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
 from muse_discord.reply_delivery import SEND_RETRY_SECS, OutboxDelivery, ReplyEffects, ReplyPolicy
+from muse_discord.storage import atomic_write, read_json
 
 
 class Ingress(unittest.TestCase):
@@ -136,6 +140,51 @@ class Delivery(unittest.TestCase):
         self.assertEqual(self.batch.remaining, [])
         self.assertEqual(self.batch.settled, [self.item])
         self.effects.save_facts.assert_not_called()
+
+
+class Persistence(unittest.TestCase):
+    def test_recovery_keeps_concurrent_work_and_publishes_capabilities_after_unlock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            queue = QueueFiles(directory + "/queue.json", directory + "/lock", 0)
+            files = OutboxFiles(
+                directory + "/outbox.json",
+                directory + "/processing.json",
+                directory + "/rejected.json",
+                queue,
+            )
+            old = {"item": "100"}
+            fresh = {"item": "200"}
+            atomic_write(files.processing, [old])  # interrupted previous process
+            atomic_write(files.pending, [fresh])
+            atomic_write(queue.path, [{"message_id": "100"}, {"message_id": "200"}])
+            state = {"reply_nonces": {"100": {"nonce": "a"}, "200": {"nonce": "b"}}}
+            delivered = []
+
+            def deliver(batch, item):
+                delivered.append(item["item"])
+                if item == old:
+                    # Both writes must be possible while a reply is being sent.
+                    queue.edit(add=[{"message_id": "300"}])
+                    atomic_write(files.pending, [{"item": "300"}])
+                batch.settled.append(item)
+
+            def publish(state):
+                self.assertEqual(state["reply_nonces"], {})
+                # This callback may notify owners; it must run after unlock.
+                queue.edit(add=[{"message_id": "400"}])
+
+            processor = OutboxProcessor(
+                files,
+                lambda _: {"frags": {}},
+                Mock(),
+                publish,
+                deliver,
+            )
+            processor.pass_once(state)
+            self.assertEqual(delivered, ["100", "200"])
+            self.assertEqual(queue.load(), [{"message_id": "300"}, {"message_id": "400"}])
+            self.assertEqual(read_json(files.pending, list), [{"item": "300"}])
+            self.assertFalse(os.path.exists(files.processing))
 
 
 if __name__ == "__main__":

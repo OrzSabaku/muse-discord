@@ -45,6 +45,8 @@ from settings_harness import (
     state,
 )
 
+from muse_discord.outbox_store import OUTBOX_POISON_TRIES
+
 DM = "400000000000000077"  # OWNER's DM channel
 VIEW, SEND = 1 << 10, 1 << 11
 CFG = f"""version: 1
@@ -390,7 +392,7 @@ class Robustness(Base):
         m.normalize_parts = boom
         with open(m.OUTBOX_FILE, "w") as f:
             json.dump([{"item": good["id"], "channel_id": CH, "text": "poison"}], f)
-        for _ in range(m.OUTBOX_POISON_TRIES):
+        for _ in range(OUTBOX_POISON_TRIES):
             with quiet(), self.assertRaises(ValueError):
                 m.outbox_pass(self.st)
         self.assertEqual(self.rejected()[-1]["item"]["text"], "poison")
