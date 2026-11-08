@@ -52,7 +52,7 @@ class FirstRun(unittest.TestCase):
             if "/members/" in path:
                 asked.append(path)
                 e = HTTPErr(429)
-                mod._note_rate_limit(e)
+                mod._BACKOFF.note(e)
                 raise e
             raise HTTPErr(404)
 

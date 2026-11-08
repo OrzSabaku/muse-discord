@@ -626,17 +626,17 @@ def f4_monitor_outbox_rejects_malformed_ids():
 def f4_monitor_reaction_slash_encoded():
     reset()
     seen = []
-    orig = M.discord_request
+    orig = M._DISCORD.request
 
     def cap(method, path, data=None, **kwargs):
         seen.append(path)
         return {}
 
-    M.discord_request = cap
+    M._DISCORD.request = cap
     try:
         M.add_reaction(GEN_CH, "123456789012345678", "../../x")
     finally:
-        M.discord_request = orig
+        M._DISCORD.request = orig
     assert seen and "%2F" in seen[0] and "/../" not in seen[0], seen
 
 
@@ -837,20 +837,20 @@ def f7_role_mention_not_allowed():
 def f7_files_send_allowed_mentions():
     reset()
     seen = []
-    orig = M.discord_request
+    orig = M._DISCORD.request
 
     def cap(method, path, data=None, **kwargs):
         seen.append(data)
         return {}
 
     f = make_file(os.path.join(M.GENERATED_DIR, "1", "a.png"))
-    M.discord_request = cap
+    M._DISCORD.request = cap
     try:
         ORIG_SEND_FILES(
             GEN_CH, "hi <@&1>", [(f, "a.png")], "123456789012345670", DeliveryOptions(nonce="abc")
         )
     finally:
-        M.discord_request = orig
+        M._DISCORD.request = orig
     payload = seen[0]
     assert payload.get("allowed_mentions") == {"parse": ["users"], "replied_user": True}, payload
     assert payload.get("nonce") == "abc" and payload.get("enforce_nonce")

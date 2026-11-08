@@ -194,10 +194,10 @@ class SlicedJobs(unittest.TestCase):
             mod.thread_refresh_iter(self.st),
             RestClock(time.time, mod.rest_backing_off),
         )
-        mod._rl_until = time.time() + 60  # REST back-off: the job waits
+        mod._BACKOFF.until = time.time() + 60  # REST back-off: the job waits
         self.assertEqual(job.run_slice(self.st, time.time() + 1, True), 0)
         self.assertFalse(job.done())
-        mod._rl_until = 0
+        mod._BACKOFF.until = 0
         self.assertGreaterEqual(self._run(job), 3)
         self.assertIn("T1", mod.CHANNELS)
         self.assertIn("T1", self.st["last_seen"])

@@ -294,7 +294,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
             seen.append(data)
             return {"id": "1"}
 
-        with mock.patch.object(mod, "discord_request", send):
+        with mock.patch.object(mod._DISCORD, "request", send):
             mod.send_reply_with_files(
                 "123456789012345678",
                 "hi",
@@ -369,7 +369,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
             raise HTTPErr(404)
 
         out = io.StringIO()
-        with mock.patch.object(mod, "discord_request", gone), contextlib.redirect_stdout(out):
+        with mock.patch.object(mod._DISCORD, "request", gone), contextlib.redirect_stdout(out):
             for _ in range(3):
                 mod.process_outbox(st)
         texts = [d for p, d in mod.api.posts if p.endswith("/messages")]

@@ -32,6 +32,7 @@ from harness import (
     write,
 )
 
+from muse_discord.messaging import parts as reply_parts
 from muse_discord.messaging.typing import TYPING_EVERY_SECS, TYPING_MAX_SECS
 
 m = monitor
@@ -65,7 +66,7 @@ def qitem(mid, cid="101", **kw):
 def test_worker_append_during_slow_send_not_lost():
     pkg = fresh_pkg()
     st = new_state()
-    orig_post, orig_uniform = m.api_post, m.random.uniform
+    orig_post, orig_uniform = m.api_post, reply_parts.random.uniform
     a, b = snowflake(), snowflake()
 
     def post(path, data):
@@ -78,7 +79,7 @@ def test_worker_append_during_slow_send_not_lost():
         return orig_post(path, data)
 
     m.api_post = post
-    m.random.uniform = lambda lo, hi: 0  # no typing beat between parts
+    reply_parts.random.uniform = lambda lo, hi: 0  # no typing beat between parts
     try:
         write(m.QUEUE_FILE, [qitem(a), qitem(b)])
         write(
@@ -107,7 +108,7 @@ def test_worker_append_during_slow_send_not_lost():
         assert sent_texts()[-1] == "for b"
         assert read(m.QUEUE_FILE) == [] and read(m.OUTBOX_FILE) == []
     finally:
-        m.api_post, m.random.uniform = orig_post, orig_uniform
+        m.api_post, reply_parts.random.uniform = orig_post, orig_uniform
 
 
 def test_concurrent_appends_stress_each_sent_once():
@@ -497,14 +498,14 @@ def test_typing_thread_lifecycle():
         it["queued_at"] = clock.now
         write(m.QUEUE_FILE, [it])
         m.typing_refresh(st)
-        m._rl_until = clock.now + 100
+        m._BACKOFF.until = clock.now + 100
         n0 = pings()
         clock.step(2 * TYPING_EVERY_SECS)
         m.send_typing("109")
         assert pings() == n0, typing_calls()[n0:]
     finally:
         m.time = time
-        m._rl_until = 0.0
+        m._BACKOFF.until = 0.0
         m._typing_sources.clear()
 
 

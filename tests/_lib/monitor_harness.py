@@ -73,7 +73,7 @@ class FakeAPI:
         raise HTTPErr(404)
 
     def get(self, path):
-        return self.mod._api_call(lambda: self._get(path))
+        return self.mod._DISCORD.call(lambda: self._get(path))
 
     def post(self, path, data):
         self.posts.append((path, data))

@@ -318,20 +318,11 @@ elif scenario == "hung":
 
     srv = Server(("127.0.0.1", 0), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    mod.API = f"http://127.0.0.1:{srv.server_address[1]}"
-    # The module's own api_get/api_post (load_monitor stubs them), rebound
-    # to its globals, so they use its API base, _api_call, and timeout.
-    import importlib.util
-    import types
-
-    spec = importlib.util.spec_from_file_location(
-        "real_monitor", os.path.join(H.MUT_DIR, "src/muse_discord/monitor.py")
-    )
-    real = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(real)
-    mod.api_get = types.FunctionType(real.api_get.__code__, mod.__dict__)
-    mod.api_post = types.FunctionType(real.api_post.__code__, mod.__dict__)
-    mod.READ_TIMEOUT_SECS = 1  # 8 in production; shorter for speed
+    mod._DISCORD.endpoint = f"http://127.0.0.1:{srv.server_address[1]}"
+    # Exercise the actual request policy against the local server.
+    mod.api_get = mod._DISCORD.get
+    mod.api_post = mod._DISCORD.post
+    mod._DISCORD.read_timeout = 1  # 8 in production; shorter for speed
     setup({"C0": chan(), "C1": chan(), "CH": chan("hung")})
     gw_script += [(0.4, lazy(lambda: mention("C0")))]
     until = all_staged

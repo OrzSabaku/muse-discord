@@ -58,7 +58,7 @@ class Base(unittest.TestCase):
         self.mod = load_monitor(CFG)
         m = self.mod
         # No 2-4 s typing beat between the parts of a multi-part reply.
-        beat = mock.patch.object(m.random, "uniform", lambda a, b: 0.0)
+        beat = mock.patch("muse_discord.messaging.parts.random.uniform", lambda a, b: 0.0)
         beat.start()
         self.addCleanup(beat.stop)
         for cid, uid in ((DM, OWNER), (DM2, OWNER2), (DM_U1, U1)):

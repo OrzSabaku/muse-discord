@@ -326,12 +326,12 @@ class Interactions(unittest.TestCase):
         def request(method, path, data=None, **kwargs):
             seen.update(method=method, path=path, data=data, **kwargs)
 
-        orig = mod.discord_request
-        mod.discord_request = request
+        orig = mod._DISCORD.request
+        mod._DISCORD.request = request
         try:
             mod.interaction_callback(ix("x"), {"type": 7, "data": {}})
         finally:
-            mod.discord_request = orig
+            mod._DISCORD.request = orig
         self.assertEqual(seen["path"], "/interactions/9001/tok-en_1/callback")
         self.assertEqual(seen["method"], "POST")
         self.assertEqual(seen["data"], {"type": 7, "data": {}})

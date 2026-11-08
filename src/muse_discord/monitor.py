@@ -44,7 +44,6 @@ import hmac
 import json
 import os
 import queue as pyqueue
-import random
 import re
 import sys
 import threading
@@ -52,7 +51,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
 
@@ -92,6 +90,7 @@ from muse_discord.directory.lifecycle import GuildLifecycle
 from muse_discord.directory.membership import AuthorRoles
 from muse_discord.directory.scopes import DirectoryScopes
 from muse_discord.directory.snapshot import DirectorySnapshot
+from muse_discord.http_runtime import DiscordCalls, RequestOptions, RestBackoff
 from muse_discord.ingest import MessageEnqueuer
 from muse_discord.interactions import ephemeral, interaction_user_id
 from muse_discord.message_ledger import MessageLedger, ledger_code
@@ -113,6 +112,7 @@ from muse_discord.messaging import formatting as reply_formatting
 from muse_discord.messaging.parts import PartDelivery
 from muse_discord.messaging.sending import MessageSender
 from muse_discord.messaging.typing import TypingIndicators, TypingState
+from muse_discord.monitor_health import MonitorHealth, token_rejected_exit
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
 from muse_discord.outbox_store import redact_nonces as redact_nonces
 from muse_discord.owner.admin_digest import AdminDigests
@@ -159,7 +159,6 @@ from muse_discord.watches.web import WebWatchWork
 
 CONFIG_PATH_ARGUMENT = 2
 APPLICATION_COMMAND_TYPE = 2
-HEARTBEAT_INTERVAL_SECS = 30
 MEMBER_CACHE_LIMIT = 2000
 GENERATED_SEND_HISTORY_LIMIT = 50
 GENERATED_PATH_PAIR_LENGTH = 2
@@ -396,8 +395,6 @@ def _load_token(initial_settings):
     return None
 
 
-API = "https://discord.com/api/v10"
-
 # The bot's own identity, fetched at startup. Used to recognize mentions,
 # skip the bot's own messages, and compute its channel permissions.
 # BOT_USER_ID is the same id (proactive.py reads it).
@@ -530,142 +527,21 @@ INJECTION_PATTERNS = [
 ]
 
 
-@dataclass
-class RequestOptions:
-    files: tuple | list = ()
-    timeout: float = 20
-    anonymous: bool = False
-
-
-def discord_request(method, path, data=None, options=None):
-    options = options or RequestOptions()
-    files = options.files
-    timeout = options.timeout
-    anonymous = options.anonymous
-    from muse_discord.discord_rest import transport
-
-    return transport(None if anonymous else TOKEN, API).request(
-        method, path, data, files=files, timeout=timeout
-    )
-
-
-# ---------------------------------------------------------------------------
-# REST rate limits. Discord 429s are per IP (shared egress), so any 429
-# records a backoff window (Retry-After honored, else exponential), and
-# the main loop holds all REST-initiated work (polls, sweeps, discovery)
-# until it passes. The gateway path and outbox sends keep running.
-# ---------------------------------------------------------------------------
-_rl_until = 0.0
-_rl_backoff_step = 0
-_rl_storm_logged_until = 0.0
+_BACKOFF: RestBackoff
+_HEALTH: MonitorHealth
+_DISCORD: DiscordCalls
 
 
 def rest_backing_off():
-    return time.time() < _rl_until
-
-
-def _note_rate_limit(exc):
-    global _rl_until, _rl_backoff_step, _rl_storm_logged_until
-    now = time.time()
-    delay = None
-    hdrs = getattr(exc, "headers", None)
-    if hdrs is not None:
-        try:
-            delay = float(hdrs.get("Retry-After"))
-        except TypeError, ValueError:
-            delay = None
-    if delay is None:
-        try:
-            delay = float(json.loads(exc.read()).get("retry_after"))
-        except Exception:
-            delay = None
-    if delay is None:
-        delay = min(
-            BACKOFF_MAX_SECS, BACKOFF_INITIAL_SECS * (2**_rl_backoff_step)
-        ) + random.uniform(0, 5)
-        _rl_backoff_step = min(_rl_backoff_step + 1, 5)
-    delay = max(1.0, min(float(delay), 3600.0))
-    _rl_until = max(_rl_until, now + delay)
-    if now >= _rl_storm_logged_until:
-        print(f"RATE LIMITED: backing off REST for {delay:.0f}s.", flush=True)
-        _rl_storm_logged_until = _rl_until
-
-
-def _rl_note_clean_cycle():
-    """Reset the exponential step after a poll cycle that stayed clean."""
-    global _rl_backoff_step
-    if not rest_backing_off():
-        _rl_backoff_step = 0
-
-
-def _api_call(fn):
-    global _token_rejected
-    try:
-        return fn()
-    except Exception as e:
-        if getattr(e, "code", None) == HTTPStatus.TOO_MANY_REQUESTS:
-            _note_rate_limit(e)
-        elif getattr(e, "code", None) == HTTPStatus.UNAUTHORIZED:
-            _token_rejected = "401 from the REST API"
-        raise
-    finally:
-        # A call that returned (or failed) is progress: long but live
-        # stretches (discovery, the sweep, an outbox backlog) never look
-        # stuck to the watchdog; a call that hangs does.
-        touch_heartbeat()
-
-
-# ---------------------------------------------------------------------------
-# Token rejection and liveness, for the watchdog. A reset token makes
-# every REST call answer 401 and the gateway close with 4004; neither
-# heals by retrying, and a monitor that keeps running deaf hides the
-# problem from the watchdog (it only restarts dead processes). So the
-# monitor prints the "TOKEN REJECTED" marker and exits; the watchdog
-# greps for it and raises the token alert. The main loop also touches
-# HEARTBEAT_FILE so the watchdog can tell a stuck loop from a live one.
-# ---------------------------------------------------------------------------
-EXIT_TOKEN_REJECTED = 3
-_token_rejected = None  # set (to where) by a 401 on any REST call
-_heartbeat_at = 0.0
-
-
-def token_rejected_exit(where):
-    print(
-        f"TOKEN REJECTED: Discord refused the bot token ({where}); it "
-        f"was probably reset in the developer portal. Exiting. Store a "
-        f"fresh token and the watchdog starts the monitor again.",
-        flush=True,
-    )
-    sys.exit(EXIT_TOKEN_REJECTED)
+    return _BACKOFF.active()
 
 
 def touch_heartbeat():
-    """Mark the monitor as making progress (throttled to one touch per
-    30s). Called from the main loop and after every REST call."""
-    global _heartbeat_at
-    now = time.time()
-    if now - _heartbeat_at < HEARTBEAT_INTERVAL_SECS:
-        return
-    _heartbeat_at = now
-    try:
-        with open(HEARTBEAT_FILE, "a"):
-            pass
-        os.utime(HEARTBEAT_FILE, None)
-    except OSError:
-        pass
-
-
-# Every GET is a read on the main loop (poll, sweep, discovery, reply
-# context), so it gets a shorter timeout than sends: a request a proxy
-# leaves hanging must not stall the gateway drain, the burst flushes,
-# and the outbox for 20s. Sends (api_post, uploads) keep their 20s+.
-READ_TIMEOUT_SECS = 8
+    return _HEALTH.progress()
 
 
 def api_get(path):
-    return _api_call(
-        lambda: discord_request("GET", path, options=RequestOptions(timeout=READ_TIMEOUT_SECS))
-    )
+    return _DISCORD.get(path)
 
 
 # ---------------------------------------------------------------------------
@@ -764,17 +640,12 @@ def _secret_alert(where):
         _SECRET_ALERT["busy"] = False
 
 
-def _api_send(method, path, data):
-    data = guard_outgoing(data, path)
-    return _api_call(lambda: discord_request(method, path, data))
-
-
 def api_post(path, data):
-    return _api_send("POST", path, data)
+    return _DISCORD.post(path, data)
 
 
 def api_patch(path, data):
-    return _api_send("PATCH", path, data)
+    return _DISCORD.patch(path, data)
 
 
 # Bound contention without bypassing mutual exclusion. The main loop retries
@@ -1355,7 +1226,7 @@ def interaction_callback(ix, response):
         f"{urllib.parse.quote(str(ix['token']), safe='')}/callback"
     )
     response = guard_outgoing(response, "an interaction response")
-    discord_request(
+    _DISCORD.request(
         "POST",
         path,
         response,
@@ -2096,15 +1967,11 @@ def flush_pending(state, queue, force=False):
 
 
 def _upload_message(path, payload, blobs):
-    return _api_call(
-        lambda: discord_request(
-            "POST", path, payload, options=RequestOptions(files=blobs, timeout=60)
-        )
-    )
+    return _DISCORD.upload(path, payload, blobs)
 
 
 def _put_reaction(path):
-    return _api_call(lambda: discord_request("PUT", path))
+    return _DISCORD.put(path)
 
 
 def _message_sender():
@@ -3363,7 +3230,7 @@ def _stage_polled_messages(state, dm_items):
 
 def _retry_cycle_identity(cycle_done):
     if cycle_done:
-        _rl_note_clean_cycle()
+        _BACKOFF.clean_cycle()
         if BOT_USER_ID is None:
             try:
                 _adopt_identity(api_get("/users/@me"), " (recovered in-loop)")
@@ -3559,7 +3426,7 @@ def initialize(config_path=None, token_override=None):
     global PRO, SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
     global TM, TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
     global _S0, _SETTINGS, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
-    global _DIRECT_MESSAGES
+    global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
@@ -3602,6 +3469,11 @@ def initialize(config_path=None, token_override=None):
             file=sys.stderr,
         )
         sys.exit(1)
+    _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
+    _BACKOFF = RestBackoff(BACKOFF_INITIAL_SECS, BACKOFF_MAX_SECS, lambda: time.time())
+    _DISCORD = DiscordCalls(
+        lambda: TOKEN, _BACKOFF, _HEALTH, lambda data, where: guard_outgoing(data, where)
+    )
     _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
     _DIRECT_MESSAGES = DirectChannels()
     _ACTIVITY = GatewayActivity()
@@ -3625,9 +3497,9 @@ def main():
     scheduler = _rest_scheduler()
     outbox_pass_at = 0.0
     while True:
-        if _token_rejected or status.get("token_rejected"):
+        if _HEALTH.rejected or status.get("token_rejected"):
             save_state(state)
-            token_rejected_exit(_token_rejected or "gateway closed with code 4004")
+            token_rejected_exit(_HEALTH.rejected or "gateway closed with code 4004")
         touch_heartbeat()
         if BOT_USER_ID is None and status.get("user"):
             _adopt_identity(status["user"], " (from gateway READY)")

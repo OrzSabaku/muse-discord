@@ -63,7 +63,7 @@ class Upload(ts.tb.Base):
             raise OSError("sent")
 
         with (
-            mock.patch.object(m, "discord_request", urlopen),
+            mock.patch.object(m._DISCORD, "request", urlopen),
             quiet(),
             contextlib.suppress(m.SecretBlocked, OSError),
         ):
