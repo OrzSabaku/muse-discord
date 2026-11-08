@@ -450,7 +450,9 @@ class Posting(Base):
 
     def test_channel_post_pings_nobody(self):
         slot = self.next_slot("public")
-        self.m.MAX_REPLY_CHARS = 2000  # rewrites then lengthen it
+        self.m._SETTINGS.engine = self.m._SETTINGS.engine.model_copy(
+            update={"max_reply_chars": 2000}
+        )  # rewrites then lengthen it
         self.outbox(
             self.post(slot, CH, "<@222000000000000002> anyone up for a game? " + "@everyone " * 200)
         )
@@ -700,7 +702,7 @@ class Eligibility(Base):
         "they DMed us first"."""
         slot = self.heartbeat()
         self.assertIn(OWNER_DM, self.targets(slot), self.out)
-        self.m.OWNER_USER_IDS = {"111000000000000009"}  # owners changed
+        self.m._SETTINGS.owners = {"111000000000000009"}  # owners changed
         slot = self.next_slot("private", 48)
         self.assertNotIn(OWNER_DM, self.targets(slot or {"proactive": {"targets": []}}))
 

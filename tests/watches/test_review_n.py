@@ -71,8 +71,8 @@ class ExOwnerInFlight(tw.Base):
         return e
 
     def drop_owner(self):
-        # What _on_settings_changed does when config.yaml's owners change.
-        self.mod.OWNER_USER_IDS = {OTHER_OWNER}
+        # What LiveSettings does when config.yaml's owners change.
+        self.mod._SETTINGS.owners = {OTHER_OWNER}
 
     def test_ex_owner_watch_ends_even_with_a_check_out(self):
         i = self.web()

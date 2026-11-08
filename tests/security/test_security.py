@@ -218,7 +218,7 @@ def reset():
     CURL_HANDLER[0] = None
     SEND_FILES_FAIL[0] = 0
     M.collect_media = ORIG_COLLECT
-    M.MAX_REPLY_CHARS = 1800
+    M._SETTINGS.engine = M._SETTINGS.engine.model_copy(update={"max_reply_chars": 1800})
     M._OWNER_ITEMS_WRITTEN["body"] = None
     D.OWNER_ITEMS_FILE = M.OWNER_ITEMS_FILE
     st = M.load_state()
@@ -873,7 +873,7 @@ def f7_overlong_parts_clamped():
     for cap, text in cases:
         API_POSTS.clear()
         state["replied_to"] = []
-        M.MAX_REPLY_CHARS = cap
+        M._SETTINGS.engine = M._SETTINGS.engine.model_copy(update={"max_reply_chars": cap})
         outbox([{"channel_id": GEN_CH, "text": text, "reply_to": queued_in(state)}])
         M.process_outbox(state)
         msgs = [d for p, d in API_POSTS if p.endswith("/messages")]

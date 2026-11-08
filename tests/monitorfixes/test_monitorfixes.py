@@ -475,7 +475,7 @@ class PoisonBurst(Base):
 
 class ReplyBudget(Base):
     def test_parts_share_one_max_reply_chars(self):
-        cap = self.m.MAX_REPLY_CHARS
+        cap = self.m._SETTINGS.engine.max_reply_chars
         for parts in (["a" * cap] * 4, ["a" * (cap - 5), "b" * 50]):
             got = self.m.normalize_parts({"parts": parts})
             self.assertLessEqual(sum(map(len, got)), cap, got)

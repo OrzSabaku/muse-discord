@@ -143,6 +143,7 @@ from muse_discord.rest_scheduler import (
 from muse_discord.rest_scheduler import run_phase as _run_phase
 from muse_discord.settings_commands import SETTINGS_PREFIX, CommandRegistrar
 from muse_discord.settings_runtime import SettingsContext, SettingsSessions
+from muse_discord.settings_watch import LiveSettings
 from muse_discord.storage import PrivateFile, SharedLockTimeout, atomic_write
 from muse_discord.storage import publish_private as _publish
 from muse_discord.watches.audience import WatchAudience
@@ -188,24 +189,9 @@ def _config_path():
 
 
 _INITIALIZED = False
-_SETTINGS: MS.Watcher
-_S0: MS.Settings
-CFG: dict
-OWNER_USER_IDS: set[str]
+_SETTINGS: LiveSettings
 GUILD_ALLOWLIST: set[str]
 TREAT_AS_HUMAN: set[str]
-_ENGINE: MS.EngineSettings
-COALESCE_SECS: float
-BOT_COALESCE_SECS: float
-MAX_REPLY_CHARS: int
-POLL_INTERVAL: int
-SWEEP_EVERY_CYCLES: int
-SWEEP_GRACE_SECS: float
-SWEEP_MAX_AGE_SECS: float
-SWEEP_MAX_RECOVERIES: int
-BACKOFF_INITIAL_SECS: float
-BACKOFF_MAX_SECS: float
-CHANNEL_REFRESH_CYCLES: int
 TOKEN = ""
 
 
@@ -267,7 +253,7 @@ def _proactive_context():
         path=lambda: PROACTIVE_FILE,
         nonce_path=lambda: PROACTIVE_NONCE_FILE,
         bot_ids=lambda: (BOT_ID, BOT_USER_ID),
-        owners=lambda: OWNER_USER_IDS,
+        owners=lambda: _SETTINGS.owners,
         channels=lambda: CHANNELS,
         dm_channels=lambda: _DIRECT_MESSAGES.names,
         dm_users=lambda: _DIRECT_MESSAGES.users,
@@ -307,52 +293,16 @@ def _import_proactive():
 
 
 PRO = _NoProactive()
-# The raw file (test-only keys such as testing: live here).
-# The interaction thread (/settings) reads settings and writes the
-# overlay while the main loop reads them: the reload is serialized by
-# _SETTINGS_LOCK, and every read-modify-write of config.discord.yaml in
-# this process (a /settings change, an undo, the conflict rule retiring
-# entries) holds _OVERLAY_LOCK. A reload noticed off the main thread
-# leaves its follow-up work (owner list) to the main
-# loop's next settings() call.
-_SETTINGS_LOCK = threading.RLock()
-_OVERLAY_LOCK = threading.RLock()
-_SETTINGS_PENDING = []  # settings before reloads the main loop owes hooks
+# Configuration reloads, owner state and edit serialization belong to LiveSettings.
 
 
 def settings():
-    """The current settings, reloaded when config.yaml or
-    config.discord.yaml changed since the last call (a stat per call; an
-    invalid edit keeps the previous settings and is logged once).
-    Thread-safe."""
     if not _INITIALIZED:
         raise RuntimeError("call initialize() before using the monitor")
-    with _SETTINGS_LOCK:
-        prev = _SETTINGS.current
-        changed, err = _SETTINGS.poll()
-        cur = _SETTINGS.current
-        if changed:
-            _SETTINGS_PENDING.append(prev)
-        pending = None
-        if _SETTINGS_PENDING and threading.current_thread() is threading.main_thread():
-            pending = _SETTINGS_PENDING[0]
-            del _SETTINGS_PENDING[:]
-    if err:
-        print(f"Config re-read failed; keeping the previous settings:\n{err}", flush=True)
-    if pending is not None:
-        _on_settings_changed(pending, cur)
-    return cur
+    return _SETTINGS.read()
 
 
-def _on_settings_changed(prev, cur):
-    global OWNER_USER_IDS
-    print("Settings reloaded (config.yaml or config.discord.yaml changed).", flush=True)
-    if sorted(cur.owners) != sorted(prev.owners):
-        OWNER_USER_IDS = set(cur.owners)
-        print(f"Owners are now: {', '.join(sorted(OWNER_USER_IDS)) or 'none'}", flush=True)
-
-
-# --- Read once at import: identity and engine internals ---
+# --- Startup identity and engine settings ---
 RESPOND_TO = {"mention", "reply_to_bot"}
 # The conversational follow-up window (who.replies: conversational).
 # Test-only (the e2e harness's driver bots stand in for people): these
@@ -581,7 +531,7 @@ def _deliver_outbox_item(batch, item):
         proactive_outbox=PRO.outbox_item,
         queue=_queue_files(),
         rejected_path=OUTBOX_REJECTED_FILE,
-        max_reply_chars=MAX_REPLY_CHARS,
+        max_reply_chars=_SETTINGS.engine.max_reply_chars,
     )
     effects = ReplyEffects(
         state=_reply_state(),
@@ -595,7 +545,7 @@ def _deliver_outbox_item(batch, item):
         response=_response_policy(),
         directory=_directory_scopes(),
         opt_action=PRO.opt_action,
-        max_reply_chars=MAX_REPLY_CHARS,
+        max_reply_chars=_SETTINGS.engine.max_reply_chars,
     )
     OutboxDelivery(batch, item, policy, effects, _OUTBOX_CURRENT).process()
 
@@ -699,7 +649,7 @@ def _quarantine_ids():
 def _response_policy():
     return ResponsePolicy(
         settings,
-        lambda: OWNER_USER_IDS,
+        lambda: _SETTINGS.owners,
         _conversation(),
         scope_for,
         scope_of_channel,
@@ -778,7 +728,7 @@ def retire_overlay_changes():
     can land."""
     if not settings().retire or rest_backing_off():
         return 0
-    with _OVERLAY_LOCK:
+    with _SETTINGS.overlay_lock:
         # Re-checked under the lock: a /settings change written since
         # may have replaced a stale entry, which must not be retired.
         notes = settings().commit_retirements()
@@ -805,7 +755,7 @@ def retire_overlay_changes():
 
 
 def _owner_messenger():
-    return OwnerMessenger(lambda: OWNER_USER_IDS, guard_outgoing, api_post)
+    return OwnerMessenger(lambda: _SETTINGS.owners, guard_outgoing, api_post)
 
 
 def _update_notices():
@@ -859,7 +809,7 @@ OWNER_IN_GUILD = {}
 
 def _owner_presence():
     return OwnerPresence(
-        lambda: OWNER_USER_IDS,
+        lambda: _SETTINGS.owners,
         settings,
         api_get,
         rest_backing_off,
@@ -1048,8 +998,8 @@ _ADMIN_LOCK = threading.Lock()
 def settings_context():
     return SettingsContext(
         current=settings,
-        config_path=_SETTINGS.config_path,
-        overlay_lock=_OVERLAY_LOCK,
+        config_path=_SETTINGS.watcher.config_path,
+        overlay_lock=_SETTINGS.overlay_lock,
         directory=_DIRECTORY_VIEW,
         people=_USER_NAMES,
         sessions=_SETTINGS_SESSIONS,
@@ -1123,7 +1073,7 @@ _OWNER_DM_UPKEEP = {"next": 0.0}
 
 def _owner_auth():
     return OwnerAuthorization(
-        lambda: OWNER_USER_IDS,
+        lambda: _SETTINGS.owners,
         CHANNELS,
         _GUILD_CHANNELS,
         _DIRECT_MESSAGES.users,
@@ -1147,7 +1097,7 @@ def _owner_memory():
 
 
 def queue_index(state):
-    return _queue_files().index(state, OWNER_USER_IDS)
+    return _queue_files().index(state, _SETTINGS.owners)
 
 
 # Channels looked up from the API (OwnerAuthorization.gate): channel id -> (is a
@@ -1283,7 +1233,9 @@ def _bursts(state):
     return PendingBursts(
         state,
         _ACTIVITY,
-        CoalescePolicy(COALESCE_SECS, BOT_COALESCE_SECS, is_bot_author),
+        CoalescePolicy(
+            _SETTINGS.engine.coalesce_seconds, _SETTINGS.engine.bot_coalesce_seconds, is_bot_author
+        ),
         enqueue_message,
         BurstEffects(
             note_ingested,
@@ -1376,7 +1328,7 @@ def _typing_thread_main():
 
 
 def normalize_parts(item):
-    return reply_formatting.normalize_parts(item, MAX_REPLY_CHARS)
+    return reply_formatting.normalize_parts(item, _SETTINGS.engine.max_reply_chars)
 
 
 def send_fragmented(channel_id, parts, reply_to=None, attachments=(), delivery=None):
@@ -1451,7 +1403,7 @@ def settings_card(scope, here, channel_id, speaker=None):
     from_bot = speaker.from_bot
     exchange = speaker.exchange
     dm = scope.is_dm
-    owner = str(author_id) in OWNER_USER_IDS
+    owner = str(author_id) in _SETTINGS.owners
     card: dict[str, object] = {"where": "dm" if dm else "server"}
     if not dm:
         info = CHANNELS.get(channel_id) or {}
@@ -1699,14 +1651,14 @@ def _watch_runtime():
         queue=WatchQueue(
             _queue_files(),
             _MonitorIngestJournal(),
-            lambda: OWNER_USER_IDS,
+            lambda: _SETTINGS.owners,
             owner_dm_write_nonces,
         ),
         web=WebWatchWork(
             WEB_RESULTS_FILE,
             WEB_DUE_FILE,
             _publish,
-            lambda: OWNER_USER_IDS,
+            lambda: _SETTINGS.owners,
             is_suspicious,
             _WEB_DUE_WRITTEN,
         ),
@@ -1827,7 +1779,11 @@ def sweep_mentions(state, queue, channels, dms=True):
         quarantined=_quarantine_ids,
         outbox_paths=(OUTBOX_FILE, OUTBOX_PROCESSING_FILE),
         direct=_DIRECT_MESSAGES,
-        window=RecoveryWindow(SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES),
+        window=RecoveryWindow(
+            _SETTINGS.engine.sweep.grace_seconds,
+            _SETTINGS.engine.sweep.max_age_seconds,
+            _SETTINGS.engine.sweep.max_recoveries,
+        ),
         backing_off=rest_backing_off,
         now=time.time,
     ).run(state, queue, channels, dms)
@@ -2034,7 +1990,10 @@ def _rest_scheduler():
     return RestScheduler(
         RestContext(
             RestSchedule(
-                POLL_INTERVAL, SWEEP_EVERY_CYCLES, CHANNEL_REFRESH_CYCLES, THREAD_REFRESH_CYCLES
+                _SETTINGS.engine.rest_poll_seconds,
+                _SETTINGS.engine.sweep.every_cycles,
+                _SETTINGS.engine.discovery_refresh_cycles,
+                THREAD_REFRESH_CYCLES,
             ),
             RestClock(time.time, rest_backing_off),
             RestOperations(
@@ -2128,7 +2087,7 @@ def _start_monitor():
     publish_directory()
     print(
         f"muse-discord monitor starting. Polling {len(CHANNELS)} "
-        f"channels + DMs every {POLL_INTERVAL}s.",
+        f"channels + DMs every {_SETTINGS.engine.rest_poll_seconds}s.",
         flush=True,
     )
     if not CHANNELS:
@@ -2181,7 +2140,11 @@ def _initialize_services():
     _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _STATE_STORE = StateFile(lambda: STATE_FILE)
     _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
-    _BACKOFF = RestBackoff(BACKOFF_INITIAL_SECS, BACKOFF_MAX_SECS, lambda: time.time())
+    _BACKOFF = RestBackoff(
+        _SETTINGS.engine.backoff.initial_seconds,
+        _SETTINGS.engine.backoff.max_seconds,
+        lambda: time.time(),
+    )
     _OUTPUT = OutgoingGuard(
         lambda: TOKEN,
         _live_nonces,
@@ -2191,7 +2154,7 @@ def _initialize_services():
     _DISCORD = DiscordCalls(
         lambda: TOKEN, _BACKOFF, _HEALTH, lambda data, where: guard_outgoing(data, where)
     )
-    _INTERACTIONS = InteractionRouter(lambda: OWNER_USER_IDS)
+    _INTERACTIONS = InteractionRouter(lambda: _SETTINGS.owners)
     _INTERACTIONS.register("mdupd", on_update_button)
     _INTERACTIONS.register("mdhold", on_hold_button)
     _INTERACTIONS.register("mdpro", on_proactive_button, owner_only=False)
@@ -2222,46 +2185,32 @@ def _initialize_services():
 
 def initialize(config_path=None, token_override=None):
     """Load this monitor's configuration and services once, after importing it."""
-    global BACKOFF_INITIAL_SECS, BACKOFF_MAX_SECS, BOT_COALESCE_SECS, CFG, CHANNEL_REFRESH_CYCLES
-    global COALESCE_SECS, GUILD_ALLOWLIST, MAX_REPLY_CHARS, OWNER_USER_IDS, POLL_INTERVAL
-    global SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
-    global TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
-    global _S0, _SETTINGS
+    global GUILD_ALLOWLIST
+    global TOKEN, TREAT_AS_HUMAN, _INITIALIZED
+    global _SETTINGS
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
-        _SETTINGS = MS.Watcher(config_path or _config_path())
+        _SETTINGS = LiveSettings(MS.Watcher(config_path or _config_path()))
     except MS.SettingsError as e:
         print(
             f"CONFIG ERROR: config.yaml is invalid; not starting.\n{e}", file=sys.stderr, flush=True
         )
         sys.exit(1)
-    _S0 = _SETTINGS.current
-    CFG = _S0.raw
-    OWNER_USER_IDS = set(_S0.owners)
-    GUILD_ALLOWLIST = set(_S0.guild_ids())
-    TREAT_AS_HUMAN = {str(u) for u in (CFG.get("testing") or {}).get("treat_as_human") or []}
+    initial = _SETTINGS.initial
+    GUILD_ALLOWLIST = set(initial.guild_ids())
+    TREAT_AS_HUMAN = {
+        str(u) for u in (initial.raw.get("testing") or {}).get("treat_as_human") or []
+    }
     if TREAT_AS_HUMAN:
         print(
             f"WARNING: testing.treat_as_human is set: {len(TREAT_AS_HUMAN)} "
             f"bot account(s) are treated as humans. Test servers only.",
             flush=True,
         )
-    _ENGINE = _S0.engine
-    for _warning in _S0.engine_warnings:
+    for _warning in initial.engine_warnings:
         print(_warning, flush=True)
-    COALESCE_SECS = _ENGINE.coalesce_seconds
-    BOT_COALESCE_SECS = max(COALESCE_SECS, 15.0)
-    MAX_REPLY_CHARS = _ENGINE.max_reply_chars
-    POLL_INTERVAL = _ENGINE.rest_poll_seconds
-    SWEEP_EVERY_CYCLES = _ENGINE.sweep.every_cycles
-    SWEEP_GRACE_SECS = _ENGINE.sweep.grace_seconds
-    SWEEP_MAX_AGE_SECS = _ENGINE.sweep.max_age_hours * 3600
-    SWEEP_MAX_RECOVERIES = _ENGINE.sweep.max_recoveries
-    BACKOFF_INITIAL_SECS = _ENGINE.backoff.initial_seconds
-    BACKOFF_MAX_SECS = _ENGINE.backoff.max_seconds
-    CHANNEL_REFRESH_CYCLES = max(1, round(_ENGINE.discovery_refresh_minutes * 60 / POLL_INTERVAL))
-    TOKEN = token_override if token_override is not None else (_load_token(_S0) or "")
+    TOKEN = token_override if token_override is not None else (_load_token(initial) or "")
     if not TOKEN:
         print(
             "No bot token: pass one as argv[1], or point token_from at an environment "

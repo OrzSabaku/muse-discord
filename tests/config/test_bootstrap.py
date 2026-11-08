@@ -56,7 +56,7 @@ class Bootstrap(unittest.TestCase):
             Path("chosen.yaml").write_text("engine:\\n  coalesce_seconds: 0\\n")
             monitor.initialize("chosen.yaml", token_override="supplied-token")
             assert monitor.TOKEN == "supplied-token"
-            assert monitor.COALESCE_SECS == 0
+            assert monitor._SETTINGS.engine.coalesce_seconds == 0
             assert monitor.settings().engine.coalesce_seconds == 0
             try:
                 monitor.initialize("chosen.yaml", token_override="different-token")

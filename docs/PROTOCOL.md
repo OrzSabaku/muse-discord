@@ -9,6 +9,7 @@
 | --- | --- |
 | REST巡回・時間配分・定期ジョブの実行管理 | `src/muse_discord/rest_scheduler.py` |
 | 起動・イベント処理・各機能の接続 | `src/muse_discord/monitor.py` |
+| 設定の再読み込み・所有者状態・スレッド間の変更引き渡し | `src/muse_discord/settings_watch.py` |
 | メッセージの処理結果・診断理由の永続化 | `src/muse_discord/message_ledger.py` |
 | 受信内容の検査・連投全体の隔離・破損記録の退避 | `src/muse_discord/receiving/quarantine.py` |
 | REST・Gateway受信の分類・確認位置・重複排除 | `src/muse_discord/receiving/` |
@@ -186,3 +187,5 @@ node --test telemetry/worker/test/worker.test.js
 
 - 本体：`cszach/muse-discord`、`7bd0706621b791a5adc72a94d06725ed993f406f`。ライセンスは [MIT](../LICENSE)。
 - CLI・MCPの参考：`mothue/muse-discord`、`2e7665b02b83be0153e1e2b137192bc4f7c87c82`。[MIT表記](licenses/mothue-MIT.txt)。
+
+設定の再読み込みと所有者一覧は `settings_watch.LiveSettings` が管理する。UIスレッドからの読み込みは即時に最新設定を返し、所有者一覧の更新と変更通知はメインスレッドへ引き渡す。連続した変更は最初と最後の状態にまとめる。エンジン設定は起動時のPydanticモデルを保持し、通常の再読み込みで実行中のサービスを部分的に再設定しない。

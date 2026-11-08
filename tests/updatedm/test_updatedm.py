@@ -90,7 +90,7 @@ def ix(custom_id, user=H.OWNER, guild=False, content="notice text"):
 class Announce(unittest.TestCase):
     def test_dm_each_owner_once_with_buttons(self):
         mod = load()
-        mod.OWNER_USER_IDS = {H.OWNER, OTHER}
+        mod._SETTINGS.owners = {H.OWNER, OTHER}
         ents = [f"v1.{i}.0 (2026-11-0{i}): Entry {i}" for i in range(7, 0, -1)]
         write_check(mod, "v1.7.0", ents, action=True, installed=V0)
         state = {}
@@ -239,7 +239,7 @@ class Interactions(unittest.TestCase):
         self.assertEqual(self.recs[0]["version"], V2)
         # A second click (another owner, guild-style payload) keeps the
         # first request.
-        self.mod.OWNER_USER_IDS = {H.OWNER, OTHER}
+        self.mod._SETTINGS.owners = {H.OWNER, OTHER}
         r2 = self.dispatch(ix(f"mdupd:now:{V2}", user=OTHER, guild=True))
         self.assertEqual(r2["type"], 7)
         with open(self.mod.UPDATE_REQUEST_FILE) as f:

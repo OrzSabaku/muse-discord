@@ -320,7 +320,9 @@ class Ctx(unittest.TestCase):
         seen = []
 
         def fake_undo(config_path, prefix, actor):
-            seen.append((config_path, prefix, actor.by, self.mod._OVERLAY_LOCK._is_owned()))
+            seen.append(
+                (config_path, prefix, actor.by, self.mod._SETTINGS.overlay_lock._is_owned())
+            )
             return f"{prefix}.style.length"
 
         had = getattr(self.mod.MS, "undo", None)
@@ -334,13 +336,13 @@ class Ctx(unittest.TestCase):
             else:
                 self.mod.MS.undo = had
         self.assertEqual(r, f'servers."{G1}".style.length')
-        self.assertEqual(seen, [(self.mod._SETTINGS.config_path, f'servers."{G1}"', OWNER, True)])
+        self.assertEqual(
+            seen, [(self.mod._SETTINGS.watcher.config_path, f'servers."{G1}"', OWNER, True)]
+        )
 
     def test_reload_hooks_run_on_main_thread_only(self):
         ran = []
-        self.mod._on_settings_changed = lambda prev, cur: ran.append(
-            threading.current_thread().name
-        )
+        self.mod._SETTINGS.on_change = lambda prev, cur: ran.append(threading.current_thread().name)
         c = self.ctx()
 
         def worker():

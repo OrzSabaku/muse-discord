@@ -213,7 +213,7 @@ if scenario == "slow":
     chans = {f"C{i:02d}": chan(f"c{i}") for i in range(15)}
     setup(chans)
     SLOW["secs"] = 0.15
-    mod.POLL_INTERVAL = 3
+    mod._SETTINGS.engine = mod._SETTINGS.engine.model_copy(update={"rest_poll_seconds": 3})
     PROBE["on"] = True
     gw_script += [
         (1.2, lazy(dm)),
@@ -231,9 +231,11 @@ elif scenario == "sweep":
     setup(chans, {**{c: "1" for c in chans}, "C19": H.sf(0)})
     rec["lost"] = lost["id"]
     SLOW["secs"] = 0.1
-    mod.POLL_INTERVAL = 3
+    mod._SETTINGS.engine = mod._SETTINGS.engine.model_copy(update={"rest_poll_seconds": 3})
     PROBE["on"] = True
-    mod.SWEEP_EVERY_CYCLES = 1
+    mod._SETTINGS.engine = mod._SETTINGS.engine.model_copy(
+        update={"sweep": mod._SETTINGS.engine.sweep.model_copy(update={"every_cycles": 1})}
+    )
     gw_script += [
         (2.5, lazy(lambda: mention("C07"))),
         (3.5, lazy(lambda: mention("C08"))),

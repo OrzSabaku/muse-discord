@@ -594,7 +594,7 @@ def _bot_author_longer_quiet():
     st = new_state()
     t = msg(author="B1", bot=True)
     _drain(st, [t])
-    assert st["pending"]["101:B1"]["window"] == m.BOT_COALESCE_SECS
+    assert st["pending"]["101:B1"]["window"] == m._SETTINGS.engine.bot_coalesce_seconds
     m._ACTIVITY.entries["101:B1"]["msg_at"] -= 2
     q = []
     with capture():

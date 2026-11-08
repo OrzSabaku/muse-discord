@@ -21,12 +21,20 @@ sys.argv = ["x", "dummy-token"]
 sys.path.insert(0, %(repo)r + "/src")
 from muse_discord import monitor
 monitor.initialize(token_override="dummy-token")
-out = {k: getattr(monitor, k) for k in (
-    "COALESCE_SECS", "BOT_COALESCE_SECS", "MAX_REPLY_CHARS",
-    "POLL_INTERVAL", "SWEEP_EVERY_CYCLES", "SWEEP_GRACE_SECS",
-    "SWEEP_MAX_AGE_SECS", "SWEEP_MAX_RECOVERIES", "BACKOFF_INITIAL_SECS",
-    "BACKOFF_MAX_SECS", "CHANNEL_REFRESH_CYCLES")}
-caps = monitor._S0.resolve(monitor.MS.Scope.everywhere())
+out = {
+    'COALESCE_SECS': monitor._SETTINGS.engine.coalesce_seconds,
+    'BOT_COALESCE_SECS': monitor._SETTINGS.engine.bot_coalesce_seconds,
+    'MAX_REPLY_CHARS': monitor._SETTINGS.engine.max_reply_chars,
+    'POLL_INTERVAL': monitor._SETTINGS.engine.rest_poll_seconds,
+    'SWEEP_EVERY_CYCLES': monitor._SETTINGS.engine.sweep.every_cycles,
+    'SWEEP_GRACE_SECS': monitor._SETTINGS.engine.sweep.grace_seconds,
+    'SWEEP_MAX_AGE_SECS': monitor._SETTINGS.engine.sweep.max_age_seconds,
+    'SWEEP_MAX_RECOVERIES': monitor._SETTINGS.engine.sweep.max_recoveries,
+    'BACKOFF_INITIAL_SECS': monitor._SETTINGS.engine.backoff.initial_seconds,
+    'BACKOFF_MAX_SECS': monitor._SETTINGS.engine.backoff.max_seconds,
+    'CHANNEL_REFRESH_CYCLES': monitor._SETTINGS.engine.discovery_refresh_cycles,
+}
+caps = monitor._SETTINGS.initial.resolve(monitor.MS.Scope.everywhere())
 out["DAILY_REPLY_CAP"] = caps["limits.per_day"]
 out["PER_USER_DAILY_CAP"] = caps["limits.per_person_per_day"]
 out["HAS_MAX_BOT_TURNS"] = hasattr(monitor, "MAX_BOT_TURNS")

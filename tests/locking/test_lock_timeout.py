@@ -157,7 +157,12 @@ class LockTimeout(unittest.TestCase):
     def test_staged_addition_survives_timeout_and_restart_then_next_tick_publishes_it(self):
         state, incoming = new_state(), msg()
         write(m.QUEUE_FILE, [])
-        with patch.object(m, "COALESCE_SECS", 0), capture():
+        with (
+            patch.object(
+                m._SETTINGS, "engine", m._SETTINGS.engine.model_copy(update={"coalesce_seconds": 0})
+            ),
+            capture(),
+        ):
             m.stage_trigger(state, incoming, "general", "mention", place=m.MessagePlace("G"))
             with held_lock(), self.assertRaises(m.SharedLockTimeout):
                 m._stage_polled_messages(state, [])

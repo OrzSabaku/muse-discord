@@ -595,13 +595,13 @@ class LiveReload(MonitorBase):
             "when-addressed",
             actor=MS.WriteActor(by=OWNER),
         )
-        bump(m._SETTINGS.overlay_path)
+        bump(m._SETTINGS.watcher.overlay_path)
         self.assertEqual(self.kind(gmsg(U1, mention=True)), "mention")
         # Owners are re-read too.
         self.rewrite(NEW_BASE.replace(OWNER, U2))
         with quiet():
             m.settings()
-        self.assertEqual(m.OWNER_USER_IDS, {U2})
+        self.assertEqual(m._SETTINGS.owners, {U2})
 
     def test_conflict_rule_dms_owners_once(self):
         m = self.m
@@ -609,7 +609,7 @@ class LiveReload(MonitorBase):
         MS.set_value(
             m.cfg_path, "everywhere.style.length", "detailed", actor=MS.WriteActor(by=OWNER)
         )
-        bump(m._SETTINGS.overlay_path)
+        bump(m._SETTINGS.watcher.overlay_path)
         self.rewrite(NEW_BASE + "everywhere:\n  style:\n    length: normal\n")
         with quiet():
             self.assertEqual(m.retire_overlay_changes(), 1)

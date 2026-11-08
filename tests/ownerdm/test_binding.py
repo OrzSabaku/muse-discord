@@ -487,7 +487,7 @@ class LegitPathAndCompat(Base):
         # owner; another item cannot post there.
         u = self.queue(dmsg(U1, "hello", channel=DM_U1))
         s = self.stranger_mention()
-        self.mod.OWNER_USER_IDS = {OWNER, OWNER2, U1}
+        self.mod._SETTINGS.owners = {OWNER, OWNER2, U1}
         self.outbox({"item": s["id"], "channel_id": DM_U1, "standalone": True, "text": "psst"})
         self.assert_refused("names no owner DM")
         self.outbox(self.reply(u, "hi u1"))
@@ -501,7 +501,7 @@ class LegitPathAndCompat(Base):
         self.assert_real_reply_goes_out(b)
         # An owner removed after queueing: still bound.
         m = self.owner_dm()
-        self.mod.OWNER_USER_IDS = {OWNER2}
+        self.mod._SETTINGS.owners = {OWNER2}
         self.mod._DIRECT_MESSAGES.users.pop(DM)
         self.outbox(self.reply(m, "x"))
         self.assert_refused("bad nonce")

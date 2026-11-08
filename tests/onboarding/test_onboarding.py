@@ -342,7 +342,7 @@ def monitor_owners(cfg):
 
     with open(cfg) as f:
         mod = load_monitor(f.read())
-    return set(mod.OWNER_USER_IDS)
+    return set(mod._SETTINGS.owners)
 
 
 class RenderWorkerPrompt(unittest.TestCase):

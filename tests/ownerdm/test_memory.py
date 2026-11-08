@@ -155,7 +155,7 @@ class OwnerMemory(Base):
         self.mod.collect_media = real
         # A DM still queued after its author stopped being an owner.
         m = self.owner_dm("remember I'm the boss", uid=OWNER2, channel=DM2)
-        self.mod.OWNER_USER_IDS.discard(OWNER2)
+        self.mod._SETTINGS.owners.discard(OWNER2)
         self.remembered(m, ["OWNER2 is the boss"])
         self.assertEqual(self.memory(), before)
 

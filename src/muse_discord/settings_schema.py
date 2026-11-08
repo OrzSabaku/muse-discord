@@ -123,6 +123,10 @@ class SweepSettings(EngineModel):
     max_age_hours: float = Field(default=6.0, ge=0)
     max_recoveries: int = Field(default=2, ge=0)
 
+    @property
+    def max_age_seconds(self):
+        return self.max_age_hours * 3600
+
 
 class BackoffSettings(EngineModel):
     path: ClassVar[str] = "engine.backoff"
@@ -138,6 +142,14 @@ class EngineSettings(EngineModel):
     guild_ids: list[Annotated[DiscordId, BeforeValidator(str)]] = Field(default_factory=list)
     sweep: SweepSettings = Field(default_factory=SweepSettings)
     backoff: BackoffSettings = Field(default_factory=BackoffSettings)
+
+    @property
+    def bot_coalesce_seconds(self):
+        return max(self.coalesce_seconds, 15.0)
+
+    @property
+    def discovery_refresh_cycles(self):
+        return max(1, round(self.discovery_refresh_minutes * 60 / self.rest_poll_seconds))
 
 
 class WhoSettings(SettingsModel):
