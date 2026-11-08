@@ -129,7 +129,6 @@ def load_monitor(tmp=None, cfg_extra=""):
     mod.api_post = mod.api.post
     mod.send_typing = lambda cid: None
     mod.collect_media = lambda m: ([], [], [])
-    mod.get_reply_context = lambda m: None
     mod.BOT_ID = mod.BOT_USER_ID = BOT
     mod.BOT_NAME = "musebot"
     mod.TMP = tmp

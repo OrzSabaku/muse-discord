@@ -24,12 +24,14 @@ from settings_harness import (  # noqa: E402 (local import path bootstrap)
 )
 from test_binding import DM, DM_U1, Base  # noqa: E402
 
+from muse_discord.bursts import alias_fragments  # noqa: E402 (source path bootstrap)
 
-def churn_aliases(mod, st, n=501):
+
+def churn_aliases(st, n=501):
     """Other people's bursts: alias_fragments keeps only the newest 500
     fragment -> trigger aliases (state["reply_aliases"])."""
     for i in range(n):
-        mod.alias_fragments(st, f"7{i:017d}", [{"id": f"8{i:017d}"}])
+        alias_fragments(st, f"7{i:017d}", [{"id": f"8{i:017d}"}])
 
 
 class BurstFragments(Base):
@@ -61,7 +63,7 @@ class BurstFragments(Base):
     def test_fragment_after_alias_eviction(self):
         trig, frag = self.burst()
         self.assertEqual(self.st["nl_nonces"][trig["id"]]["fragments"], [frag["id"]])
-        churn_aliases(self.mod, self.st)
+        churn_aliases(self.st)
         self.assertNotIn(frag["id"], self.st["reply_aliases"])
         # A stranger's wake silencing it under the fragment: refused.
         for cid in (CH, DM):

@@ -3,14 +3,16 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from muse_discord.ingest import IngestJournal
 from muse_discord.message_queue import QueueFiles
+from muse_discord.owner.capabilities import CapabilityIssuer
+from muse_discord.reply_state import ReplyState
 
 
 @dataclass
 class WatchQueue:
     queue: QueueFiles
-    journal: IngestJournal
+    replies: ReplyState
+    capabilities: CapabilityIssuer
     owners_source: Callable[[], set[str]]
     publish_nonces: Callable[[dict], None]
 
@@ -24,7 +26,7 @@ class WatchQueue:
         fid, uid = q["message_id"], str(q["author_id"])
         dm = q.get("guild_id") is None
         owner_dm = dm and uid in self.owners_source()
-        self.journal.note_item_meta(
+        self.replies.note_item(
             state,
             fid,
             author_id=uid,
@@ -36,10 +38,10 @@ class WatchQueue:
             guild_id=q.get("guild_id"),
             author=q.get("author"),
         )
-        self.journal.note_queued(state, fid)
+        self.replies.note_queued(state, fid)
         if owner_dm and fid not in (state.get("nl_nonces") or {}):
-            self.journal.owner_dm_mint_nonce(state, fid, q["channel_id"])
-        self.journal.reply_nonce_mint(state, fid)
+            self.capabilities.mint_owner_dm(state, fid, q["channel_id"])
+        self.capabilities.mint_reply(state, fid)
         self.queue.edit(add=[q])
         items = (q.get("reminder") or {}).get("items") or []
         print(

@@ -62,13 +62,11 @@ from muse_discord.bursts import (
     CoalescePolicy,
     GatewayActivity,
     PendingBursts,
-    alias_fragments,
 )
 from muse_discord.channel_access import ChannelAccess
 from muse_discord.conversation import (
     Conversation,
     channel_display,
-    is_forwarded,
 )
 from muse_discord.conversation import _snowflake_ts as _snowflake_ts
 from muse_discord.conversation import _who as _who
@@ -83,7 +81,7 @@ from muse_discord.directory.state import DirectoryState
 from muse_discord.durable_state import QueuePublication, StateFile
 from muse_discord.generated_replies import GeneratedReplies
 from muse_discord.http_runtime import DiscordCalls, RestBackoff
-from muse_discord.ingest import MessageEnqueuer
+from muse_discord.ingest import IngestJournal, MessageEnqueuer
 from muse_discord.interaction_dispatch import (
     InteractionResponder,
     InteractionRouter,
@@ -95,7 +93,6 @@ from muse_discord.message_models import (
     LedgerContext,
     MessagePlace,
     QueueContext,
-    Speaker,
 )
 from muse_discord.message_outcomes import MessageOutcomes
 from muse_discord.message_queue import QueueFiles
@@ -152,6 +149,7 @@ from muse_discord.watches.queue import WatchQueue
 from muse_discord.watches.requests import WatchRequests
 from muse_discord.watches.runtime import WatchRuntime
 from muse_discord.watches.web import WebWatchWork
+from muse_discord.worker_context import WorkerContext
 
 CONFIG_PATH_ARGUMENT = 2
 MEMBER_CACHE_LIMIT = 2000
@@ -279,7 +277,7 @@ def _proactive_context():
         send_fragmented=lambda *args, **kwargs: send_fragmented(*args, **kwargs),
         send_reply=lambda *args, **kwargs: send_reply(*args, **kwargs),
         settings=lambda *args, **kwargs: settings(*args, **kwargs),
-        settings_card=lambda *args, **kwargs: settings_card(*args, **kwargs),
+        settings_card=lambda *args, **kwargs: _worker_context().settings_card(*args, **kwargs),
         started_item_id=lambda *args, **kwargs: started_item_id(*args, **kwargs),
     )
 
@@ -576,10 +574,6 @@ def save_state(state):
 
 def _quarantine_store():
     return MessageQuarantine(QUARANTINE_FILE, _message_ledger())
-
-
-def quarantine(msg, channel_name, matched_pattern, fragments=()):
-    return _quarantine_store().hold(msg, channel_name, matched_pattern, fragments)
 
 
 # ---------------------------------------------------------------------------
@@ -1028,10 +1022,6 @@ def _capabilities():
     )
 
 
-def owner_dm_mint_nonce(state, mid, channel_id=None, fragments=()):
-    return _capabilities().mint_owner_dm(state, mid, channel_id, fragments)
-
-
 def owner_dm_write_nonces(state):
     return _capabilities().write_owner_dms(state)
 
@@ -1126,10 +1116,6 @@ _OWNER_ITEMS_WRITTEN = {"body": None}
 # Bare channel names ("post this in announcements") that are never one.
 
 
-def note_owner_item(state, mid, dm=False, command=None):
-    return _capabilities().note_command(state, mid, dm, command)
-
-
 # ---------------------------------------------------------------------------
 # Every queue item is bound to the wake that holds it. The monitor mints
 # each queued item (fires included) a reply_nonce: 128 random bits, kept
@@ -1178,33 +1164,6 @@ def note_refused(msg, cname, reason):
         ),
     )
     print(f"Not answering {author.get('username')} in {cname}: {reason}.", flush=True)
-
-
-def get_reply_context(msg):
-    """If msg used Discord's reply feature, return the referenced message as
-    {author, author_id, content, is_bot} so the worker knows whose
-    conversation this message belongs to. Prefers the embedded
-    referenced_message; falls back to one API fetch. Returns None when the
-    message is not a reply or the referenced message is gone."""
-    ref = msg.get("message_reference") or {}
-    ref_id = ref.get("message_id")
-    if not ref_id:
-        return None
-    rm = msg.get("referenced_message")
-    if rm is None:
-        try:
-            rm = api_get(f"/channels/{msg['channel_id']}/messages/{ref_id}")
-        except Exception:
-            return None
-    if not rm:
-        return None
-    author = _who(rm)
-    return {
-        "author": author.get("username", "?"),
-        "author_id": author.get("id"),
-        "content": (rm.get("content") or "")[:500],
-        "is_bot": author.get("id") == BOT_ID,
-    }
 
 
 _ACTIVITY: GatewayActivity
@@ -1374,37 +1333,6 @@ def check_dm_channel(dm_id, dm_name, state):
     return _receiver(state).poll_dm(dm_id, dm_name)
 
 
-def settings_card(scope, here, channel_id, speaker=None):
-    """The per-message settings card for the worker (item "settings"):
-    where it is, who is speaking, who can read the reply, and the style
-    and privacy settings that steer it. In an owner's DM, memory is
-    always "everything"."""
-    speaker = speaker or Speaker()
-    author_id = speaker.author_id
-    from_bot = speaker.from_bot
-    exchange = speaker.exchange
-    dm = scope.is_dm
-    owner = str(author_id) in _SETTINGS.owners
-    card: dict[str, object] = {"where": "dm" if dm else "server"}
-    if not dm:
-        info = _DIRECTORY.channels.get(channel_id) or {}
-        card["server"] = (
-            (_DIRECTORY.guilds.get(scope.guild_id) or {}).get("name")
-            or info.get("guild_name")
-            or scope.guild_id
-        )
-        card["channel"] = info.get("name") or channel_id
-    card["speaker"] = "owner" if owner else ("bot" if from_bot else "member")
-    card["audience"] = "private" if dm else "public"
-    card["memory"] = "everything" if (dm and owner) else here["privacy.memory"]
-    card["replies"] = here["who.replies"]
-    card["length"] = here["style.length"]
-    card["notes"] = here["style.notes"]
-    if from_bot:
-        card["bot_exchange"] = {"count": exchange + 1, "limit": here["who.bot_exchange_limit"]}
-    return card
-
-
 def _reply_state():
     return ReplyState(
         _message_ledger(), _queue_files(), PRO.policy.note_item, TM.latency, time.time
@@ -1426,64 +1354,19 @@ def note_item_meta(state, mid, **meta):
     return _reply_state().note_item(state, mid, **meta)
 
 
-class _MonitorIngestConversation(Conversation):
-    @staticmethod
-    def collect_media(msg):
-        return collect_media(msg)
-
-    @staticmethod
-    def get_reply_context(msg):
-        return get_reply_context(msg)
-
-    @staticmethod
-    def settings_card(scope, here, channel_id, speaker=None):
-        return settings_card(scope, here, channel_id, speaker)
-
-    @staticmethod
-    def watch_card(guild_id, dm, here, matches, speaker=None):
-        return watch_card(guild_id, dm, here, matches, speaker)
-
-    @staticmethod
-    def is_forwarded(msg):
-        return is_forwarded(msg)
+def _worker_context():
+    return WorkerContext(
+        _conversation(),
+        _DIRECTORY,
+        lambda: _SETTINGS.owners,
+        api_get,
+        collect_media,
+        _watch_requests(),
+    )
 
 
-class _MonitorIngestJournal:
-    @staticmethod
-    def ledger_record_many(mids, status, reason="", context=None):
-        return ledger_record_many(mids, status, reason, context)
-
-    @staticmethod
-    def is_suspicious(content):
-        return is_suspicious(content)
-
-    @staticmethod
-    def quarantine(msg, channel_name, matched_pattern, fragments=()):
-        return quarantine(msg, channel_name, matched_pattern, fragments)
-
-    @staticmethod
-    def alias_fragments(state, trigger_id, fragments):
-        return alias_fragments(state, trigger_id, fragments)
-
-    @staticmethod
-    def note_queued(state, mid):
-        return note_queued(state, mid)
-
-    @staticmethod
-    def note_item_meta(state, mid, **meta):
-        return note_item_meta(state, mid, **meta)
-
-    @staticmethod
-    def owner_dm_mint_nonce(state, mid, channel_id=None, fragments=()):
-        return owner_dm_mint_nonce(state, mid, channel_id, fragments)
-
-    @staticmethod
-    def note_owner_item(state, mid, dm=False, command=None):
-        return note_owner_item(state, mid, dm, command)
-
-    @staticmethod
-    def reply_nonce_mint(state, mid):
-        return reply_nonce_mint(state, mid)
+def _ingest_journal():
+    return IngestJournal(_message_ledger(), _quarantine_store(), _reply_state(), _capabilities())
 
 
 def enqueue_message(msg, cname, state, queue, context=None):
@@ -1495,17 +1378,13 @@ def enqueue_message(msg, cname, state, queue, context=None):
         queue,
         context or QueueContext(),
         _response_policy(),
-        _MonitorIngestConversation(BOT_ID, BOT_NAME, TREAT_AS_HUMAN, frozenset(RESPOND_TO)),
-        _MonitorIngestJournal(),
+        _worker_context(),
+        _ingest_journal(),
     ).enqueue()
 
 
 def note_ingested(state, mid):
     return _reply_state().note_ingested(state, mid)
-
-
-def note_queued(state, mid):
-    return _reply_state().note_queued(state, mid)
 
 
 def _settle(state, item, outcome):
@@ -1605,10 +1484,6 @@ def _watch_requests():
     return WatchRequests(watch_store(), _watch_audience(), queued_item_meta, _note_watch_timezone)
 
 
-def watch_card(guild_id, dm, here, matches, speaker=None):
-    return _watch_requests().card(guild_id, dm, here, matches, speaker)
-
-
 def _note_watch_timezone(uid, fresh):
     for op, value in (fresh or {}).get("done") or []:
         if op == "tz":
@@ -1630,10 +1505,11 @@ def _watch_runtime():
     return WatchRuntime(
         store=watch_store(),
         audience=audience,
-        fires=WatchFireBuilder(audience, ledger_record, settings_card),
+        fires=WatchFireBuilder(audience, ledger_record, _worker_context().settings_card),
         queue=WatchQueue(
             _queue_files(),
-            _MonitorIngestJournal(),
+            _reply_state(),
+            _capabilities(),
             lambda: _SETTINGS.owners,
             owner_dm_write_nonces,
         ),

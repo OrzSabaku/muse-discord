@@ -9,6 +9,7 @@
 | --- | --- |
 | REST巡回・時間配分・定期ジョブの実行管理 | `src/muse_discord/rest_scheduler.py` |
 | 起動・イベント処理・各機能の接続 | `src/muse_discord/monitor.py` |
+| ワーカー向けの返信先・文脈・設定カードの作成 | `src/muse_discord/worker_context.py` |
 | チャンネル・サーバー・探索メタデータの共有状態 | `src/muse_discord/directory/state.py` |
 | チャンネル・スレッド探索結果の採用と公開 | `src/muse_discord/directory/refresh.py` |
 | 設定の再読み込み・所有者状態・スレッド間の変更引き渡し | `src/muse_discord/settings_watch.py` |
@@ -205,3 +206,5 @@ node --test telemetry/worker/test/worker.test.js
 設定エンジンの公開窓口は `muse_settings` とし、実装は `settings` パッケージで担当する。キーと適用範囲を土台に、読み込み・継承解決、変更計画・権限確認、保存・履歴の順に依存させる。モジュール間の依存は循環させず、公開窓口には状態や中継関数を置かない。履歴と書き込みは同じoverlayロックを使う。
 
 チャンネル・サーバーと探索メタデータは `DirectoryState` が保持する。`DirectoryRefresh` は探索中に追加されたチャンネルを残し、完了後に同じ辞書へ最新情報を反映する。IDの集合が変わらなくても名前や権限を更新し、既存サービスの参照を古い辞書へ取り残さない。
+
+ワーカーへ渡す参照メッセージと設定カードは `WorkerContext` が作る。受信パイプラインは会話・媒体・通知と、台帳・隔離・依頼記録・権限発行の担当サービスを直接使う。モニターの中継クラスや同じ操作を列挙する専用インターフェースを重ねない。通知のキュー登録も依頼記録と権限発行を直接使い、受信パイプラインへ依存させない。

@@ -7,9 +7,10 @@ there is no monitor import, global configuration lookup or namespace injection.
 
 import time
 from dataclasses import dataclass
-from typing import Protocol
 
-from muse_discord.conversation import HISTORY_ATTACHED
+from muse_discord.bursts import alias_fragments
+from muse_discord.conversation import HISTORY_ATTACHED, is_forwarded
+from muse_discord.message_ledger import MessageLedger
 from muse_discord.message_models import (
     LedgerContext,
     MessageMedia,
@@ -18,72 +19,19 @@ from muse_discord.message_models import (
     QueueContext,
     Speaker,
 )
-from muse_discord.muse_settings import Scope, Settings
+from muse_discord.owner.capabilities import CapabilityIssuer
+from muse_discord.receiving.quarantine import MessageQuarantine, is_suspicious
+from muse_discord.reply_state import ReplyState
+from muse_discord.response_policy import ResponsePolicy
+from muse_discord.worker_context import WorkerContext
 
 
-class IngestPolicy(Protocol):
-    @property
-    def owners(self) -> set[str]: ...
-
-    def predates_join(self, state, msg, gid) -> bool: ...
-
-    def is_bot_author(self, author) -> bool: ...
-
-    def own_replies_in_run(self, history, msg) -> int: ...
-
-    def scope_for(self, guild_id=None, channel_id=None, dm=False) -> Scope: ...
-
-    def settings(self) -> Settings: ...
-
-    def rate_block(self, state, user_id, channel_id=None, scope=None) -> dict | None: ...
-
-    def rate_record(self, state, user_id, scope=None) -> None: ...
-
-    def media_permission(self, state, scope, here, author_matches) -> bool: ...
-
-    def people_match(self, value, user_id, roles=lambda: set()) -> bool: ...
-
-    def member_roles(self, guild_id, user_id) -> set[str]: ...
-
-
-class IngestConversation(Protocol):
-    def bot_run_length(self, history, msg) -> int: ...
-
-    def collect_media(self, msg) -> tuple[list, list, list]: ...
-
-    def get_reply_context(self, msg) -> dict | None: ...
-
-    def conversation_participants(self, history, msg, reply_ctx) -> list[dict]: ...
-
-    def is_mention(self, msg) -> bool: ...
-
-    def is_reply_to_bot(self, msg) -> bool: ...
-
-    def settings_card(self, scope, here, channel_id, speaker=None) -> dict: ...
-
-    def watch_card(self, guild_id, dm, here, matches, speaker=None) -> dict: ...
-
-    def is_forwarded(self, msg) -> bool: ...
-
-
-class IngestJournal(Protocol):
-    def ledger_record_many(self, mids, status, reason="", context=None) -> None: ...
-
-    def is_suspicious(self, content) -> str | bool: ...
-
-    def quarantine(self, msg, channel_name, matched_pattern, fragments=()) -> None: ...
-
-    def alias_fragments(self, state, trigger_id, fragments) -> None: ...
-
-    def note_queued(self, state, mid) -> float: ...
-
-    def note_item_meta(self, state, mid, **meta) -> None: ...
-
-    def owner_dm_mint_nonce(self, state, mid, channel_id=None, fragments=()) -> None: ...
-
-    def note_owner_item(self, state, mid, dm=False, command=None) -> None: ...
-
-    def reply_nonce_mint(self, state, mid) -> str: ...
+@dataclass
+class IngestJournal:
+    ledger: MessageLedger
+    quarantine: MessageQuarantine
+    replies: ReplyState
+    capabilities: CapabilityIssuer
 
 
 @dataclass
@@ -93,8 +41,8 @@ class MessageEnqueuer:
     state: dict
     queue: list
     context: QueueContext
-    policy: IngestPolicy
-    conversation: IngestConversation
+    policy: ResponsePolicy
+    worker: WorkerContext
     journal: IngestJournal
 
     @property
@@ -129,7 +77,7 @@ class MessageEnqueuer:
         # 0. Hard gates, re-checked here because every path (poll, gateway,
         #    restart flush, sweep) funnels through this function.
         if self.policy.predates_join(self.state, self.msg, self.context.guild_id):
-            self.journal.ledger_record_many(
+            self.journal.ledger.record_many(
                 burst_ids,
                 "skipped",
                 "predates bot join",
@@ -142,7 +90,7 @@ class MessageEnqueuer:
             return None
         chan_hist = self.state.get("history", {}).get(self.msg["channel_id"], [])
         from_bot = self.policy.is_bot_author(self.msg.get("author"))
-        bot_turns = self.conversation.bot_run_length(chan_hist, self.msg)
+        bot_turns = self.worker.conversation.bot_run_length(chan_hist, self.msg)
         scope = self.policy.scope_for(
             self.context.guild_id, self.msg["channel_id"], self.context.dm
         )
@@ -152,7 +100,7 @@ class MessageEnqueuer:
         exchange = self.policy.own_replies_in_run(chan_hist, self.msg) if from_bot else 0
         limit = here["who.bot_exchange_limit"]
         if from_bot and limit is not None and exchange >= limit:
-            self.journal.ledger_record_many(
+            self.journal.ledger.record_many(
                 burst_ids,
                 "skipped",
                 f"bot exchange limit ({limit}) reached",
@@ -180,7 +128,7 @@ class MessageEnqueuer:
         # 1. Injection pre-filter -> quarantine (privacy.suspicious:
         #    hold-for-review) or drop (ignore), no auto-reply (combined text).
         if suspicious != "answer":
-            matched = self.journal.is_suspicious(content)
+            matched = is_suspicious(content)
             if matched:
                 self.hold_suspicious(suspicious, fragments, matched)
                 return None
@@ -190,7 +138,7 @@ class MessageEnqueuer:
         #    drops it and the author's later messages are judged on their own.
         capped = self.policy.rate_block(self.state, author_id, self.msg["channel_id"], scope)
         if capped:
-            self.journal.ledger_record_many(
+            self.journal.ledger.record_many(
                 burst_ids,
                 "skipped",
                 "daily cap reached",
@@ -220,13 +168,13 @@ class MessageEnqueuer:
         # 3. Media and document text, for the worker to see and read.
         media, documents, unviewable = [], [], []
         for m in [self.msg, *turn.fragments]:
-            md, dc, uv = self.conversation.collect_media(m)
+            md, dc, uv = self.worker.media(m)
             media += md
             documents += dc
             unviewable += uv
 
         # 3b. Whose message the trigger replies to, if anyone's.
-        reply_ctx = self.conversation.get_reply_context(self.msg)
+        reply_ctx = self.worker.reply_context(self.msg)
 
         # 3c. The worker reads extracted document text and the replied-to
         #     message as well as the message itself, so they get the same
@@ -238,7 +186,7 @@ class MessageEnqueuer:
             if reply_ctx and not reply_ctx.get("is_bot"):
                 extra_texts.append(("replied-to message", reply_ctx.get("content") or ""))
             for where, text in extra_texts:
-                matched = self.journal.is_suspicious(text)
+                matched = is_suspicious(text)
                 if matched:
                     self.hold_suspicious(
                         turn.here["privacy.suspicious"], turn.fragments, f"{matched} (in {where})"
@@ -275,7 +223,7 @@ class MessageEnqueuer:
         # The worker replies under the LAST fragment, but the ledger and the
         # sweep track the trigger: remember which trigger each fragment
         # belongs to so a reply (or a silent pass) settles the whole burst.
-        self.journal.alias_fragments(self.state, self.msg["id"], turn.fragments)
+        alias_fragments(self.state, self.msg["id"], turn.fragments)
 
         item = {
             "message_id": self.msg["id"],
@@ -307,19 +255,20 @@ class MessageEnqueuer:
             # bot messages (this one included) since a human last spoke.
             "from_bot": turn.from_bot,
             "bot_turns": turn.bot_turns,
-            "participants": self.conversation.conversation_participants(
+            "participants": self.worker.conversation.conversation_participants(
                 turn.chan_hist, self.msg, media.reply_ctx
             ),
             # When the monitor queued it: the typing cap and the latency log
             # measure from here.
-            "queued_at": self.journal.note_queued(self.state, self.msg["id"]),
+            "queued_at": self.journal.replies.note_queued(self.state, self.msg["id"]),
             # Triggered only by the conversational follow-up window.
             "follow_up": self.context.follow_up
             and not any(
-                self.conversation.is_mention(m) or self.conversation.is_reply_to_bot(m)
+                self.worker.conversation.is_mention(m)
+                or self.worker.conversation.is_reply_to_bot(m)
                 for m in [self.msg, *turn.fragments]
             ),
-            "settings": self.conversation.settings_card(
+            "settings": self.worker.settings_card(
                 turn.scope,
                 turn.here,
                 self.msg["channel_id"],
@@ -345,7 +294,7 @@ class MessageEnqueuer:
             )
         # Reminders and watches: the author's own list, and whether they may
         # set one here (abilities.reminders).
-        item["watches"] = self.conversation.watch_card(
+        item["watches"] = self.worker.watches.card(
             self.context.guild_id,
             self.context.dm,
             turn.here,
@@ -361,7 +310,7 @@ class MessageEnqueuer:
         # or posts in its channel must carry its nonce (owner_dm_gate).
         # (The wake hook's test too: settings.speaker "owner" in a DM.)
         owner_dm = bool(self.context.dm and str(self.author_id) in self.policy.owners)
-        self.journal.note_item_meta(
+        self.journal.replies.note_item(
             self.state,
             self.msg["id"],
             author_id=self.author_id,
@@ -376,14 +325,14 @@ class MessageEnqueuer:
             # Settings requests: never from a forwarded message;
             # attachments or a reply to someone else's message
             # always need the owner's Apply.
-            forwarded=any(self.conversation.is_forwarded(m) for m in [self.msg, *turn.fragments]),
+            forwarded=any(is_forwarded(m) for m in [self.msg, *turn.fragments]),
             has_inputs=bool(item["media"] or item["documents"])
             or bool(item["reply_to"] and not item["reply_to"].get("is_bot")),
         )
         if owner_dm:
             # The capability for this owner DM (written for the wake hook
             # before the item reaches the queue file).
-            self.journal.owner_dm_mint_nonce(
+            self.journal.capabilities.mint_owner_dm(
                 self.state,
                 self.msg["id"],
                 self.msg["channel_id"],
@@ -391,7 +340,7 @@ class MessageEnqueuer:
             )
         if item["owner_command"]:
             # bin/discord-api.py's capability for this owner's command.
-            self.journal.note_owner_item(
+            self.journal.capabilities.note_command(
                 self.state,
                 self.msg["id"],
                 dm=owner_dm,
@@ -402,7 +351,7 @@ class MessageEnqueuer:
                 ),
             )
         # The capability to answer it at all, for the wake that holds it.
-        self.journal.reply_nonce_mint(self.state, self.msg["id"])
+        self.journal.capabilities.mint_reply(self.state, self.msg["id"])
         print(
             f"Queued {item['kind']}{' (follow-up)' if item['follow_up'] else ''}"
             f" from {self.msg['author'].get('username')} in "
@@ -410,7 +359,7 @@ class MessageEnqueuer:
             flush=True,
         )
         # (Typing comes from the typing thread, via typing_refresh.)
-        self.journal.ledger_record_many(
+        self.journal.ledger.record_many(
             turn.burst_ids,
             "queued",
             context=LedgerContext(
@@ -423,7 +372,7 @@ class MessageEnqueuer:
 
     def hold_suspicious(self, policy, fragments, matched):
         if policy == "ignore":
-            self.journal.ledger_record_many(
+            self.journal.ledger.record_many(
                 [self.msg["id"], *[f["id"] for f in fragments]],
                 "skipped",
                 f"suspicious, ignored: {matched}",
@@ -439,7 +388,7 @@ class MessageEnqueuer:
                 flush=True,
             )
         else:
-            self.journal.quarantine(self.msg, self.cname, matched, fragments)
+            self.journal.quarantine.hold(self.msg, self.cname, matched, fragments)
 
     def author_matches(self, who):
         return self.policy.people_match(
