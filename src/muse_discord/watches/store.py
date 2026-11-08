@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import time
+from collections.abc import Callable
 
 from muse_discord.storage import atomic_write
 from muse_discord.watches.limits import _ALPHABET, DONE_KEEP_SECS, FIRED_KEEP, VERSION
@@ -37,13 +38,29 @@ class Store:
     """watches.json. Reads are cached on the file's mtime and size (the
     monitor peeks at it every tick); every change is a read-modify-write
     under an flock on watches.lock, written atomically, so the owner's
-    CLI and the monitor never lose each other's edits."""
+    CLI and the monitor never lose each other's edits. A path provider lets a
+    long-lived store follow its application's active data directory without
+    carrying cached records into another store."""
 
-    def __init__(self, path):
-        self.path = path
-        self.lock_path = os.path.join(os.path.dirname(path) or ".", "watches.lock")
+    def __init__(self, path: str | os.PathLike[str] | Callable[[], str | os.PathLike[str]]):
+        self._path_source: Callable[[], str | os.PathLike[str]] = (
+            path if callable(path) else lambda: path
+        )
+        self._resolved_path = None
         self._sig = None
         self._data = None
+
+    @property
+    def path(self):
+        path = os.fspath(self._path_source())
+        if path != self._resolved_path:
+            self._resolved_path = path
+            self._sig = self._data = None
+        return path
+
+    @property
+    def lock_path(self):
+        return os.path.join(os.path.dirname(self.path) or ".", "watches.lock")
 
     def _stat(self):
         try:

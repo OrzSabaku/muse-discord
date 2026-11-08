@@ -1,6 +1,8 @@
 """Notification services run with explicit dependencies and no monitor bootstrap."""
 
+import json
 import os
+import stat
 import sys
 import tempfile
 import time
@@ -91,6 +93,28 @@ class Services(unittest.TestCase):
             self.assertIn(queued_id, store.read()["fires"])
             self.assertEqual(items[0]["author_id"], OWNER)
             no_network.assert_not_called()
+
+    def test_store_path_switch_uses_the_new_cache_and_private_file_in_each_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first, second = directory + "/first", directory + "/second"
+            os.mkdir(first)
+            os.mkdir(second)
+            selected = first + "/watches.json"
+            store = W.Store(lambda: selected)
+            with store.edit() as data:
+                data["items"]["first"] = {"kind": "remind", "due": 1000}
+            selected = second + "/watches.json"
+            self.assertEqual(store.read()["items"], {})
+            with store.edit() as data:
+                data["items"]["second"] = {"kind": "remind", "due": 2000}
+            for base, key in ((first, "first"), (second, "second")):
+                path = base + "/watches.json"
+                with open(path) as stream:
+                    self.assertEqual(set(json.load(stream)["items"]), {key})
+                self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+                self.assertTrue(os.path.isfile(base + "/watches.lock"))
+            selected = first + "/watches.json"
+            self.assertEqual(set(store.read()["items"]), {"first"})
 
 
 if __name__ == "__main__":
