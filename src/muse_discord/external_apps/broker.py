@@ -1,18 +1,19 @@
 """Immutable, expiring plans and one-use execution with live DM authorization."""
 
 import base64
-from contextlib import contextmanager
 import hashlib
 import hmac
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import sqlite3
 import time
+from contextlib import contextmanager
+from pathlib import Path
 
 from muse_discord import muse_settings as MS
+
 from .policy import LEVELS, Refused, canonical, digest, evaluate, load_policy
 
 PLAN_TTL = 300
@@ -97,8 +98,8 @@ def store(root):
 
 def verify_receipt(policy, expected, receipt, now):
     try:
-        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
         from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     except ImportError:
         raise Refused("APPROVAL_VERIFIER_UNAVAILABLE") from None
     if not policy.get("approval_public_key"):

@@ -19,14 +19,14 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import test_binding as tb  # noqa: E402
+import test_binding as tb
 from settings_harness import (
     CH,
     CH2,
     CH_G2,
     G1,
     MS,
-    OWNER,  # noqa: E402
+    OWNER,
     THREAD,
     U1,
     U2,
@@ -53,7 +53,7 @@ class _B(tb.Base):
         bump(self.mod.cfg_path)
 
     def apply(self, changes):
-        MS.apply(self.mod.cfg_path, changes, OWNER, role="owner")
+        MS.apply(self.mod.cfg_path, changes, actor=MS.WriteActor(by=OWNER, role="owner"))
         bump(os.path.join(self.mod.tmp, "config.discord.yaml"))
 
     def assert_refused_here(self, cid):

@@ -38,8 +38,7 @@ the running monitor to send now (the SEND_NOW_FILE flag).
 Standard library only.
 """
 
-from typing import Any
-
+import contextlib
 import json
 import math
 import os
@@ -55,7 +54,18 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from http import HTTPStatus
+from typing import Any
+
+MAX_DISCORD_ID_LENGTH = 25
+MIN_PRESET_CHANGES = 2
+MIN_SERVER_HISTORY_KEY_PARTS = 4
+MAX_LOGGED_ERRORS = 3
+DAY_SECS = 86400
+
 
 SCHEMA = 1
 # The maintainer's Worker (telemetry/worker). Empty = nothing is ever
@@ -143,14 +153,12 @@ NOTICE_TEXT = (
 # Small pure helpers
 # ---------------------------------------------------------------------------
 def utc_day(now=None):
-    return datetime.fromtimestamp(time.time() if now is None else now, timezone.utc).strftime(
-        "%Y-%m-%d"
-    )
+    return datetime.fromtimestamp(time.time() if now is None else now, UTC).strftime("%Y-%m-%d")
 
 
 def day_start(day):
     """The epoch second a UTC day ("YYYY-MM-DD") starts."""
-    return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
+    return datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=UTC).timestamp()
 
 
 def day_secs(day):
@@ -176,7 +184,7 @@ def endpoint(environ=None):
     replaces TELEMETRY_URL; set to "" it means no endpoint (the tests
     rely on this, so they can never reach the real Worker)."""
     env = os.environ if environ is None else environ
-    url = (env[ENV_URL] if ENV_URL in env else TELEMETRY_URL or "").strip()
+    url = (env.get(ENV_URL, TELEMETRY_URL or "")).strip()
     return url.rstrip("/") if url.startswith(("https://", "http://")) else ""
 
 
@@ -201,7 +209,7 @@ def members_bucket(total):
         return 0
     if n <= 0:
         return 0
-    return 1 << int(math.floor(math.log2(n)))
+    return 1 << math.floor(math.log2(n))
 
 
 def percentile(hist, q):
@@ -260,13 +268,13 @@ def build_info(pkg_dir, version, timeout=5):
     git = ["git", "-C", pkg_dir]
     try:
         n = subprocess.run(
-            git + ["rev-list", "--count", f"{version}..HEAD"],
+            [*git, "rev-list", "--count", f"{version}..HEAD"],
             capture_output=True,
             text=True,
             timeout=timeout,
         )
         st = subprocess.run(
-            git + ["status", "--porcelain", "--untracked-files=no", "--", "*.py", "*.sh"],
+            [*git, "status", "--porcelain", "--untracked-files=no", "--", "*.py", "*.sh"],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -337,7 +345,7 @@ def features(st, ms):
 
 
 def _is_id(v):
-    return isinstance(v, str) and v.isdigit() and 1 <= len(v) <= 25
+    return isinstance(v, str) and v.isdigit() and 1 <= len(v) <= MAX_DISCORD_ID_LENGTH
 
 
 def change_source(h):
@@ -352,16 +360,42 @@ def change_source(h):
     return "settings" if _is_id(str(h.get("by") or "")) else "cli"
 
 
+def _matches_preset(picks, values, st, ms):
+    ok = True
+    for key, to in picks:
+        if key not in values:
+            ok = False
+            break
+        want = values[key]
+        if isinstance(want, tuple):
+            want = want[1]
+        try:
+            spec = st.spec(key)
+            a = ms.normalize(spec, to)
+            b = ms.normalize(spec, want)
+            same = a[0] and b[0] and a[1] == b[1]
+        except Exception:
+            same = to == want
+        if not same:
+            ok = False
+            break
+    return ok
+
+
 def preset_of(lines, st, ms):
     """The preset (friends | community | work) one history group applied,
     else None: at least two changes, all at one server, each the value
     that preset gives that key."""
-    if len(lines) < 2 or ms is None:
+    if len(lines) < MIN_PRESET_CHANGES or ms is None:
         return None
     server, picks = None, []
     for h in lines:
         parts = str(h.get("key") or "").split(".")
-        if len(parts) < 4 or parts[0] != "servers" or parts[2] == "channels":
+        if (
+            len(parts) < MIN_SERVER_HISTORY_KEY_PARTS
+            or parts[0] != "servers"
+            or parts[2] == "channels"
+        ):
             return None
         if server not in (None, parts[1]):
             return None
@@ -371,24 +405,7 @@ def preset_of(lines, st, ms):
     for name, (_title, values) in presets.items():
         if name not in PRESETS:
             continue
-        ok = True
-        for key, to in picks:
-            if key not in values:
-                ok = False
-                break
-            want = values[key]
-            if isinstance(want, tuple):
-                want = want[1]
-            try:
-                spec = st.spec(key)
-                a = ms.normalize(spec, to)
-                b = ms.normalize(spec, want)
-                same = a[0] and b[0] and a[1] == b[1]
-            except Exception:
-                same = to == want
-            if not same:
-                ok = False
-                break
+        ok = _matches_preset(picks, values, st, ms)
         if ok:
             return name
     return None
@@ -483,10 +500,8 @@ def atomic_write_json(path, obj):
             json.dump(obj, f, sort_keys=True)
         os.replace(tmp, path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
@@ -543,10 +558,8 @@ def drain_wakes(path):
     except OSError:
         return 0
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(taken)
-        except OSError:
-            pass
 
 
 def failure_reason(exc):
@@ -587,7 +600,7 @@ def _safe(fn):
             return fn(self, *a, **kw)
         except Exception as e:
             self._errors += 1
-            if self._errors <= 3:
+            if self._errors <= MAX_LOGGED_ERRORS:
                 print(f"Telemetry: {type(e).__name__} (ignored)", flush=True)
             return None
 
@@ -596,18 +609,20 @@ def _safe(fn):
     return wrapper
 
 
+@dataclass
 class Recorder:
     """The monitor's counters. paths() gives (telemetry.json, the install
     id file, the wakes file), read on every use so tests can move them.
     Every method is safe to call from any thread and never raises."""
 
-    def __init__(self, paths, ms=None, pkg_dir=None, clock=time.time, post=post_json, environ=None):
-        self.paths = paths
-        self.ms = ms
-        self.pkg_dir = pkg_dir
-        self.clock = clock
-        self.post = post
-        self.environ = environ
+    paths: Callable[[], tuple[str, str, str]]
+    ms: Any = None
+    pkg_dir: str | None = None
+    clock: Callable[[], float] = time.time
+    post: Callable[[str, dict[str, Any]], int] = post_json
+    environ: Mapping[str, str] | None = None
+
+    def __post_init__(self):
         self.lock = threading.Lock()
         self.data: dict[str, Any] | None = None  # telemetry.json, loaded on first use
         self.version = None
@@ -735,7 +750,7 @@ class Recorder:
     @_safe
     def latency(self, secs):
         """Seconds from a message to the reply that answered it."""
-        s = min(LATENCY_MAX_SECS, max(0, int(round(float(secs)))))
+        s = min(LATENCY_MAX_SECS, max(0, round(float(secs))))
         with self.lock:
             _bump(self._today()["latency"], str(s))
 
@@ -853,9 +868,12 @@ class Recorder:
                         error = failure_reason(e)  # offline / timeout
                         break
                     reached = True
-                    if 200 <= status < 300:
+                    if HTTPStatus.OK <= status < HTTPStatus.MULTIPLE_CHOICES:
                         sent.append(p["day"])
-                    elif 400 <= status < 500 and status != 429:
+                    elif (
+                        HTTPStatus.BAD_REQUEST <= status < HTTPStatus.INTERNAL_SERVER_ERROR
+                        and status != HTTPStatus.TOO_MANY_REQUESTS
+                    ):
                         dropped.append(p["day"])  # refused: never again
                     else:
                         error = f"HTTP {status}"
@@ -889,7 +907,7 @@ class Recorder:
             d["last_send"]["error"] = error
             tries = d.get("tries") if isinstance(d.get("tries"), int) else 1
             d["retry_after"] = now + RETRY_SECS * 2 ** min(max(tries, 1) - 1, 5)
-            at = datetime.fromtimestamp(d["retry_after"], timezone.utc)
+            at = datetime.fromtimestamp(d["retry_after"], UTC)
             print(
                 f"Telemetry: send failed ({error}); trying again after {at:%Y-%m-%d %H:%M} UTC.",
                 flush=True,
@@ -899,7 +917,7 @@ class Recorder:
             f = d.get("failing") if isinstance(d.get("failing"), dict) else {}
             since, last = day_secs(f.get("since")), day_secs(f.get("last"))
             day = day_start(attempt)
-            if since is None or last is None or day - last > 86400 or last < since:
+            if since is None or last is None or day - last > DAY_SECS or last < since:
                 since = day
             d["failing"] = {"since": utc_day(since), "last": attempt}
             if day - since >= (NOTICE_AFTER_DAYS - 1) * 86400 and d.get("notice") is None:

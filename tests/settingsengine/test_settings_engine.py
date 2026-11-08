@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,7 +25,7 @@ from fake import (
     BASE,
     CAT,
     CH,
-    CH2,  # noqa: E402
+    CH2,
     CH_G2,
     G1,
     G2,
@@ -54,7 +55,7 @@ KS_GEN = f'servers."{G1}".channels."{CH}".replies'
 
 def apply(cfg, changes, by=OWNER, **kw):
     kw.setdefault("role", "owner")
-    return MS.apply(cfg, changes, by, **kw)
+    return MS.apply(cfg, changes, MS.WriteActor(by, **kw))
 
 
 def value(cfg, place, key):
@@ -139,9 +140,9 @@ class Risk(unittest.TestCase):
             ),
             (BASE, [], [C(S2, "privacy.memory", "nothing")], INFO, False),
             (BASE, [], media, INFO, False),
-            (BASE, [], media + [C(S1, "media.who", "everyone")], INFO, True),
-            (BASE, [], media + [C(S1, "media.who", [SAM]), C(S1, "media.per_day", 5)], INFO, False),
-            (BASE, [], media + [C(S1, "media.who", [SAM]), C(S1, "media.per_day", 21)], INFO, True),
+            (BASE, [], [*media, C(S1, "media.who", "everyone")], INFO, True),
+            (BASE, [], [*media, C(S1, "media.who", [SAM]), C(S1, "media.per_day", 5)], INFO, False),
+            (BASE, [], [*media, C(S1, "media.who", [SAM]), C(S1, "media.per_day", 21)], INFO, True),
             (BASE, [], [C(DEF, "who.allow", [SAM])], INFO, True),
             (BASE, [C(S2, "who.allow", [SAM])], [C(S2, "who.allow", [SAM, ANN])], INFO, False),
             (pause_cfg, [], MS.pause_changes(DEF), INFO, True),
@@ -227,9 +228,9 @@ class Groups(unittest.TestCase):
         r = apply(cfg, [C(S1, "who.replies", "when-addressed"), C(GEN, "who.replies", "off")])
         st = load(cfg)
         names = MS.names_from(INFO, st)
-        text, ident = MS.undo_preview(st, S1, True, names)
+        _text, ident = MS.undo_preview(st, S1, True, names)
         self.assertEqual(ident, r.group)
-        done = MS.undo_changes(cfg, S1, OWNER, children=True, expect=ident)
+        done = MS.undo_changes(cfg, S1, children=True, expect=ident, actor=MS.WriteActor(by=OWNER))
         self.assertEqual(sorted(done), sorted([KS, KS_GEN]))
         st = load(cfg)
         self.assertEqual(MS.place_value(st, GEN, "who.replies"), "conversational")
@@ -241,8 +242,11 @@ class Groups(unittest.TestCase):
         apply(cfg, [C(GEN, "who.replies", "off")])
         st = load(cfg)
         self.assertEqual(MS.undo_preview(st, S1), (None, None))
-        self.assertIsNone(MS.undo(cfg, f'servers."{G1}"', OWNER))
-        self.assertEqual(MS.undo(cfg, f'servers."{G1}"', OWNER, children=True), KS_GEN)
+        self.assertIsNone(MS.undo(cfg, f'servers."{G1}"', actor=MS.WriteActor(by=OWNER)))
+        self.assertEqual(
+            MS.undo(cfg, f'servers."{G1}"', children=True, actor=MS.WriteActor(by=OWNER)),
+            KS_GEN,
+        )
 
     def test_group_reverted_wherever_it_landed(self):
         """Pause everywhere writes DMs and All servers; Undo at Defaults
@@ -252,7 +256,7 @@ class Groups(unittest.TestCase):
         st = load(cfg)
         self.assertTrue(MS.is_paused(st, DEF))
         self.assertEqual(len(MS.undo_plan(st, DEF)), 2)
-        MS.undo(cfg, "defaults", OWNER)
+        MS.undo(cfg, "defaults", actor=MS.WriteActor(by=OWNER))
         self.assertFalse(MS.is_paused(load(cfg), DEF))
         self.assertEqual(value(cfg, DMS, "who.replies"), "conversational")
 
@@ -262,14 +266,14 @@ class Groups(unittest.TestCase):
         _t, ident = MS.undo_preview(load(cfg), S1)
         apply(cfg, [C(S1, "style.length", "brief")])
         with self.assertRaises(MS.SettingsError):
-            MS.undo(cfg, S1, OWNER, expect=ident)
+            MS.undo(cfg, S1, expect=ident, actor=MS.WriteActor(by=OWNER))
         self.assertEqual(value(cfg, S1, "who.replies"), "off")
         # A group's undo skips keys changed since.
         cfg = config(self)
         apply(cfg, [C(S1, "who.replies", "off"), C(S1, "style.length", "brief")])
         apply(cfg, [C(S1, "style.length", "detailed")])
         apply(cfg, [C(S1, "style.length", "brief")])  # same as the group
-        MS.undo(cfg, S1, OWNER)  # the newest: back to detailed
+        MS.undo(cfg, S1, actor=MS.WriteActor(by=OWNER))  # the newest: back to detailed
         self.assertEqual(value(cfg, S1, "style.length"), "detailed")
         plan = MS.undo_plan(load(cfg), S1)
         self.assertEqual([c.key for c in plan], ["style.length"])
@@ -303,7 +307,7 @@ class Groups(unittest.TestCase):
         self.assertEqual(MS.group_undo_plan(load(cfg), "nl-nope"), [])
         # an undo's own group is not undoable
         apply(cfg, [C(S3, "who.replies", "off"), C(S3, "style.length", "brief")])
-        MS.undo(cfg, S3, OWNER)
+        MS.undo(cfg, S3, actor=MS.WriteActor(by=OWNER))
         ugroup = doc(cfg)["history"][-1]["group"]
         self.assertTrue(doc(cfg)["history"][-1]["undo"])
         with self.assertRaises(MS.SettingsError):
@@ -346,14 +350,17 @@ history:
         st = load(cfg)
         self.assertEqual(st.retire, [])
         self.assertEqual(MS.place_value(st, S1, "who.replies"), "when-addressed")
-        text, ident = MS.undo_preview(st, S1)
-        self.assertEqual(MS.undo(cfg, S1, OWNER, expect=ident), KS)
+        _text, ident = MS.undo_preview(st, S1)
+        self.assertEqual(MS.undo(cfg, S1, expect=ident, actor=MS.WriteActor(by=OWNER)), KS)
         self.assertEqual(value(cfg, S1, "who.replies"), "off")
         self.assertEqual(value(cfg, DMS, "style.length"), "brief")
-        self.assertEqual(MS.undo(cfg, S1, OWNER), KS)
+        self.assertEqual(MS.undo(cfg, S1, actor=MS.WriteActor(by=OWNER)), KS)
         self.assertEqual(value(cfg, S1, "who.replies"), "conversational")
-        self.assertIsNone(MS.undo(cfg, S1, OWNER))
-        self.assertEqual(MS.undo(cfg, "dms", OWNER), "dms.style.length")
+        self.assertIsNone(MS.undo(cfg, S1, actor=MS.WriteActor(by=OWNER)))
+        self.assertEqual(
+            MS.undo(cfg, "dms", actor=MS.WriteActor(by=OWNER)),
+            "dms.style.length",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +382,10 @@ class NoOp(unittest.TestCase):
         self.assertFalse(apply(cfg, [C(S2, "who.replies", "inherit")]).changed)
         self.assertIs(MS.reset(cfg, f'servers."{G2}".who.replies', OWNER), MS.NO_CHANGE)
         self.assertIs(
-            MS.set_value(cfg, f'servers."{G1}".style.length', "brief", OWNER), MS.NO_CHANGE
+            MS.set_value(
+                cfg, f'servers."{G1}".style.length', "brief", actor=MS.WriteActor(by=OWNER)
+            ),
+            MS.NO_CHANGE,
         )
         self.assertEqual(len(doc(cfg)["history"]), n)
         # mixed: only the real change is written
@@ -396,7 +406,7 @@ class NoOp(unittest.TestCase):
         self.assertTrue(r.changed)
         self.assertEqual(doc(cfg)["values"][KS]["value"], "inherit")
         self.assertEqual(value(cfg, S1, "who.replies"), "conversational")
-        MS.set_value(cfg, f'servers."{G2}".who.replies', "off", OWNER)
+        MS.set_value(cfg, f'servers."{G2}".who.replies', "off", actor=MS.WriteActor(by=OWNER))
         self.assertEqual(MS.reset(cfg, f'servers."{G2}".who.replies', OWNER), "inherit")
         self.assertEqual(doc(cfg)["values"][f'servers."{G2}".who.replies']["value"], "inherit")
         # Setting the file's own value again drops the entry (undoable).
@@ -414,10 +424,10 @@ class NoOp(unittest.TestCase):
         self.assertTrue(doc(cfg)["history"][-1]["dropped"])
         self.assertEqual(value(cfg, S1, "who.replies"), "off")
         # still undoable
-        MS.undo(cfg, S1, OWNER)
+        MS.undo(cfg, S1, actor=MS.WriteActor(by=OWNER))
         self.assertEqual(value(cfg, S1, "who.replies"), "when-addressed")
         # the same through set_value
-        MS.set_value(cfg, KS, "off", OWNER)
+        MS.set_value(cfg, KS, "off", actor=MS.WriteActor(by=OWNER))
         self.assertNotIn(KS, doc(cfg)["values"])
 
     def test_channel_with_unknown_category_is_written(self):
@@ -462,9 +472,11 @@ class Admin(unittest.TestCase):
         self.assertEqual(e["below"], {})
         self.assertEqual(doc(self.cfg)["history"][-1]["role"], "admin")
         # The /settings set_value path marks an admin's write too.
-        MS.set_value(self.cfg, KS_GEN, "off", ADMIN)
+        MS.set_value(self.cfg, KS_GEN, "off", actor=MS.WriteActor(by=ADMIN))
         self.assertEqual(doc(self.cfg)["values"][KS_GEN]["role"], "admin")
-        MS.set_value(self.cfg, f'servers."{G1}".style.length', "brief", OWNER)
+        MS.set_value(
+            self.cfg, f'servers."{G1}".style.length', "brief", actor=MS.WriteActor(by=OWNER)
+        )
         self.assertNotIn("role", doc(self.cfg)["values"][f'servers."{G1}".style.length'])
 
     def test_revert_own_change_and_back_to_owner(self):
@@ -558,7 +570,9 @@ class Admin(unittest.TestCase):
         apply(self.cfg, [C(S1, "who.replies", "off")], OWNER)
         st = load(self.cfg)
         self.assertEqual(MS.undo_plan(st, S1, admin_gid=G1), [])
-        self.assertIsNone(MS.undo(self.cfg, S1, ADMIN, admin_gid=G1, info=INFO))
+        self.assertIsNone(
+            MS.undo(self.cfg, S1, actor=MS.WriteActor(by=ADMIN, admin_gid=G1, info=INFO))
+        )
         # back to the file's value: the owner's entry goes away
         apply(self.cfg, [C(S1, "who.replies", "when-addressed")], OWNER)
         self.assertNotIn(KS, doc(self.cfg)["values"])
@@ -566,20 +580,29 @@ class Admin(unittest.TestCase):
         apply(self.cfg, [C(S1, "style.length", "brief")], OWNER)
         st = load(self.cfg)
         self.assertEqual(
-            MS.undo(self.cfg, S1, ADMIN, children=True, admin_gid=G1, info=INFO), KS_GEN
+            MS.undo(
+                self.cfg, S1, children=True, actor=MS.WriteActor(by=ADMIN, admin_gid=G1, info=INFO)
+            ),
+            KS_GEN,
         )
         self.assertEqual(value(self.cfg, GEN, "who.replies"), "when-addressed")
         self.assertEqual(doc(self.cfg)["history"][-1]["role"], "admin")
         # another server's admin cannot undo it
         self.admin([C(GEN, "who.replies", "off")])
-        self.assertIsNone(MS.undo(self.cfg, P.server(G2), ADMIN, admin_gid=G2, info=INFO))
+        self.assertIsNone(
+            MS.undo(self.cfg, P.server(G2), actor=MS.WriteActor(by=ADMIN, admin_gid=G2, info=INFO))
+        )
 
     def test_admin_undo_never_reverts_an_owner_rewrite(self):
         """An owner's pause written over an admin's same value: the
         admin's Undo no longer reaches it."""
         self.admin([C(S1, "who.replies", "off")])
         apply(self.cfg, [C(S1, "who.replies", "off")], OWNER)
-        self.assertIsNone(MS.undo(self.cfg, S1, ADMIN, children=True, admin_gid=G1, info=INFO))
+        self.assertIsNone(
+            MS.undo(
+                self.cfg, S1, children=True, actor=MS.WriteActor(by=ADMIN, admin_gid=G1, info=INFO)
+            )
+        )
         self.assertTrue(MS.is_paused(load(self.cfg), S1))
 
     def test_fold_keeps_admin_entries_and_unquoted_ids(self):
@@ -667,7 +690,7 @@ class Presets(unittest.TestCase):
         self.assertEqual(MS.matching_preset(load(cfg), S1), "Community")
         self.assertEqual(MS.preset_changes(load(cfg), "community", S1), [])
         self.assertEqual(len({h["group"] for h in doc(cfg)["history"]}), 1)
-        MS.undo(cfg, S1, OWNER)
+        MS.undo(cfg, S1, actor=MS.WriteActor(by=OWNER))
         self.assertIsNone(MS.matching_preset(load(cfg), S1))
         self.assertFalse(MS.group_current(load(cfg), r.group))
         apply(cfg, MS.preset_changes(load(cfg), "work", S1))
@@ -721,8 +744,13 @@ class CLI(unittest.TestCase):
 
     def run_cli(self, *args):
         r = subprocess.run(
-            [sys.executable, os.path.join(MUT, "bin", "settings.py"), "--config", self.cfg]
-            + list(args),
+            [
+                sys.executable,
+                os.path.join(MUT, "bin", "settings.py"),
+                "--config",
+                self.cfg,
+                *list(args),
+            ],
             capture_output=True,
             text=True,
             timeout=60,
@@ -765,7 +793,9 @@ class CLI(unittest.TestCase):
 # 12. Review findings (2026-10-19): one regression test each
 # ---------------------------------------------------------------------------
 def admin_apply(cfg, changes, gid=G1, info=INFO):
-    return MS.apply(cfg, changes, ADMIN, role="admin", admin_gid=gid, info=info)
+    return MS.apply(
+        cfg, changes, actor=MS.WriteActor(by=ADMIN, role="admin", admin_gid=gid, info=info)
+    )
 
 
 class ReviewHigh(unittest.TestCase):
@@ -799,26 +829,29 @@ class ReviewHigh(unittest.TestCase):
         self.assertIs(value(cfg, S1, "media.enabled"), False)
         # the legacy set_value path (today's /settings)
         cfg = config(self, BASE + "all_servers:\n  who:\n    replies: conversational\n")
-        MS.set_value(cfg, KS, "off", ADMIN)
-        self.assertEqual(MS.set_value(cfg, KS, "off", OWNER), "off")
+        MS.set_value(cfg, KS, "off", actor=MS.WriteActor(by=ADMIN))
+        self.assertEqual(
+            MS.set_value(cfg, KS, "off", actor=MS.WriteActor(by=OWNER)),
+            "off",
+        )
         with self.assertRaises(MS.SettingsError):
             admin_apply(cfg, [C(S1, "who.replies", "inherit")])
         with self.assertRaises(MS.SettingsError):
-            MS.set_value(cfg, KS, "inherit", ADMIN)
+            MS.set_value(cfg, KS, "inherit", actor=MS.WriteActor(by=ADMIN))
 
     def test_h3_roles_are_explicit(self):
         """poc2: who undoes is always stated; an admin never reverts an
         owners' group."""
         cfg = config(self, BASE + "dms:\n  who:\n    dms_from: anyone\n")
         with self.assertRaises(MS.SettingsError):
-            MS.apply(cfg, [C(S1, "style.length", "brief")], OWNER)
+            MS.apply(cfg, [C(S1, "style.length", "brief")], actor=MS.WriteActor(by=OWNER))
         res = apply(cfg, [C(DMS, "who.dms_from", "owners")])
         for role in (None, "admin"):
             with self.assertRaises(MS.SettingsError):
                 MS.undo_group(cfg, res.group, ADMIN, role=role)
         self.assertEqual(value(cfg, DMS, "who.dms_from"), "owners")
         with self.assertRaises(MS.SettingsError):
-            MS.undo_changes(cfg, DMS, ADMIN, role="admin")
+            MS.undo_changes(cfg, DMS, actor=MS.WriteActor(by=ADMIN, role="admin"))
 
     def test_h2_admin_cannot_drop_an_owners_pin(self):
         """poc4: resetting an owner's entry was allowed whenever it changed
@@ -852,7 +885,7 @@ class ReviewHigh(unittest.TestCase):
             admin_apply(cfg, [C(RND, "who.replies", "inherit")])
         admin_apply(cfg, [C(RND, "who.replies", "off")])
         apply(cfg, [C(DEF, "who.replies", "off")])
-        MS.undo(cfg, S1, ADMIN, children=True, admin_gid=G1, info=INFO)
+        MS.undo(cfg, S1, children=True, actor=MS.WriteActor(by=ADMIN, admin_gid=G1, info=INFO))
         self.assertEqual(value(cfg, RND, "who.replies"), "when-addressed")
 
 
@@ -881,14 +914,14 @@ class ReviewMedium(unittest.TestCase):
             st = load(cfg)  # still loads (the bot keeps running)
             self.assertEqual(st.overlay, {})
             for fn in (
-                lambda: apply(cfg, [C(S1, "who.replies", "off")]),
-                lambda: MS.set_value(cfg, KS, "off", OWNER),
-                lambda: MS.undo(cfg, S1, OWNER),
-                lambda: MS.undo_group(cfg, "g1", OWNER, role="owner"),
+                lambda cfg=cfg: apply(cfg, [C(S1, "who.replies", "off")]),
+                lambda cfg=cfg: MS.set_value(cfg, KS, "off", actor=MS.WriteActor(by=OWNER)),
+                lambda cfg=cfg: MS.undo(cfg, S1, actor=MS.WriteActor(by=OWNER)),
+                lambda cfg=cfg: MS.undo_group(cfg, "g1", OWNER, role="owner"),
             ):
                 with self.assertRaises(MS.SettingsError):
                     fn()
-            self.assertEqual(open(ov).read(), bad)
+            self.assertEqual(Path(ov).read_text(), bad)
         cfg = config(self, overlay="values: [\n")
         r = subprocess.run(
             [
@@ -907,7 +940,7 @@ class ReviewMedium(unittest.TestCase):
             timeout=60,
         )
         self.assertEqual(r.returncode, 1)
-        self.assertEqual(open(MS.overlay_path_for(cfg)).read(), "values: [\n")
+        self.assertEqual(Path(MS.overlay_path_for(cfg)).read_text(), "values: [\n")
 
     def test_m6_owner_tightening_reaches_admin_entries(self):
         """poc5: an owner's pause reaches a channel an admin set."""
@@ -915,7 +948,7 @@ class ReviewMedium(unittest.TestCase):
         admin_apply(cfg, [C(GEN, "who.replies", "when-addressed")])
         apply(cfg, MS.pause_changes(S1))
         self.assertEqual(value(cfg, GEN, "who.replies"), "off")
-        MS.undo(cfg, S1, OWNER)
+        MS.undo(cfg, S1, actor=MS.WriteActor(by=OWNER))
         self.assertEqual(value(cfg, GEN, "who.replies"), "when-addressed")
         # an admin's server entry does not outlive Pause everywhere
         admin_apply(cfg, [C(S1, "who.replies", "when-addressed")])
@@ -956,7 +989,7 @@ class ReviewMedium(unittest.TestCase):
         # the sweep recovers a lost DM from Sam, not one from Ann
         import time as _t
 
-        old = int(((_t.time() - 600) * 1000 - 1420070400000)) << 22
+        old = int((_t.time() - 600) * 1000 - 1420070400000) << 22
         sam_msg = {
             "id": str(old),
             "channel_id": sam_dm,
@@ -985,7 +1018,11 @@ class ReviewMedium(unittest.TestCase):
 
 def _writer(cfg, gid, n):
     for i in range(n):
-        MS.apply(cfg, [C(P.server(gid), "limits.per_day", 1000 + i)], OWNER, role="owner")
+        MS.apply(
+            cfg,
+            [C(P.server(gid), "limits.per_day", 1000 + i)],
+            actor=MS.WriteActor(by=OWNER, role="owner"),
+        )
 
 
 class ReviewLow(unittest.TestCase):
@@ -1059,7 +1096,12 @@ class FuzzAdmin(unittest.TestCase):
                         admin_apply(real, ch)
                     else:
                         ch = "undo"
-                        MS.undo(real, S1, ADMIN, children=True, admin_gid=G1, info=INFO)
+                        MS.undo(
+                            real,
+                            S1,
+                            children=True,
+                            actor=MS.WriteActor(by=ADMIN, admin_gid=G1, info=INFO),
+                        )
                     log.append(f"{kind} {ch}")
                 except MS.SettingsError:
                     log.append(f"{kind} refused")

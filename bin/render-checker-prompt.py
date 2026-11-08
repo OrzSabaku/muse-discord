@@ -28,6 +28,7 @@ import re
 import secrets
 import shlex
 import sys
+from pathlib import Path
 
 PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TEMPLATE = "prompts/watch-checker-prompt.template.md"
@@ -56,7 +57,7 @@ def data_block(entries, token=None):
 def render(template, pkg, entries, python="python3", token=None):
     """The checker prompt with entries in its data block (ValueError
     when the template has no data line)."""
-    m = re.search(r"^---[ \t]*$", template, re.M)
+    m = re.search(r"^---[ \t]*$", template, re.MULTILINE)
     text = template[m.end() :].lstrip("\n") if m else template
     if text.count(DATA_LINE) != 1:
         raise ValueError(f"the template needs exactly one {DATA_LINE} line")
@@ -83,7 +84,7 @@ def main(argv=None):
     ap.add_argument("--out", default="-", help="where to write (- stdout)")
     args = ap.parse_args(argv)
     try:
-        raw = sys.stdin.read() if args.due == "-" else open(args.due).read()
+        raw = sys.stdin.read() if args.due == "-" else Path(args.due).read_text()
         entries = json.loads(raw)
         if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
             raise ValueError("not a list of objects")

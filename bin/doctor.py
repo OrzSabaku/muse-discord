@@ -35,8 +35,12 @@ import subprocess
 import sys
 import time
 
+AGE_MINUTE_THRESHOLD = 2 * 60
+AGE_HOUR_THRESHOLD = 2 * 60 * 60
+CANNOT_DM_DISCORD_CODE = 50007
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import setup_common as C  # noqa: E402
+import setup_common as C  # noqa: E402 (local import path bootstrap)
 
 HOOKS = (
     # (stamp, what it is, how often it runs, older than this = problem)
@@ -116,6 +120,90 @@ class Doctor:
 
 
 def check(d, st, args):
+    token = check_configuration(d, st)
+    # The monitor.
+    log = d.log_tail("monitor.log")
+    pid = d.monitor_pid()
+    if pid is None:
+        if "TOKEN REJECTED" in log:
+            d.add(
+                "problem",
+                "The bot is not running: Discord rejected its token (it was probably reset).",
+                "ask the owner for a fresh token (Bot page, Reset Token, "
+                "Copy), run bin/connect-discord.py with it, then bash "
+                "watchdog.sh.",
+            )
+        else:
+            d.add(
+                "problem",
+                "The bot is not running.",
+                "run bash bin/watchdog.sh, then this check again. If it "
+                "still fails, read the first lines of monitor.log.",
+            )
+        return token
+    d.add("ok", f"The bot is running (process {pid}).")
+    try:
+        age = time.time() - os.path.getmtime(d.path("monitor.heartbeat"))
+        if age > HEARTBEAT_STALE_SECS:
+            d.add(
+                "problem",
+                f"The bot looks stuck (no heartbeat for {int(age // 60)} minutes).",
+                "run bash bin/watchdog.sh; it restarts a stuck bot.",
+            )
+    except OSError:
+        pass
+    check_gateway(d, log, args.quick)
+    check_directory(d, log)
+
+    now = check_hooks(d, args)
+
+    # The last reply.
+    led = read_ledger(d)
+    replied = [e for e in led.values() if e.get("status") == "replied"]
+    if replied:
+        last = max(e.get("updated", 0) for e in replied)
+        d.add("ok", f"Last reply sent {ago(now - last)}.")
+    return token
+
+
+def check_gateway(d, log, quick):
+    # The latest run's log only (monitor.log is rotated on each start).
+    if "TOKEN REJECTED" in log:
+        d.add(
+            "problem",
+            "Discord rejected the bot's token.",
+            "ask the owner for a fresh token (Bot page, Reset Token, "
+            "Copy) and run bin/connect-discord.py with it.",
+        )
+    if "GATEWAY DISABLED (code 4014)" in log:
+        d.add(
+            "problem",
+            "Discord won't send the bot message text: Message Content is off.",
+            "ask the owner: Developer Portal, the app, Bot, Privileged "
+            "Gateway Intents, switch on Message Content Intent, click "
+            "Save Changes. Then restart the bot (kill the monitor.pid "
+            "process, then bash bin/watchdog.sh).",
+        )
+    elif "GATEWAY DISABLED" in log:
+        d.add(
+            "problem",
+            "The bot's realtime connection is off, so replies are slow.",
+            "see GATEWAY DISABLED in monitor.log, and docs/UPDATING.md.",
+        )
+    else:
+        ready = [m.start() for m in re.finditer(r"Gateway READY|Gateway session resumed", log)]
+        closed = [m.start() for m in re.finditer(r"Gateway closed|Gateway error", log)]
+        if ready and (not closed or ready[-1] > closed[-1]):
+            d.add("ok", "Connected to Discord, and Message Content is on.")
+        elif not quick:
+            d.add(
+                "note",
+                "Not connected to Discord's realtime feed yet "
+                "(it can take a minute after a start).",
+            )
+
+
+def check_configuration(d, st):
     # Config and token.
     if not st.owners:
         d.add(
@@ -149,71 +237,10 @@ def check(d, st, args):
             "bin/render-worker-prompt.py with the options used before).",
         )
 
-    # The monitor.
-    log = d.log_tail("monitor.log")
-    pid = d.monitor_pid()
-    if pid is None:
-        if "TOKEN REJECTED" in log:
-            d.add(
-                "problem",
-                "The bot is not running: Discord rejected its token (it was probably reset).",
-                "ask the owner for a fresh token (Bot page, Reset Token, "
-                "Copy), run bin/connect-discord.py with it, then bash "
-                "watchdog.sh.",
-            )
-        else:
-            d.add(
-                "problem",
-                "The bot is not running.",
-                "run bash bin/watchdog.sh, then this check again. If it "
-                "still fails, read the first lines of monitor.log.",
-            )
-        return token
-    d.add("ok", f"The bot is running (process {pid}).")
-    try:
-        age = time.time() - os.path.getmtime(d.path("monitor.heartbeat"))
-        if age > HEARTBEAT_STALE_SECS:
-            d.add(
-                "problem",
-                f"The bot looks stuck (no heartbeat for {int(age // 60)} minutes).",
-                "run bash bin/watchdog.sh; it restarts a stuck bot.",
-            )
-    except OSError:
-        pass
-    # The latest run's log only (monitor.log is rotated on each start).
-    if "TOKEN REJECTED" in log:
-        d.add(
-            "problem",
-            "Discord rejected the bot's token.",
-            "ask the owner for a fresh token (Bot page, Reset Token, "
-            "Copy) and run bin/connect-discord.py with it.",
-        )
-    if "GATEWAY DISABLED (code 4014)" in log:
-        d.add(
-            "problem",
-            "Discord won't send the bot message text: Message Content is off.",
-            "ask the owner: Developer Portal, the app, Bot, Privileged "
-            "Gateway Intents, switch on Message Content Intent, click "
-            "Save Changes. Then restart the bot (kill the monitor.pid "
-            "process, then bash bin/watchdog.sh).",
-        )
-    elif "GATEWAY DISABLED" in log:
-        d.add(
-            "problem",
-            "The bot's realtime connection is off, so replies are slow.",
-            "see GATEWAY DISABLED in monitor.log, and docs/UPDATING.md.",
-        )
-    else:
-        ready = [m.start() for m in re.finditer(r"Gateway READY|Gateway session resumed", log)]
-        closed = [m.start() for m in re.finditer(r"Gateway closed|Gateway error", log)]
-        if ready and (not closed or ready[-1] > closed[-1]):
-            d.add("ok", "Connected to Discord, and Message Content is on.")
-        elif not args.quick:
-            d.add(
-                "note",
-                "Not connected to Discord's realtime feed yet "
-                "(it can take a minute after a start).",
-            )
+    return token
+
+
+def check_directory(d, log):
     try:
         with open(d.path("directory.json")) as f:
             dirs = json.load(f)
@@ -247,6 +274,8 @@ def check(d, st, args):
             "/settings isn't registered yet (the bot retries every minute); see monitor.log.",
         )
 
+
+def check_hooks(d, args):
     # The hooks.
     now = time.time()
     for stamp, what, every, stale in HOOKS:
@@ -291,20 +320,14 @@ def check(d, st, args):
         else:
             d.add("ok", f"The {what} is running.")
 
-    # The last reply.
-    led = read_ledger(d)
-    replied = [e for e in led.values() if e.get("status") == "replied"]
-    if replied:
-        last = max(e.get("updated", 0) for e in replied)
-        d.add("ok", f"Last reply sent {ago(now - last)}.")
-    return token
+    return now
 
 
 def ago(secs):
     secs = max(0, int(secs))
-    if secs < 120:
+    if secs < AGE_MINUTE_THRESHOLD:
         return f"{secs} seconds ago"
-    if secs < 7200:
+    if secs < AGE_HOUR_THRESHOLD:
         return f"{secs // 60} minutes ago"
     return f"{secs // 3600} hours ago"
 
@@ -332,7 +355,7 @@ def online_dm(d, st, token):
             d.add("ok", f'Sent owner {uid} the "I\'m online" DM.')
         except (C.ApiError, KeyError, TypeError) as e:
             code = getattr(e, "code", None)
-            if code == 50007:
+            if code == CANNOT_DM_DISCORD_CODE:
                 d.add(
                     "problem",
                     f"Couldn't DM owner {uid}: their privacy "
@@ -374,7 +397,7 @@ def wait_mention(d, st, secs):
             and not e.get("dm")
         ]
         if mine:
-            _, mid, e = max(mine)
+            _, _mid, e = max(mine)
             status = e.get("status")
             if status == "replied":
                 d.add("ok", "The bot answered the owner's mention.")

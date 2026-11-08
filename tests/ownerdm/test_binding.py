@@ -25,13 +25,13 @@ from unittest import mock
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import HOOK_RUNTIME, MUT_DIR, signed  # noqa: E402
+from common import HOOK_RUNTIME, MUT_DIR, signed
 from settings_harness import (
     CH,
     G1,
     OWNER,
     U1,
-    HTTPErr,  # noqa: E402
+    HTTPErr,
     dmsg,
     gmsg,
     load_monitor,
@@ -80,9 +80,7 @@ class Base(unittest.TestCase):
                 "DM" if dm else "#general",
                 self.st,
                 q,
-                dm=dm,
-                guild_id=guild,
-                fragments=fragments,
+                context=self.mod.QueueContext(dm=dm, fragments=fragments, guild_id=guild),
             )
         self.assertTrue(ok)
         self.mod.queue_edit(add=q)

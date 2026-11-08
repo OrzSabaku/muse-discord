@@ -6,16 +6,17 @@ Only Discord interactions are faked; writes use the real settings engine.
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR as MUT, scratch  # noqa: E402
+from common import MUT_DIR as MUT
+from common import scratch
 
 sys.path.insert(0, os.path.join(MUT, "src"))
-from muse_discord import muse_settings as MS  # noqa: E402
-from muse_discord import settings_ui as UI  # noqa: E402,F401 (re-exported)
+from muse_discord import muse_settings as MS
+from muse_discord import settings_ui as UI
 
 # Native UI component prefix.
 P = UI.PREFIX
@@ -47,7 +48,7 @@ HOMEWORK = "70000000000000000101"  # Study Group
 ART = "70000000000000000201"  # Pixel Plaza
 MANAGE = str(1 << 5)
 FIXED_AT = "2026-10-19T10:00:00Z"
-NOW = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc).timestamp()
+NOW = datetime(2026, 10, 19, 12, 0, tzinfo=UTC).timestamp()
 
 NAMES = {
     OWNER: "Zach",
@@ -298,16 +299,12 @@ class FakeCtx:
         MS.apply(
             self.cfg,
             [MS.Change(MS.Place.server(G1), "who.replies", "conversational")],
-            OWNER,
-            role="owner",
+            actor=MS.WriteActor(by=OWNER, role="owner"),
         )
         MS.apply(
             self.cfg,
             [MS.Change(MS.Place.server(G1), "who.ignore", [BOB, SPAM])],
-            ADMIN,
-            role="admin",
-            admin_gid=G1,
-            info=self,
+            actor=MS.WriteActor(by=ADMIN, role="admin", admin_gid=G1, info=self),
         )
 
     def refresh(self):
@@ -347,12 +344,18 @@ class FakeCtx:
 
     def apply(self, changes, by, role, group=None, admin_gid=None):
         self.applied.append((list(changes), by, role, admin_gid))
-        return MS.apply(self.cfg, changes, by, group, role=role, admin_gid=admin_gid, info=self)
+        return MS.apply(
+            self.cfg,
+            changes,
+            actor=MS.WriteActor(by=by, group=group, role=role, admin_gid=admin_gid, info=self),
+        )
 
     def undo(self, prefix, by, **kw):
         if kw.get("admin_gid"):
             kw.setdefault("info", self)
-        out = MS.undo_changes(self.cfg, prefix, by, **kw)
+        actor = MS.WriteActor(by, admin_gid=kw.get("admin_gid"), info=kw.get("info"))
+        options = {k: v for k, v in kw.items() if k not in ("admin_gid", "info")}
+        out = MS.undo_changes(self.cfg, prefix, actor, **options)
         self.undos.append((prefix, by, kw, out))
         return out
 

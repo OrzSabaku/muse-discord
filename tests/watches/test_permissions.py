@@ -1,14 +1,18 @@
 """Discord permission rules on fresh snapshots, plus fail-closed watch policy."""
 
 import os
-import sys
 import subprocess
+import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 import test_watches as H
-from common import MUT_DIR  # noqa: E402 (local import path bootstrap)
-from muse_discord.discord_permissions import channel_permissions, guild_permissions
+from common import MUT_DIR
+
+from muse_discord.discord_permissions import PermissionSnapshot
 
 G, R1, R2, U, OWNER = "100", "200", "201", "300", "400"
 VIEW, SEND, ADMIN = 1 << 10, 1 << 11, 1 << 3
@@ -24,8 +28,9 @@ class PermissionRules(unittest.TestCase):
             [
                 sys.executable,
                 "-c",
-                "from muse_discord.discord_permissions import channel_permissions; "
-                "print(channel_permissions('100', {'100': 1024}, None, '300', [], []))",
+                "from muse_discord.discord_permissions import PermissionSnapshot; "
+                "snapshot = PermissionSnapshot('100', {'100': 1024}, None); "
+                "print(snapshot.channel_permissions('300', [], []))",
             ],
             env=dict(os.environ, PYTHONPATH=os.path.join(MUT_DIR, "src")),
             capture_output=True,
@@ -38,40 +43,49 @@ class PermissionRules(unittest.TestCase):
     def test_role_allow_wins_combined_role_deny_then_member_deny_wins(self):
         roles = {G: VIEW | SEND, R1: 0, R2: 0}
         ows = [overwrite(R1, allow=VIEW), overwrite(R2, deny=VIEW), overwrite(G, deny=VIEW)]
-        bits = channel_permissions(G, roles, OWNER, U, [R1, R2], ows)
+        bits = PermissionSnapshot(G, roles, OWNER).channel_permissions(U, [R1, R2], ows)
         self.assertTrue(bits & VIEW)
         ows.append(overwrite(U, deny=VIEW, type_=1))
-        self.assertFalse(channel_permissions(G, roles, OWNER, U, [R1, R2], ows) & VIEW)
+        self.assertFalse(
+            PermissionSnapshot(G, roles, OWNER).channel_permissions(U, [R1, R2], ows) & VIEW
+        )
 
     def test_admin_and_guild_owner_bypass_channel_overwrites(self):
         for roles, uid, role_ids in [({G: 0, R1: ADMIN}, U, [R1]), ({G: 0}, OWNER, [])]:
-            bits = channel_permissions(G, roles, OWNER, uid, role_ids, [overwrite(G, deny=VIEW)])
+            bits = PermissionSnapshot(G, roles, OWNER).channel_permissions(
+                uid, role_ids, [overwrite(G, deny=VIEW)]
+            )
             self.assertTrue(bits & VIEW)
             self.assertTrue(bits & SEND)
-            self.assertTrue(guild_permissions(G, roles, OWNER, uid, role_ids) & ADMIN)
+            self.assertTrue(
+                PermissionSnapshot(G, roles, OWNER).guild_permissions(uid, role_ids) & ADMIN
+            )
 
     def test_everyone_projection_ignores_member_and_other_role_grants(self):
         self.assertFalse(
-            channel_permissions(
-                G,
-                {G: 0, R1: 0},
-                OWNER,
-                None,
-                [],
-                [overwrite(R1, allow=VIEW), overwrite(U, allow=VIEW, type_=1)],
+            PermissionSnapshot(G, {G: 0, R1: 0}, OWNER).channel_permissions(
+                None, [], [overwrite(R1, allow=VIEW), overwrite(U, allow=VIEW, type_=1)]
             )
             & VIEW
         )
-        self.assertTrue(channel_permissions(G, {G: VIEW}, OWNER, None, [], []) & VIEW)
+        self.assertTrue(
+            PermissionSnapshot(G, {G: VIEW}, OWNER).channel_permissions(None, [], []) & VIEW
+        )
 
     def test_missing_default_role_does_not_grant_permissions(self):
-        self.assertEqual(channel_permissions(G, {R1: VIEW}, OWNER, U, [R1], []), 0)
+        self.assertEqual(
+            PermissionSnapshot(G, {R1: VIEW}, OWNER).channel_permissions(U, [R1], []), 0
+        )
 
     def test_cached_guild_is_rebuilt_after_role_or_owner_changes(self):
-        self.assertFalse(channel_permissions(G, {G: 0, R1: 0}, OWNER, U, [R1], []) & VIEW)
-        self.assertTrue(channel_permissions(G, {G: 0, R1: VIEW}, OWNER, U, [R1], []) & VIEW)
-        self.assertTrue(channel_permissions(G, {G: 0}, U, U, [], []) & VIEW)
-        self.assertFalse(channel_permissions(G, {G: 0}, OWNER, U, [], []) & VIEW)
+        self.assertFalse(
+            PermissionSnapshot(G, {G: 0, R1: 0}, OWNER).channel_permissions(U, [R1], []) & VIEW
+        )
+        self.assertTrue(
+            PermissionSnapshot(G, {G: 0, R1: VIEW}, OWNER).channel_permissions(U, [R1], []) & VIEW
+        )
+        self.assertTrue(PermissionSnapshot(G, {G: 0}, U).channel_permissions(U, [], []) & VIEW)
+        self.assertFalse(PermissionSnapshot(G, {G: 0}, OWNER).channel_permissions(U, [], []) & VIEW)
 
 
 class WatchPermissionPolicy(H.Base):

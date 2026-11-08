@@ -1,6 +1,7 @@
 """Fake MCP app for transport tests. Never connects to an external service."""
 
 import os
+
 from mcp.server import MCPServer
 
 server = MCPServer("external-app-fixture")

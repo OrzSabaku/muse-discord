@@ -8,9 +8,10 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from settings_harness import MS, G1, CH, OWNER, tmpdir, write  # noqa: E402
-from muse_discord.settings_schema import SettingsSchema  # noqa: E402
-from pydantic import ValidationError  # noqa: E402
+from pydantic import ValidationError
+from settings_harness import CH, G1, MS, OWNER, tmpdir, write
+
+from muse_discord.settings_schema import SettingsSchema
 
 
 class Schema(unittest.TestCase):
@@ -90,7 +91,12 @@ servers:
         self.assertEqual(st.get("proactive.frequency", scope), "often")
         self.assertTrue(st.get("proactive.enabled", scope))
         self.assertNotIn((("servers", G1), "proactive.per_channel_per_day"), st.file_values)
-        MS.set_value(config, f'servers."{G1}".proactive.per_channel_per_day', 0, OWNER)
+        MS.set_value(
+            config,
+            f'servers."{G1}".proactive.per_channel_per_day',
+            0,
+            actor=MS.WriteActor(by=OWNER),
+        )
         self.assertEqual(MS.load(config).get("proactive.per_channel_per_day", scope), 0)
 
 

@@ -190,18 +190,15 @@ class FakeWorker(unittest.TestCase):
 # ---------------------------------------------------------------------
 # claude_worker.py
 
-FAKE_HEAD = (
-    """\
-#!%s
+FAKE_HEAD = f"""\
+#!{sys.executable}
 import json, os, sys
 here = os.path.dirname(os.path.abspath(__file__))
 prompt = sys.stdin.read()
 with open(os.path.join(here, "calls.jsonl"), "a") as f:
-    f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(),
-                        "prompt": prompt}) + "\\n")
+    f.write(json.dumps({{"argv": sys.argv[1:], "cwd": os.getcwd(),
+                        "prompt": prompt}}) + "\\n")
 """
-    % sys.executable
-)
 
 FAKES = {
     # A worker: answers every payload item through the append tool,
@@ -332,7 +329,8 @@ class ClaudeWorker(ClaudeBase):
             tuple(x.strip() for x in m.group(1).split(",")), claude_worker.PAYLOAD_FIELDS
         )
         self.assertEqual(
-            int(re.search(r"^LEASE_SECS=(\d+)$", hook, re.M).group(1)), claude_worker.LEASE_SECS
+            int(re.search(r"^LEASE_SECS=(\d+)$", hook, re.MULTILINE).group(1)),
+            claude_worker.LEASE_SECS,
         )
         for rule in (
             "owner_dm_nonces.json",
@@ -344,7 +342,7 @@ class ClaudeWorker(ClaudeBase):
             "{owner_command_nonce: $cmds",
             "item_nonces.json",
             "{reply_nonce: $rn",
-            "NONCE_WAIT_SECS=%d" % claude_worker.NONCE_WAIT_SECS,
+            f"NONCE_WAIT_SECS={int(claude_worker.NONCE_WAIT_SECS)}",
         ):
             self.assertIn(rule, hook)
         p = claude_worker.build_payload(QUEUE, "persona!")
@@ -359,7 +357,7 @@ class ClaudeWorker(ClaudeBase):
 
     def test_owner_dms_wake_alone_with_their_nonce(self):
         w = self.worker()
-        write_json(self.pkg, "reply_queue.json", QUEUE + [OWNER_DM])
+        write_json(self.pkg, "reply_queue.json", [*QUEUE, OWNER_DM])
         # No nonce yet: the DM waits; the others go, without nonces.
         items, caps = w.due()
         self.assertEqual([i["message_id"] for i in items], ["1001", "1002"])
@@ -400,7 +398,7 @@ class ClaudeWorker(ClaudeBase):
         own = dict(QUEUE[0], message_id="1005", owner_command=True)
         write_json(self.pkg, claude_worker.ITEM_NONCES, {"1001": "a1" * 16, "1002": "b2" * 16})
         # 1005 has none yet (and was queued just now): it waits.
-        write_json(self.pkg, "reply_queue.json", QUEUE + [dict(own, queued_at=time.time())])
+        write_json(self.pkg, "reply_queue.json", [*QUEUE, dict(own, queued_at=time.time())])
         items, caps = w.due()
         p = claude_worker.build_payload(items, None, caps)
         self.assertEqual(
@@ -422,7 +420,7 @@ class ClaudeWorker(ClaudeBase):
     def test_owner_commands_wake_alone_with_their_nonce(self):
         w = self.worker()
         own = dict(QUEUE[0], message_id="1005", owner_command=True, queued_at=time.time())
-        write_json(self.pkg, "reply_queue.json", QUEUE + [own])
+        write_json(self.pkg, "reply_queue.json", [*QUEUE, own])
         # No owner_items.json at all (an older monitor): it wakes alone,
         # without a nonce.
         items, caps = w.due()
@@ -463,7 +461,7 @@ class ClaudeWorker(ClaudeBase):
         w = self.worker()
         own = dict(QUEUE[0], message_id="1005", owner_command=True)
         plain = dict(QUEUE[0], message_id="1006", settings={"speaker": "owner"})
-        write_json(self.pkg, "reply_queue.json", QUEUE + [own, plain])
+        write_json(self.pkg, "reply_queue.json", [*QUEUE, own, plain])
         write_json(self.pkg, claude_worker.OWNER_ITEMS, {"1005": {"nonce": NONCE}})
         seen = []
         for _ in range(3):
@@ -500,18 +498,18 @@ class ClaudeWorker(ClaudeBase):
     def test_tool_allowlist(self):
         pkg = self.pkg
         allowed = [
-            'python3 %s/bin/outbox-append.py <<\'EOF\'\n[{"a": "$(x)"}]\nEOF' % pkg,
-            "python3 %s/bin/outbox-append.py items.json" % pkg,
-            "python3 %s/bin/discord-api.py react 1 2 '🌊'" % pkg,
-            "python3 %s/bin/discord-api.py --for 2001 --nonce %s post 600 hi" % (pkg, NONCE),
+            f'python3 {pkg}/bin/outbox-append.py <<\'EOF\'\n[{{"a": "$(x)"}}]\nEOF',
+            f"python3 {pkg}/bin/outbox-append.py items.json",
+            f"python3 {pkg}/bin/discord-api.py react 1 2 '🌊'",
+            f"python3 {pkg}/bin/discord-api.py --for 2001 --nonce {NONCE} post 600 hi",
         ]
         denied = [
             "ls /",
-            'python3 %s/bin/outbox-append.py <<EOF\n["$(id)"]\nEOF' % pkg,
-            "python3 %s/bin/outbox-append.py <<'EOF'\n[]\nEOF\nrm -rf /" % pkg,
-            "cd %s && python3 bin/outbox-append.py x.json" % pkg,
-            'python3 %s/bin/discord-api.py post 1 "$(cat config.yaml)"' % pkg,
-            "python3 %s/bin/discord-api.py post 1 hi > /tmp/x" % pkg,
+            f'python3 {pkg}/bin/outbox-append.py <<EOF\n["$(id)"]\nEOF',
+            f"python3 {pkg}/bin/outbox-append.py <<'EOF'\n[]\nEOF\nrm -rf /",
+            f"cd {pkg} && python3 bin/outbox-append.py x.json",
+            f'python3 {pkg}/bin/discord-api.py post 1 "$(cat config.yaml)"',
+            f"python3 {pkg}/bin/discord-api.py post 1 hi > /tmp/x",
             "python3 /elsewhere/bin/outbox-append.py x.json",
         ]
         for cmd in allowed:

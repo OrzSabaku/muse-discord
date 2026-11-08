@@ -11,7 +11,7 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR  # noqa: E402
+from common import MUT_DIR
 
 _spec = importlib.util.spec_from_file_location(
     "muse_watches", os.path.join(MUT_DIR, "src/muse_discord/muse_watches.py")

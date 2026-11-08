@@ -8,7 +8,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from test_monitorfixes import Base, CH, U1, gmsg, quiet  # noqa: E402
+from test_monitorfixes import CH, U1, Base, gmsg, quiet  # noqa: E402
 
 
 class PoisonAfterAppend(Base):

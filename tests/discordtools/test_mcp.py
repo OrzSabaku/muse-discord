@@ -3,10 +3,10 @@
 import base64
 import importlib.util
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 ROOT = Path(os.environ.get("MUT_DIR", Path(__file__).resolve().parents[2]))
@@ -15,6 +15,7 @@ HAVE_MCP = importlib.util.find_spec("mcp") is not None
 if HAVE_MCP:
     from mcp import Client
     from mcp.client.stdio import StdioServerParameters
+
     from muse_discord.discord_tools.mcp_server import create_server
 
 

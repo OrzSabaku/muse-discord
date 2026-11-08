@@ -3,10 +3,10 @@
 import importlib.util
 import json
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import yaml
@@ -19,6 +19,7 @@ from muse_discord.external_apps.policy import Refused  # noqa: E402 (local impor
 HAVE_MCP = importlib.util.find_spec("mcp") is not None
 if HAVE_MCP:
     from mcp import Client
+
     from muse_discord.discord_tools.mcp_server import create_server
 
 OWNER = "100000000000000001"

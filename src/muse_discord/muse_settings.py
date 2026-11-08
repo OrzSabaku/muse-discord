@@ -37,28 +37,41 @@ import secrets
 import shutil
 import tempfile
 import threading
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import yaml
 
-from muse_discord.settings_schema import CORE, TOP, CORE_GROUPS
 from muse_discord.settings_display import (
+    CATEGORY_TYPE,
     LABELS,
     VALUE_LABELS,
-    CATEGORY_TYPE,
     ServerInfo,
     chain_names,
-    name_lookup,
-    people_text,
-    person_name,
     change_location,
     describe_change,
     label,
+    name_lookup,
     names_from,
+    people_text,
+    person_name,
     place_name,
     value_label,
 )
-from muse_discord.settings_schema import NOTES_MAX as NOTES_MAX, PRESENCE_KINDS as PRESENCE_KINDS
+from muse_discord.settings_display import (
+    ValueChange as ValueChange,
+)
+from muse_discord.settings_schema import CORE, CORE_GROUPS, TOP
+from muse_discord.settings_schema import NOTES_MAX as NOTES_MAX
+from muse_discord.settings_schema import PRESENCE_KINDS as PRESENCE_KINDS
+
+PAIR_LENGTH = 2
+
+
+SERVER_SCOPE_PARTS = 2
+MIN_SERVER_KEY_PARTS = 3
+MIN_CHANNEL_KEY_PARTS = 5
+SOURCE_DATE_INDEX = 2
 
 OVERLAY_NAME = "config.discord.yaml"
 HISTORY_CAP = 100
@@ -164,9 +177,9 @@ def parse_key(s) -> tuple[tuple[str, ...], str]:
         return ("top",), ".".join(parts)
     if head in ("everywhere", "dms", "all_servers"):
         return (head,), _canon(parts[1:], False)
-    if head == "servers" and len(parts) >= 3:
+    if head == "servers" and len(parts) >= MIN_SERVER_KEY_PARTS:
         sid = parts[1]
-        if parts[2] == "channels" and len(parts) >= 5:
+        if parts[2] == "channels" and len(parts) >= MIN_CHANNEL_KEY_PARTS:
             return ("servers", sid, "channels", parts[3]), _canon(parts[4:], True)
         return ("servers", sid), _canon(parts[2:], False)
     raise ValueError("unknown scope")
@@ -184,7 +197,7 @@ def format_key(path: tuple[str, ...], key: str) -> str:
         return key
     if path[0] == "servers":
         out = f'servers."{path[1]}"'
-        if len(path) > 2:
+        if len(path) > SERVER_SCOPE_PARTS:
             short = {v: k for k, v in CHANNEL_SHORT.items()}.get(key, key)
             return out + f'.channels."{path[3]}".{short}'
         return out + "." + key
@@ -195,7 +208,7 @@ def format_key(path: tuple[str, ...], key: str) -> str:
 
 def _scope_kind(path):
     if path[0] in ("servers", "alias"):
-        return "channel" if len(path) > 2 else "server"
+        return "channel" if len(path) > SERVER_SCOPE_PARTS else "server"
     return path[0]
 
 
@@ -319,32 +332,9 @@ class _Parser:
             if top == "name" and kind in ("server", "channel"):
                 self.labels[path[-1]] = str(sub)
             elif top == "channels" and kind == "server":
-                if not isinstance(sub, dict):
-                    self.err(w, "expected channel ids, each with a block")
-                    continue
-                for cid, cblock in sub.items():
-                    cid_s = _id_str(cid)
-                    cw = f'{where}.channels."{cid}"'
-                    if cid_s is None:
-                        self.err(
-                            cw,
-                            "expected a Discord channel or "
-                            "category id (digits) as the key; put a "
-                            "name in `name:` inside",
-                        )
-                        continue
-                    self.scope_block(path + ("channels", cid_s), cblock, cw)
+                self.channel_blocks(path, sub, where)
             elif kind == "channel":
-                if top in CHANNEL_SHORT:
-                    self.set(path, CHANNEL_SHORT[top], sub, w)
-                elif top in ("media", "proactive") and isinstance(sub, dict):
-                    for k, v in sub.items():
-                        if k != "enabled":
-                            self.err(f"{w}.{k}", CHANNEL_ONLY)
-                            continue
-                        self.set(path, f"{top}.enabled", v, f"{w}.{k}")
-                else:
-                    self.err(w, CHANNEL_ONLY)
+                self.channel_setting(path, top, sub, w)
             elif top in CORE_GROUPS:
                 if not isinstance(sub, dict):
                     self.err(w, f"expected settings under {top}:")
@@ -357,6 +347,35 @@ class _Parser:
                     "unknown section; valid: "
                     + ", ".join(CORE_GROUPS + (("name", "channels") if kind == "server" else ())),
                 )
+
+    def channel_blocks(self, path, sub, where):
+        if not isinstance(sub, dict):
+            self.err(f"{where}.channels", "expected channel ids, each with a block")
+            return
+        for cid, cblock in sub.items():
+            cid_s = _id_str(cid)
+            cw = f'{where}.channels."{cid}"'
+            if cid_s is None:
+                self.err(
+                    cw,
+                    "expected a Discord channel or "
+                    "category id (digits) as the key; put a "
+                    "name in `name:` inside",
+                )
+                continue
+            self.scope_block((*path, "channels", cid_s), cblock, cw)
+
+    def channel_setting(self, path, top, sub, w):
+        if top in CHANNEL_SHORT:
+            self.set(path, CHANNEL_SHORT[top], sub, w)
+        elif top in ("media", "proactive") and isinstance(sub, dict):
+            for k, v in sub.items():
+                if k != "enabled":
+                    self.err(f"{w}.{k}", CHANNEL_ONLY)
+                    continue
+                self.set(path, f"{top}.enabled", v, f"{w}.{k}")
+        else:
+            self.err(w, CHANNEL_ONLY)
 
     def top_value(self, key, value, where):
         spec = TOP[key]
@@ -482,7 +501,7 @@ class Settings:
         if scope.kind == "everywhere":
             return out
         if scope.kind == "dms":
-            return out + [(("dms",), "dms")]
+            return [*out, (("dms",), "dms")]
         out += [
             (("builtin_all_servers",), "all_servers (built-in)"),
             (("all_servers",), "all_servers"),
@@ -532,7 +551,7 @@ class Settings:
             rows.append((name, path, s, v, src))
         if key == "style.notes":
             base, extra = "", []
-            for name, path, s, v, src in rows:
+            for _name, path, s, v, _src in rows:
                 if not s:
                     continue
                 if _scope_kind(path) == "channel":
@@ -540,9 +559,9 @@ class Settings:
                         extra.append(v)
                 else:
                     base = v
-            return "\n".join(p for p in [base] + extra if p), rows
+            return "\n".join(p for p in [base, *extra] if p), rows
         value, win = None, None
-        for name, path, s, v, src in reversed(rows):
+        for _name, path, s, v, _src in reversed(rows):
             if s:
                 value, win = v, path
                 break
@@ -597,7 +616,7 @@ class Settings:
         for key in self.keys():
             value, rows = self._resolve_key(chain, key)
             src = "built-in"
-            for name, path, s, v, srctag in reversed(rows):
+            for name, path, s, _v, srctag in reversed(rows):
                 if not s:
                     continue
                 desc = _source_text(srctag)
@@ -637,7 +656,7 @@ class Settings:
         cap (not none) for key: each counts only what happens in its own
         scope (everywhere = all of it, "server:<id>", "dms")."""
         out = []
-        for path, name in self.chain(scope):
+        for path, _name in self.chain(scope):
             if path[0] in ("builtin", "builtin_all_servers"):
                 continue
             s, v, _src = self.layer(path, key)
@@ -674,7 +693,7 @@ class Settings:
     def channels_listed(self, gid):
         out = set()
         for path, _k in list(self.file_values) + list(self.overlay):
-            if path[0] == "servers" and path[1] == gid and len(path) > 2:
+            if path[0] == "servers" and path[1] == gid and len(path) > SERVER_SCOPE_PARTS:
                 out.add(path[3])
         return sorted(out)
 
@@ -757,7 +776,7 @@ def _retire_notice(keystr, entry, reason):
 
 
 def _now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _same_entry(a, b):
@@ -779,7 +798,7 @@ def _read_overlay_doc(path, strict=False):
                 f"{OVERLAY_NAME} cannot be read ({e}); nothing was changed. "
                 f"Fix the file, or delete it to drop every change made "
                 f"from Discord."
-            )
+            ) from e
         return {"version": 1, "values": {}, "history": []}
     if strict and (
         not isinstance(doc, dict)
@@ -872,10 +891,8 @@ def atomic_write_text(path, text):
             os.fsync(f.fileno())  # never an empty file after a crash
         os.replace(tmp, path)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
 
 
@@ -902,9 +919,9 @@ def load(config_path, overlay_path=None, text=None):
     try:
         raw = _yload(text) if text is not None else _read_yaml(config_path)
     except yaml.YAMLError as e:
-        raise SettingsError(f"{label}: not valid YAML ({e})")
+        raise SettingsError(f"{label}: not valid YAML ({e})") from e
     except OSError as e:
-        raise SettingsError(f"{label}: unreadable ({e})")
+        raise SettingsError(f"{label}: unreadable ({e})") from e
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):
@@ -926,7 +943,7 @@ def load(config_path, overlay_path=None, text=None):
         try:
             block = _read_yaml(path)
         except (OSError, yaml.YAMLError) as e:
-            raise SettingsError(f"{path}: unreadable ({e})")
+            raise SettingsError(f"{path}: unreadable ({e})") from e
         p.scope_block(("servers", sid), block, path)
         st.server_files[sid] = path
     if p.errors:
@@ -935,6 +952,105 @@ def load(config_path, overlay_path=None, text=None):
     st.labels = p.labels
     _apply_overlay(st)
     return st
+
+
+def _parse_identity(p, data, st):
+    owners = data.get("owners")
+    if owners is not None:
+        if not isinstance(owners, list):
+            p.err("owners", 'expected a list of user ids, like ["1234"]')
+        else:
+            for o in owners:
+                if _id_str(o) is None:
+                    p.err("owners", f"{_show(o)}: expected a Discord user id (digits)")
+            st.owners = [str(o) for o in owners]
+    persona = data.get("persona")
+    if persona is not None:
+        if not isinstance(persona, str) or not persona.strip():
+            p.err("persona", "expected a file path, like persona.md")
+        else:
+            st.persona = persona.strip()
+
+
+def _parse_token_source(p, data, st):
+    tf = data.get("token_from")
+    if tf is not None:
+        items = tf if isinstance(tf, list) else [tf]
+        if not items or not all(
+            isinstance(i, str) and i.strip() and i.strip() != "env:" for i in items
+        ):
+            p.err("token_from", "expected env:NAME or a file path (never the token itself)")
+        elif any(re.fullmatch(r"[A-Za-z0-9_.\-]{50,}", i.strip()) for i in items):
+            p.err(
+                "token_from",
+                "this looks like a token itself; store the "
+                "token in a file (mode 600) and give its path",
+            )
+        else:
+            st.token_from = [i.strip() for i in items] if isinstance(tf, list) else tf.strip()
+
+
+def _parse_bot_settings(p, data, st):
+    for sect, keys in (
+        ("presence", ("status", "kind", "enabled")),
+        ("updates", ("notify",)),
+        ("telemetry", ("usage_stats",)),
+        ("memory", ("save_dms",)),
+    ):
+        block = data.get(sect)
+        if block is None:
+            continue
+        if not isinstance(block, dict):
+            p.err(sect, "expected a block")
+            continue
+        for k, val in block.items():
+            if k not in keys:
+                p.err(
+                    f"{sect}.{k}",
+                    "unknown setting; valid: " + ", ".join(x for x in keys if x != "enabled"),
+                )
+                continue
+            p.top_value(f"{sect}.{k}", val, f"{sect}.{k}")
+
+
+def _parse_servers(p, data, st):
+    servers = data.get("servers")
+    if servers is not None:
+        if not isinstance(servers, dict):
+            p.err("servers", "expected server ids, each with a block")
+        else:
+            for sid, block in servers.items():
+                sid_s = _id_str(sid)
+                where = f'servers."{sid}"'
+                if sid_s is None:
+                    p.err(where, "expected a Discord server id (digits) as the key")
+                    continue
+                p.scope_block(("servers", sid_s), block, where)
+
+
+def _parse_engine(p, data, st):
+    eng = data.get("engine")
+    if eng is not None:
+        if not isinstance(eng, dict):
+            p.err("engine", "expected a block")
+        else:
+            for k, sub in eng.items():
+                if k not in ENGINE_KEYS:
+                    p.err(f"engine.{k}", "unknown engine setting; valid: " + ", ".join(ENGINE_KEYS))
+                elif isinstance(ENGINE_KEYS[k], set):
+                    if not isinstance(sub, dict):
+                        p.err(f"engine.{k}", "expected a block")
+                        continue
+                    for kk in sub:
+                        if kk not in ENGINE_KEYS[k]:
+                            p.err(
+                                f"engine.{k}.{kk}",
+                                "unknown; valid: " + ", ".join(sorted(ENGINE_KEYS[k])),
+                            )
+            gids = eng.get("guild_ids")
+            if gids is not None and not isinstance(gids, list):
+                p.err("engine.guild_ids", "expected a list of server ids")
+            st.engine = eng
 
 
 def _parse_new(p, data, st):
@@ -962,95 +1078,16 @@ def _parse_new(p, data, st):
     v = data.get("version")
     if v is not None and v != 1:
         p.err("version", f"{v!r} is not supported; valid: 1")
-    owners = data.get("owners")
-    if owners is not None:
-        if not isinstance(owners, list):
-            p.err("owners", 'expected a list of user ids, like ["1234"]')
-        else:
-            for o in owners:
-                if _id_str(o) is None:
-                    p.err("owners", f"{_show(o)}: expected a Discord user id (digits)")
-            st.owners = [str(o) for o in owners]
-    persona = data.get("persona")
-    if persona is not None:
-        if not isinstance(persona, str) or not persona.strip():
-            p.err("persona", "expected a file path, like persona.md")
-        else:
-            st.persona = persona.strip()
-    tf = data.get("token_from")
-    if tf is not None:
-        items = tf if isinstance(tf, list) else [tf]
-        if not items or not all(
-            isinstance(i, str) and i.strip() and i.strip() != "env:" for i in items
-        ):
-            p.err("token_from", "expected env:NAME or a file path (never the token itself)")
-        elif any(re.fullmatch(r"[A-Za-z0-9_.\-]{50,}", i.strip()) for i in items):
-            p.err(
-                "token_from",
-                "this looks like a token itself; store the "
-                "token in a file (mode 600) and give its path",
-            )
-        else:
-            st.token_from = [i.strip() for i in items] if isinstance(tf, list) else tf.strip()
-    for sect, keys in (
-        ("presence", ("status", "kind", "enabled")),
-        ("updates", ("notify",)),
-        ("telemetry", ("usage_stats",)),
-        ("memory", ("save_dms",)),
-    ):
-        block = data.get(sect)
-        if block is None:
-            continue
-        if not isinstance(block, dict):
-            p.err(sect, "expected a block")
-            continue
-        for k, val in block.items():
-            if k not in keys:
-                p.err(
-                    f"{sect}.{k}",
-                    "unknown setting; valid: " + ", ".join(x for x in keys if x != "enabled"),
-                )
-                continue
-            p.top_value(f"{sect}.{k}", val, f"{sect}.{k}")
+    _parse_identity(p, data, st)
+    _parse_token_source(p, data, st)
+    _parse_bot_settings(p, data, st)
     for scope in ("everywhere", "dms", "all_servers"):
         p.scope_block((scope,), data.get(scope), scope)
-    servers = data.get("servers")
-    if servers is not None:
-        if not isinstance(servers, dict):
-            p.err("servers", "expected server ids, each with a block")
-        else:
-            for sid, block in servers.items():
-                sid_s = _id_str(sid)
-                where = f'servers."{sid}"'
-                if sid_s is None:
-                    p.err(where, "expected a Discord server id (digits) as the key")
-                    continue
-                p.scope_block(("servers", sid_s), block, where)
-    eng = data.get("engine")
-    if eng is not None:
-        if not isinstance(eng, dict):
-            p.err("engine", "expected a block")
-        else:
-            for k, sub in eng.items():
-                if k not in ENGINE_KEYS:
-                    p.err(f"engine.{k}", "unknown engine setting; valid: " + ", ".join(ENGINE_KEYS))
-                elif isinstance(ENGINE_KEYS[k], set):
-                    if not isinstance(sub, dict):
-                        p.err(f"engine.{k}", "expected a block")
-                        continue
-                    for kk in sub:
-                        if kk not in ENGINE_KEYS[k]:
-                            p.err(
-                                f"engine.{k}.{kk}",
-                                "unknown; valid: " + ", ".join(sorted(ENGINE_KEYS[k])),
-                            )
-            gids = eng.get("guild_ids")
-            if gids is not None and not isinstance(gids, list):
-                p.err("engine.guild_ids", "expected a list of server ids")
-            st.engine = eng
+    _parse_servers(p, data, st)
+    _parse_engine(p, data, st)
 
 
-def _apply_overlay(st):
+def _overlay_values(st):
     try:
         doc = _read_yaml(st.overlay_path)
     except (OSError, yaml.YAMLError) as e:
@@ -1065,6 +1102,45 @@ def _apply_overlay(st):
     values = doc.get("values") or {}
     if not isinstance(values, dict):
         values = {}
+    return values
+
+
+def _overlay_scope_problem(st, path, key):
+    spec = st.spec(key)
+    if spec is None:
+        return "no such setting anymore"
+    if path == ("top",):
+        return None if key in TOP_DISCORD_EDITABLE else "not editable from Discord"
+    if not _settable_at(spec, _scope_kind(path), key):
+        return f"cannot be set at {_scope_kind(path)} scope"
+    if path[0] == "servers" and (
+        _id_str(path[1]) is None or (len(path) > SERVER_SCOPE_PARTS and _id_str(path[3]) is None)
+    ):
+        return "expected Discord ids in the key"
+    if not spec.discord_editable:
+        return "not editable from Discord"
+    return None
+
+
+def _normalize_overlay_entry(spec, entry):
+    if entry.get("value") == "inherit":
+        return entry, None
+    ok, norm = normalize(spec, entry.get("value"))
+    return (dict(entry, _norm=norm), None) if ok else (entry, f"invalid value: {norm}")
+
+
+def _overlay_matches_file(st, path, key, entry):
+    base = entry.get("base")
+    if base is None and (path, key) not in st.file_values:
+        return True
+    ok, normalized = normalize(st.spec(key), base) if base is not None else (True, None)
+    return ok and normalized == st.file_values.get((path, key))
+
+
+def _apply_overlay(st):
+    values = _overlay_values(st)
+    if values is None:
+        return
     for keystr, entry in values.items():
         if not isinstance(entry, dict) or "value" not in entry:
             st.retire.append(
@@ -1081,34 +1157,11 @@ def _apply_overlay(st):
         except ValueError as e:
             path, key, reason = None, None, f"not a settings key ({e})"
         if reason is None and path is not None:
-            spec = st.spec(key)
-            kind = _scope_kind(path)
-            if spec is None:
-                reason = "no such setting anymore"
-            elif path == ("top",):
-                if key not in TOP_DISCORD_EDITABLE:
-                    reason = "not editable from Discord"
-            elif not _settable_at(spec, kind, key):
-                reason = f"cannot be set at {kind} scope"
-            elif path[0] == "servers" and (
-                _id_str(path[1]) is None or (len(path) > 2 and _id_str(path[3]) is None)
-            ):
-                reason = "expected Discord ids in the key"
-            elif spec is not None and not spec.discord_editable:
-                reason = "not editable from Discord"
-        if reason is None and entry.get("value") != "inherit":
-            ok, norm = normalize(spec, entry.get("value"))
-            if not ok:
-                reason = f"invalid value: {norm}"
-            else:
-                entry = dict(entry, _norm=norm)
+            reason = _overlay_scope_problem(st, path, key)
         if reason is None:
-            cur = st.file_values.get((path, key))
-            base = entry.get("base")
-            if base is not None or (path, key) in st.file_values:
-                okb, nbase = normalize(spec, base) if base is not None else (True, None)
-                if not okb or nbase != cur:
-                    reason = "file changed"
+            entry, reason = _normalize_overlay_entry(st.spec(key), entry)
+        if reason is None and not _overlay_matches_file(st, path, key, entry):
+            reason = "file changed"
         if reason is not None:
             st.retire.append((str(keystr), entry, reason))
             continue
@@ -1136,7 +1189,7 @@ def check_settable(st, path, key):
     elif kind == "channel" and not (key in CHANNEL_SHORT.values() or _is_enabled_key(key)):
         raise SettingsError(f"{keystr}: {CHANNEL_ONLY}")
     if path[0] in ("servers", "alias") and (
-        _id_str(path[1]) is None or (len(path) > 2 and _id_str(path[3]) is None)
+        _id_str(path[1]) is None or (len(path) > SERVER_SCOPE_PARTS and _id_str(path[3]) is None)
     ):
         raise SettingsError(f"{keystr}: expected Discord ids")
     if not spec.discord_editable or spec.hidden:
@@ -1248,9 +1301,19 @@ def owner_layer(doc, keystr, owners):
     return _entry_below(cur, doc, keystr, owners)
 
 
-def _write_entry(st, doc, path, key, spec, value, by, now, group=None, role=None):
+@dataclass
+class WriteStamp:
+    by: str
+    at: str
+    group: str | None = None
+    role: str | None = None
+
+
+def _write_entry(st, doc, planned, stamp):
     """Record one overlay entry and its history line in doc (not saved).
     value: the display value, or "inherit"."""
+    path, key, spec, value = planned.path, planned.key, planned.spec, planned.write
+    by, now, group, role = stamp.by, stamp.at, stamp.group, stamp.role
     keystr = format_key(path, key)
     if role is None:
         role = _infer_role(by, st.owners)
@@ -1292,7 +1355,16 @@ def _write_entry(st, doc, path, key, spec, value, by, now, group=None, role=None
     return keystr
 
 
-def set_value(config_path, keystr, value, by, group=None, role=None):
+@dataclass
+class WriteActor:
+    by: str
+    group: str | None = None
+    role: str | None = None
+    admin_gid: str | None = None
+    info: object = None
+
+
+def set_value(config_path, keystr, value, actor):
     """Record a Discord-side change: overlay entry {value, base, by, at}
     plus a history line (last HISTORY_CAP kept). value "inherit" resets
     the key at that scope. Raises SettingsError for an invalid key/value.
@@ -1300,13 +1372,16 @@ def set_value(config_path, keystr, value, by, group=None, role=None):
     written) when that layer already holds the value. role: "owner" or
     "admin" (default: an admin when by is a user id that is not an
     owner); group: a history group id (see apply)."""
+    by = actor.by
+    group = actor.group
+    role = actor.role
     group = _check_group(group)
     with overlay_lock(overlay_path_for(config_path)):
         st = load(config_path)
         try:
             path, key = parse_key(keystr)
         except ValueError as e:
-            raise SettingsError(f"{keystr}: not a settings key ({e})")
+            raise SettingsError(f"{keystr}: not a settings key ({e})") from e
         spec = check_settable(st, path, key)
         if role is None:
             role = _infer_role(by, st.owners)
@@ -1323,7 +1398,12 @@ def set_value(config_path, keystr, value, by, group=None, role=None):
         if _layer_noop(st, path, key, norm, role):
             return NO_CHANGE
         doc = _read_overlay_doc(st.overlay_path, strict=True)
-        _write_entry(st, doc, path, key, spec, value, by, _now(), group, role)
+        _write_entry(
+            st,
+            doc,
+            Planned(Change(place_of_path(path), key, value, path=path), path, spec, value, False),
+            WriteStamp(by, _now(), group, role),
+        )
         doc["history"] = _trim_history(doc["history"])
         _write_overlay_doc(st.overlay_path, doc)
     return value
@@ -1332,7 +1412,12 @@ def set_value(config_path, keystr, value, by, group=None, role=None):
 def reset(config_path, keystr, by, group=None, role=None):
     """Act as if this scope did not set the key (writes inherit; nothing
     when the scope sets nothing there already: NO_CHANGE)."""
-    return set_value(config_path, keystr, "inherit", by, group, role)
+    return set_value(
+        config_path=config_path,
+        keystr=keystr,
+        value="inherit",
+        actor=WriteActor(by=by, group=group, role=role),
+    )
 
 
 # Which way a change goes: the most permissive value last. Used by
@@ -1364,6 +1449,10 @@ def loosens(key, old, new, spec=None):
         spec = CORE.get(key)
     if spec is None:
         return None
+    return _typed_loosens(key, old, new, spec)
+
+
+def _typed_loosens(key, old, new, spec):
     if spec.type == "on-off":
         return bool(new) and not bool(old)
     if spec.type == "number" and spec.none:
@@ -1374,20 +1463,24 @@ def loosens(key, old, new, spec=None):
             return False
         return new > old
     if spec.type == "people":
-        if key.endswith(".ignore") or key == "who.ignore":
-            if not isinstance(old, list) or not isinstance(new, list):
-                return None
-            return bool(set(old) - set(new))
-        if new == "everyone":
-            return old != "everyone"
-        if old == "everyone":
-            return False
-
-        def people(v):
-            return set() if v == "owners" else set(v or [])
-
-        return bool(people(new) - people(old))
+        return _people_loosens(key, old, new)
     return None
+
+
+def _people_loosens(key, old, new):
+    if key.endswith(".ignore") or key == "who.ignore":
+        if not isinstance(old, list) or not isinstance(new, list):
+            return None
+        return bool(set(old) - set(new))
+    if new == "everyone":
+        return old != "everyone"
+    if old == "everyone":
+        return False
+
+    def people(v):
+        return set() if v == "owners" else set(v or [])
+
+    return bool(people(new) - people(old))
 
 
 def _dms_from_loosens(old, new):
@@ -1415,7 +1508,7 @@ def scope_prefix(path):
     "all_servers", 'servers."<id>"', 'servers."<id>".channels."<id>"'."""
     if path[0] == "servers":
         out = f'servers."{path[1]}"'
-        return out + (f'.channels."{path[3]}"' if len(path) > 2 else "")
+        return out + (f'.channels."{path[3]}"' if len(path) > SERVER_SCOPE_PARTS else "")
     return path[0]
 
 
@@ -1442,7 +1535,10 @@ def _undo_match(prefix, children=False):
 
         def match(p, _k):
             return p in paths or (
-                children and path[0] == "servers" and len(path) == 2 and p[:2] == path
+                children
+                and path[0] == "servers"
+                and len(path) == SERVER_SCOPE_PARTS
+                and p[:2] == path
             )
 
         return match
@@ -1535,17 +1631,7 @@ def undo_plan(st, prefix, children=False, admin_gid=None):
     ]
 
 
-def undo_changes(
-    config_path,
-    prefix,
-    by,
-    children=False,
-    admin_gid=None,
-    info=None,
-    role=None,
-    expect=None,
-    undo_id=None,
-):
+def undo_changes(config_path, prefix, actor, children=False, expect=None):
     """Revert the newest change still in effect at one place, and with
     it every change of the same group (one apply, preset or pause),
     in one file write. Old history lines without a group undo one at a
@@ -1557,6 +1643,11 @@ def undo_changes(
     now revert something else (a stale button). undo_id: the group id
     for the undo's own history lines (as undo_group). Returns the key
     strings reverted, newest first ([]: nothing to undo)."""
+    by = actor.by
+    admin_gid = actor.admin_gid
+    info = actor.info
+    role = actor.role
+    undo_id = actor.group
     undo_id = _check_group(undo_id)
     with overlay_lock(overlay_path_for(config_path)):
         st = load(config_path)
@@ -1578,24 +1669,33 @@ def undo_changes(
             role = "admin"
         elif role == "admin":
             raise SettingsError("a server admin's undo needs admin_gid")
-        done = _revert(st, doc, picks, by, role, undo_id)
+        done = _revert(st, doc, picks, WriteStamp(by, _now(), undo_id, role))
         _write_overlay_doc(st.overlay_path, doc)
     return done
 
 
-def undo(config_path, prefix, by, children=False, admin_gid=None, info=None, expect=None):
+def undo(config_path, prefix, actor, children=False, expect=None):
     """Revert the newest Discord change made at one scope (prefix as
     scope_prefix gives; "everywhere" includes the bot-wide settings) that
     is still in effect, with the rest of its group (see undo_changes).
     Repeated calls step further back. Returns the key string of the
     newest change reverted, or None when there is nothing to undo."""
-    done = undo_changes(config_path, prefix, by, children, admin_gid, info, expect=expect)
+    by = actor.by
+    admin_gid = actor.admin_gid
+    info = actor.info
+    done = undo_changes(
+        config_path=config_path,
+        prefix=prefix,
+        children=children,
+        expect=expect,
+        actor=WriteActor(by=by, admin_gid=admin_gid, info=info),
+    )
     return done[0] if done else None
 
 
 def backup(path):
     """Copy path to path.bak-<UTC timestamp>; returns the backup path."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     dest = f"{path}.bak-{stamp}"
     n = 1
     while os.path.exists(dest):
@@ -1620,6 +1720,24 @@ def fold(config_path):
         return _fold(config_path)
 
 
+def _normalize_channel_ids(block):
+    if isinstance(block, dict) and isinstance(block.get("channels"), dict):
+        block["channels"] = _by_str_id(block["channels"])
+
+
+def _fold_node_path(path, key):
+    if path == ("top",):
+        node_path = key.split(".")
+    else:
+        node_path = list(_node_prefix(path))
+        if len(path) > SERVER_SCOPE_PARTS:
+            short = {v: k for k, v in CHANNEL_SHORT.items()}
+            node_path += short[key].split(".") if key in short else key.split(".")
+        else:
+            node_path += key.split(".")
+    return node_path
+
+
 def _fold(config_path):
     st = load(config_path)
     # A server admin's entry stays in the overlay: in config.yaml it
@@ -1636,27 +1754,17 @@ def _fold(config_path):
     if isinstance(data.get("servers"), dict):
         data["servers"] = _by_str_id(data["servers"])
         for block in data["servers"].values():
-            if isinstance(block, dict) and isinstance(block.get("channels"), dict):
-                block["channels"] = _by_str_id(block["channels"])
+            _normalize_channel_ids(block)
     external = {
         sid: _read_yaml(filename)
         for sid, filename in st.server_files.items()
         if any(path[:2] == ("servers", sid) for (path, key), entry in todo)
     }
     for block in external.values():
-        if isinstance(block.get("channels"), dict):
-            block["channels"] = _by_str_id(block["channels"])
+        _normalize_channel_ids(block)
     folded = []
     for (path, key), entry in todo:
-        if path == ("top",):
-            node_path = key.split(".")
-        else:
-            node_path = list(_node_prefix(path))
-            if len(path) > 2:
-                short = {v: k for k, v in CHANNEL_SHORT.items()}
-                node_path += short[key].split(".") if key in short else key.split(".")
-            else:
-                node_path += key.split(".")
+        node_path = _fold_node_path(path, key)
         target = data
         if path[0] == "servers" and path[1] in external:
             target = external[path[1]]
@@ -1706,7 +1814,7 @@ def _merged(a, b):
 def _node_prefix(path):
     if path[0] == "servers":
         out = ["servers", path[1]]
-        if len(path) > 2:
+        if len(path) > SERVER_SCOPE_PARTS:
             out += ["channels", path[3]]
         return out
     return [path[0]]
@@ -1806,11 +1914,14 @@ class Place:
         if self.kind == "defaults":
             if key in TOP:
                 return None
-            if key == "who.replies" or _is_enabled_key(key):
-                return Scope("all_servers")
-            if key == "who.dms_from":
-                return Scope.dm()
-            return Scope.everywhere()
+            kind = (
+                "all_servers"
+                if key == "who.replies" or _is_enabled_key(key)
+                else "dms"
+                if key == "who.dms_from"
+                else "everywhere"
+            )
+            return Scope(kind)
         if self.kind == "dms":
             return Scope.dm()
         if self.kind == "server":
@@ -1885,7 +1996,7 @@ def place_of_path(path):
     if path[0] == "dms":
         return Place.dms()
     if path[0] == "servers":
-        if len(path) > 2:
+        if len(path) > SERVER_SCOPE_PARTS:
             return Place.channel(path[1], path[3])
         return Place.server(path[1])
     return None
@@ -1898,7 +2009,7 @@ def place_path(st, place, key):
     try:
         check_settable(st, path, key)
     except SettingsError as e:
-        raise SettingsError(f"{label(key)} can't be changed in {place_name(place)} ({e})")
+        raise SettingsError(f"{label(key)} can't be changed in {place_name(place)} ({e})") from e
     return path
 
 
@@ -2036,6 +2147,15 @@ def _date(at):
         return str(at)
 
 
+def _local_source_tag(src, look):
+    if src[0] == "file":
+        return "● set here in config.yaml"
+    by = src[1] if len(src) > 1 else None
+    who = person_name(by, look) if _id_str(by) else (by or "someone")
+    at = src[SOURCE_DATE_INDEX] if len(src) > SOURCE_DATE_INDEX else ""
+    return f"● changed here by {who} on {_date(at)}"
+
+
 def source_tag(st, place, key, names=None):
     """ "● changed here by @Sam on Oct 19, 2026", "● set here in
     config.yaml", "Same as <place>", or "Built-in default"."""
@@ -2056,11 +2176,7 @@ def source_tag(st, place, key, names=None):
         if not s:
             continue
         if p == path:
-            if src[0] == "file":
-                return "● set here in config.yaml"
-            by = src[1] if len(src) > 1 else None
-            who = person_name(by, look) if _id_str(by) else (by or "someone")
-            return f"● changed here by {who} on {_date(src[2] if len(src) > 2 else '')}"
+            return _local_source_tag(src, look)
         if p[0] in ("builtin", "builtin_all_servers"):
             return "Built-in default" if place.kind == "defaults" else "Same as Defaults"
         owner = place_of_path(p)
@@ -2206,11 +2322,12 @@ def simulate(st, changes, role="owner"):
     return new
 
 
-def _place_noop(st, place, path, key, norm, role="owner"):
+def _place_noop(st, change, path, norm, role="owner"):
     """Writing norm ("inherit" for a reset) at path changes nothing: the
     layer holds it already, or the layer sets nothing and the value in
     force there is the same (a reset when the layer sets nothing). An
     owner's write onto a server admin's entry always counts."""
+    place, key = change.place, change.key
     if role != "admin" and entry_role(st.overlay.get((path, key))) == "admin":
         return False
     if _layer_noop(st, path, key, norm, role):
@@ -2221,34 +2338,37 @@ def _place_noop(st, place, path, key, norm, role="owner"):
         return TOP[key].default == norm
     if key == "style.notes" and _scope_kind(path) == "channel":
         return norm == ""
-    if (
+    unknown_category = (
         place.kind == "channel"
         and place.category_id is None
         and any(
-            p[:2] == path[:2] and len(p) > 2 and p != path and k == key
+            p[:2] == path[:2] and len(p) > SERVER_SCOPE_PARTS and p != path and k == key
             for p, k in list(st.file_values) + list(st.overlay)
         )
-    ):
-        return False  # an unknown category may set it: write it
-    sc = _scope_for(place, key, path)
-    if sc is None:
-        return False
-    return st.value_without(sc, key, path) == norm
+    )
+    sc = None if unknown_category else _scope_for(place, key, path)
+    return sc is not None and st.value_without(sc, key, path) == norm
 
 
 class Planned:
     """One change, checked: path, keystr, the value to write, whether it
     is a no-op, and the values in force before (old) and after (new)."""
 
-    def __init__(self, change, path, spec, write, norm, noop):
+    def __init__(self, change, path, spec, write, noop):
         self.change, self.path, self.spec = change, path, spec
         self.key = change.key
         self.keystr = format_key(path, change.key)
-        self.write, self.norm, self.noop = write, norm, noop
+        self.write, self.noop = write, noop
         self.old = self.new = None
 
     def describe(self, names=None):
-        return describe_change(self.change.place, self.key, self.old, self.new, names, self.path)
+        return describe_change(
+            self.change.place,
+            self.key,
+            names=names,
+            path=self.path,
+            values=ValueChange(old=self.old, new=self.new),
+        )
 
 
 def plan_changes(st, changes, role="owner"):
@@ -2271,11 +2391,7 @@ def plan_changes(st, changes, role="owner"):
             if not ok:
                 raise SettingsError(f"{label(ch.key)}: {norm}; valid: {spec.valid_text()}")
             write = norm
-        out.append(
-            Planned(
-                ch, path, spec, write, norm, _place_noop(st, ch.place, path, ch.key, norm, role)
-            )
-        )
+        out.append(Planned(ch, path, spec, write, _place_noop(st, ch, path, norm, role)))
     sim = simulate(st, [p.change for p in out if not p.noop], role)
     for p in out:
         sc = _scope_for(p.change.place, p.key, p.path)
@@ -2303,7 +2419,7 @@ class ApplyResult:
         return [p.describe(names) for p in self.written]
 
 
-def apply(config_path, changes, by, group=None, role=None, admin_gid=None, info=None):
+def apply(config_path, changes, actor):
     """Write several changes atomically: one overlay file write, one
     history group id (group, or a fresh one; 24 characters at most) on
     every history line. A change that would change nothing is skipped
@@ -2314,6 +2430,11 @@ def apply(config_path, changes, by, group=None, role=None, admin_gid=None, info=
     for its channel list) runs admin_changes first: refused changes
     raise SettingsError and nothing is written. role is required:
     "owner" (owners, the CLI, muse.ai) or "admin"."""
+    by = actor.by
+    group = actor.group
+    role = actor.role
+    admin_gid = actor.admin_gid
+    info = actor.info
     group = _check_group(group)
     if role not in ("owner", "admin"):
         raise SettingsError(f"role {role!r}: say owner or admin")
@@ -2331,7 +2452,7 @@ def apply(config_path, changes, by, group=None, role=None, admin_gid=None, info=
         doc = _read_overlay_doc(st.overlay_path, strict=True)
         now = _now()
         for p in todo:
-            _write_entry(st, doc, p.path, p.key, p.spec, p.write, by, now, group, role)
+            _write_entry(st, doc, p, WriteStamp(by, now, group, role))
         doc["history"] = _trim_history(doc["history"])
         _write_overlay_doc(st.overlay_path, doc)
     return ApplyResult(group, todo, [p for p in rows if p.noop])
@@ -2415,40 +2536,48 @@ def group_undo_plan(st, group):
     return out
 
 
-def _revert(st, doc, picks, by, role=None, ugroup=None):
+def _restore_overlay_value(st, doc, pick, stamp):
+    _i, ks, path, key, target = pick
+    by, now, role = stamp.by, stamp.at, stamp.role
+    spec = check_settable(st, path, key)
+    below = owner_layer(doc, ks, st.owners)
+    in_file = (path, key) in st.file_values
+    cur = st.file_values.get((path, key))
+    entry = {"value": "inherit", "base": cur, "by": str(by), "at": now}
+    if target == "inherit":
+        if in_file:
+            doc["values"][ks] = entry
+        else:
+            doc["values"].pop(ks, None)
+    else:
+        ok, norm = normalize(spec, target)
+        if not ok:
+            raise SettingsError(f"{ks}: cannot restore {_show(target)}: {norm}")
+        if in_file and norm == cur:
+            doc["values"].pop(ks, None)  # the file says it already
+        else:
+            doc["values"][ks] = dict(entry, value=norm)
+    if role == "admin" and ks in doc["values"]:
+        doc["values"][ks]["role"] = "admin"
+        doc["values"][ks]["below"] = below
+
+
+def _revert(st, doc, picks, stamp):
     """Restore each pick's earlier value (picks: (history index, key
     string, path, key, value to restore)), marking the lines undone and
     adding undo lines (one group when there are several, or ugroup).
     Not saved. role None: inferred from by (the legacy /settings path
     only)."""
+    by, role, ugroup = stamp.by, stamp.role, stamp.group
     if role is None:
         role = _infer_role(by, st.owners)
-    now = _now()
+    now = stamp.at
     ugroup = ugroup or (new_group_id("u") if len(picks) > 1 else None)
+    stamp = WriteStamp(by, now, ugroup, role)
     hist = doc["history"]
     done = []
     for i, ks, path, key, target in picks:
-        spec = check_settable(st, path, key)
-        below = owner_layer(doc, ks, st.owners)
-        in_file = (path, key) in st.file_values
-        cur = st.file_values.get((path, key))
-        entry = {"value": "inherit", "base": cur, "by": str(by), "at": now}
-        if target == "inherit":
-            if in_file:
-                doc["values"][ks] = entry
-            else:
-                doc["values"].pop(ks, None)
-        else:
-            ok, norm = normalize(spec, target)
-            if not ok:
-                raise SettingsError(f"{ks}: cannot restore {_show(target)}: {norm}")
-            if in_file and norm == cur:
-                doc["values"].pop(ks, None)  # the file says it already
-            else:
-                doc["values"][ks] = dict(entry, value=norm)
-        if role == "admin" and ks in doc["values"]:
-            doc["values"][ks]["role"] = "admin"
-            doc["values"][ks]["below"] = below
+        _restore_overlay_value(st, doc, (i, ks, path, key, target), stamp)
         hist[i] = dict(hist[i], undone=True)
         line = {
             "key": ks,
@@ -2495,7 +2624,7 @@ def undo_group(config_path, group, by, role=None, undo_id=None):
         for i, h in reversed(lines):
             path, key = parse_key(h["key"])
             picks.append((i, format_key(path, key), path, key, h.get("from", "inherit")))
-        done = _revert(st, doc, picks, by, "owner", undo_id)
+        done = _revert(st, doc, picks, WriteStamp(by, _now(), undo_id, "owner"))
         _write_overlay_doc(st.overlay_path, doc)
     return done
 
@@ -2604,9 +2733,8 @@ def _admin_scope_check(st, gid, ch, inf):
     pl = ch.place
     if pl is None or pl.kind not in ("server", "channel") or pl.guild_id != gid:
         raise SettingsError("Server admins can change settings only in their own server.")
-    if pl.kind == "channel":
-        if inf.channel(gid, pl.channel_id) is None:
-            raise SettingsError("That channel is not in this server.")
+    if pl.kind == "channel" and inf.channel(gid, pl.channel_id) is None:
+        raise SettingsError("That channel is not in this server.")
     if not _admin_key_ok(pl, ch.key):
         raise SettingsError(
             "Server admins can change only When it "
@@ -2708,13 +2836,8 @@ def admin_check(st, guild_id, changes, info=None, revert=False):
         _admin_scope_check(st, gid, ch, inf)
         if not revert and not ch.revert and ch.value != "inherit":
             ok, norm = normalize(st.spec(ch.key), ch.value)
-            if (
-                ok
-                and ch.key == "who.replies"
-                and norm not in ADMIN_REPLIES
-                or ok
-                and _is_enabled_key(ch.key)
-                and norm is not False
+            if (ok and ch.key == "who.replies" and norm not in ADMIN_REPLIES) or (
+                ok and _is_enabled_key(ch.key) and norm is not False
             ):
                 raise SettingsError(ADMIN_QUIETER)
     sim = simulate(st, changes, "admin")
@@ -2919,8 +3042,8 @@ def preset_changes(st, name, place, info=None, big="refuse"):
             if cond == _IF_EMPTY and st.get(key, sc):
                 continue
         path = place_path(st, place, key)
-        ok, norm = normalize(st.spec(key), value)
-        if not _place_noop(st, place, path, key, norm):
+        _ok, norm = normalize(st.spec(key), value)
+        if not _place_noop(st, Change(place, key, norm, path=path), path, norm):
             out.append(Change(place, key, value))
     return out
 
@@ -3016,97 +3139,89 @@ def _effective_cap(s, key, sc):
 
 def _join(items):
     items = list(items)
-    if len(items) <= 2:
+    if len(items) <= PAIR_LENGTH:
         return " and ".join(items)
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
-def assess(st, changes, info=None, names=None, named=()):
-    """Risk of changes judged by the OUTCOME: the settings in force after
-    them against before, not the direction one key moved (an Undo is
-    assessed the same way: pass undo_plan's changes). Only outcomes
-    that are new count. Risky: DMs open to more people than before
-    (anyone, anyone in your servers, or named people); memory
-    "everything" in a server (harder words above 50 members) or in DMs
-    open to strangers; image/video generation open to everyone or
-    others without a cap of at most 20 a day; Only answer these people
-    newly limiting servers or DMs (names how many places go silent);
-    Pause everywhere; a reply cap removed where the bot is large (a
-    server of more than 500 members, DMs open to strangers, or over 500
-    members in all); Chatty in a server of more than 500 members;
-    replies in a row to other bots unlimited or above 10; a plugin
-    setting its manifest marks risky, loosened. Notes (not risky): Only
-    answer these people in DMs while only owners can DM. info: member
-    counts and channel lists (see ServerInfo); names: {id: name}. named:
-    user ids the owner picked by name for this very change (a "who can
-    DM it" list): that those people can now DM the bot is what was
-    asked, so it is no warning."""
-    inf = ServerInfo(info)
-    look_names = chain_names(names, names_from(inf, st))
-    look = name_lookup(look_names)
-    after = simulate(st, changes)
-    out = Assessment()
-    levels = ("off", "read-only", "confirm", "write", "unconditional")
-    scope = Scope.everywhere()
-    before_apps = st.resolve(scope)["abilities.external_apps"]
-    after_apps = after.resolve(scope)["abilities.external_apps"]
-    if levels.index(after_apps) > levels.index(before_apps):
-        out.warnings.append(
-            f"External app access increases from {before_apps} to {after_apps}. "
-            "App-specific limits still apply. Unconditional approval skips "
-            "approval for registered writes, deletes and sends."
+class ChangeAssessment:
+    """Compare effective settings by policy, sharing one simulated result.
+
+    Checks keep their existing order and wording. Helpers describe the
+    same server/channel snapshot for every check, including unknown sizes.
+    """
+
+    def __init__(self, st, changes, info, names, named):
+        self.st = st
+        self.named = named
+        self.inf = ServerInfo(info)
+        self.look_names = chain_names(names, names_from(self.inf, self.st))
+        self.look = name_lookup(self.look_names)
+        self.after = simulate(self.st, changes)
+        self.out = Assessment()
+        self.gids = set(self.inf.guilds()) | set(self.st.servers_listed())
+        for ch in changes:
+            if ch.place.guild_id:
+                self.gids.add(ch.place.guild_id)
+        self.gids = sorted(g for g in self.gids if _id_str(g))
+
+        self.servers = {g: Scope.server(g) for g in self.gids}
+        self.channels = {}
+        for g in self.gids:
+            for c in self.st.channels_listed(g):
+                self.channels[(g, c)] = Scope.server(
+                    g, channel_id=c, category_id=self.inf.category_of(g, c)
+                )
+        for ch in changes:
+            if ch.place is not None and ch.place.kind == "channel":
+                self.channels[(ch.place.guild_id, ch.place.channel_id)] = ch.place.scope(ch.key)
+        self.later = Scope("all_servers")  # servers it joins later / not listed
+        self.total = sum(self.inf.members(g) or 0 for g in self.inf.guilds())
+
+    def run(self):
+        self.external_apps()
+        self.dm_audience()
+        self.bot_dm_access()
+        self.memory_access()
+        self.generation_access()
+        self.restricted_audience()
+        self.global_pause()
+        self.reply_caps()
+        self.server_conversations()
+        self.bot_conversations()
+        self.notes()
+        return self.out
+
+    def external_apps(self):
+        levels = ("off", "read-only", "confirm", "write", "unconditional")
+        scope = Scope.everywhere()
+        before_apps = self.st.resolve(scope)["abilities.external_apps"]
+        after_apps = self.after.resolve(scope)["abilities.external_apps"]
+        if levels.index(after_apps) > levels.index(before_apps):
+            self.out.warnings.append(
+                f"External app access increases from {before_apps} to {after_apps}. "
+                "App-specific limits still apply. Unconditional approval skips "
+                "approval for registered writes, deletes and sends."
+            )
+
+    def gname(self, g):
+        return self.look(g) or f"server {g}"
+
+    def gdesc(self, g):
+        n = self.inf.members(g)
+        return (
+            f"{self.gname(g)} ({n:,} members)"
+            if n is not None
+            else f"{self.gname(g)} (size unknown)"
         )
 
-    gids = set(inf.guilds()) | set(st.servers_listed())
-    for ch in changes:
-        if ch.place.guild_id:
-            gids.add(ch.place.guild_id)
-    gids = sorted(g for g in gids if _id_str(g))
-
-    def gname(g):
-        return look(g) or f"server {g}"
-
-    def gdesc(g):
-        n = inf.members(g)
-        return f"{gname(g)} ({n:,} members)" if n is not None else f"{gname(g)} (size unknown)"
-
-    def large(g, limit):
+    def large(self, g, limit):
         """Known to have more than limit members, or of unknown size
         (fail closed: no member counts is no reason to stay quiet)."""
-        n = inf.members(g)
+        n = self.inf.members(g)
         return n is None or n > limit
 
-    servers = {g: Scope.server(g) for g in gids}
-    channels = {}
-    for g in gids:
-        for c in st.channels_listed(g):
-            channels[(g, c)] = Scope.server(g, channel_id=c, category_id=inf.category_of(g, c))
-    for ch in changes:
-        if ch.place is not None and ch.place.kind == "channel":
-            channels[(ch.place.guild_id, ch.place.channel_id)] = ch.place.scope(ch.key)
-    later = Scope("all_servers")  # servers it joins later / not listed
-    total = sum(inf.members(g) or 0 for g in inf.guilds())
-
-    # DMs open to more people.
-    aud_b, aud_a = _dm_audience(st), _dm_audience(after)
-    grew = _audience_grew(aud_b, aud_a)
-    if isinstance(grew, set) and named:
-        grew = grew - {str(n) for n in named} or None
-    if grew is True and aud_a[0] == "any":
-        out.warnings.append(
-            "Anyone on Discord, strangers included, can DM "
-            "the bot and get answers. Each answer costs a "
-            "Muse turn."
-        )
-    elif grew is True:
-        out.warnings.append(
-            "Anyone who shares a server with the bot can DM it and get answers, not only you."
-        )
-    elif grew:
-        out.warnings.append(f"{people_text(sorted(grew), look)} can DM the bot and get answers.")
-
-    # Other bots in DMs.
-    def bot_dms(s):
+    def bot_dms(self, s):
         r = s.resolve(Scope.dm())
         return (
             r["who.replies"] != "off"
@@ -3115,199 +3230,35 @@ def assess(st, changes, info=None, names=None, named=()):
             and r["who.allow"] == "everyone"
         )
 
-    if bot_dms(after) and not bot_dms(st):
-        out.warnings.append(
-            "Other bots can DM the bot and get answers; two "
-            "bots can keep answering each other, each "
-            "answer a Muse turn."
-        )
-
-    # Memory: anything it remembers.
-    def mem(s, sc):
+    def mem(self, s, sc):
         return s.get("privacy.memory", sc) == "everything"
 
-    newly = [g for g, sc in servers.items() if mem(after, sc) and not mem(st, sc)]
-    if newly or (mem(after, later) and not mem(st, later)):
-        places = [gdesc(g) for g in newly] or ["servers it joins later"]
-        big = [g for g in newly if large(g, BIG_FOR_MEMORY)]
-        text = (
-            f"In {_join(places)}, replies may draw on anything it "
-            f"remembers about you (your job, location, finances and "
-            f"other saved memory), and anyone there can ask the bot "
-            f"about you."
-        )
-        if big:
-            text = (
-                f"More than {BIG_FOR_MEMORY} members (or size unknown): "
-                f"{_join(gdesc(g) for g in big)}. " + text
-            )
-        out.warnings.append(text)
-    if (
-        aud_a[0] in ("shared", "any")
-        and mem(after, Scope.dm())
-        and not (aud_b[0] in ("shared", "any") and mem(st, Scope.dm()))
-    ):
-        out.warnings.append(
-            "People who DM the bot, strangers included, may "
-            "get replies drawing on anything it remembers "
-            "about you."
-        )
-
-    # Image and video generation.
-    scopes: dict[tuple[str, ...], Scope] = {(g,): sc for g, sc in servers.items()}
-    scopes[("DMs",)] = Scope.dm()
-    scopes[("later",)] = later
-    for (g, c), sc in channels.items():
-        scopes[(g, c)] = sc
-
-    def media(s, sc):
+    def media(self, s, sc):
         if not s.get("media.enabled", sc):
             return None, False
         who = s.get("media.who", sc)
         cap = _effective_cap(s, "media.per_day", sc)
         return who, who != "owners" and (cap is None or cap > MEDIA_PER_DAY_RISKY)
 
-    def where(k):
+    def where(self, k):
         if k == ("DMs",):
             return "DMs"
         if k == ("later",):
             return "servers it joins later"
         if len(k) == 1:
-            return gname(k[0])
-        return place_name(Place.channel(*k), look_names)
+            return self.gname(k[0])
+        return place_name(Place.channel(*k), self.look_names)
 
-    everyone, uncapped = [], []
-    for k, sc in scopes.items():
-        wb, ub = media(st, sc)
-        wa, ua = media(after, sc)
-        if wa == "everyone" and wb != "everyone":
-            everyone.append(where(k))
-        if ua and not ub:
-            uncapped.append(where(k))
-    if everyone:
-        out.warnings.append(
-            f"Anyone in {_join(everyone)} can ask for "
-            f"generated images and video. Generation "
-            f"can cost real money."
-        )
-    if uncapped:
-        out.warnings.append(
-            f"Generations per day: more than "
-            f"{MEDIA_PER_DAY_RISKY} (or no limit) for people other "
-            f"than you in {_join(uncapped)}. Generation can cost real "
-            f"money."
+    def paused_all(self, s):
+        return (
+            s.get("who.replies", Scope.dm()) == "off" and s.get("who.replies", self.later) == "off"
         )
 
-    # Only answer these people: newly limiting places.
-    allow_scopes = [(gname(g), sc) for g, sc in servers.items()] + [
-        ("servers it joins later", later)
-    ]
-    if aud_b[0] != "none":  # DMs answered someone besides the owners
-        allow_scopes.append(("DMs", Scope.dm()))
-    silenced, who = [], None
-    for name, sc in allow_scopes:
-        a = after.get("who.allow", sc)
-        if isinstance(a, list) and st.get("who.allow", sc) == "everyone":
-            silenced.append(name)
-            who = who or a
-    if silenced:
-        n = len(silenced)
-        out.warnings.append(
-            f"Only {people_text(who, look) if who else 'nobody'} and you "
-            f"will get answers in {n} place{'s' if n != 1 else ''} "
-            f"({_join(silenced)}); everyone else there is ignored."
-        )
-
-    # Pause everywhere.
-    def paused_all(s):
-        return s.get("who.replies", Scope.dm()) == "off" and s.get("who.replies", later) == "off"
-
-    if paused_all(after) and not paused_all(st):
-        own = [gname(g) for g, sc in servers.items() if after.get("who.replies", sc) != "off"]
-        text = (
-            "Pause everywhere: the bot stops answering everyone, in DMs "
-            "and in every server without its own setting, until you "
-            "resume."
-        )
-        if own:
-            text += (
-                f" {_join(own)} set{'s' if len(own) == 1 else ''} "
-                f"its own and keep{'s' if len(own) == 1 else ''} "
-                f"answering."
-            )
-        out.warnings.append(text)
-
-    # A reply cap removed where the bot is large.
-    for key in ("limits.per_day", "limits.per_person_per_day"):
-        lost = []
-        for g, sc in servers.items():
-            if large(g, BIG_FOR_CAPS) and st.cap_layers(key, sc) and not after.cap_layers(key, sc):
-                lost.append(gdesc(g))
-        if (
-            aud_a[0] in ("shared", "any")
-            and st.cap_layers(key, Scope.dm())
-            and not after.cap_layers(key, Scope.dm())
-        ):
-            lost.append("DMs (open to strangers)")
-        ev = Scope.everywhere()
-        unknown = not inf.guilds() or any(inf.members(g) is None for g in inf.guilds())
-        if (
-            (total > BIG_FOR_CAPS or unknown)
-            and not lost
-            and st.cap_layers(key, ev)
-            and not after.cap_layers(key, ev)
-        ):
-            lost.append(
-                "the bot as a whole (size unknown)"
-                if not total
-                else f"the bot as a whole ({total:,} members"
-                + (", some of unknown size)" if unknown else ")")
-            )
-        if lost:
-            out.warnings.append(f"{label(key)}: no limit any more in {_join(lost)}.")
-
-    # Chatty in a big server.
-    big = []
-    for (g, c), sc in [((g, None), sc) for g, sc in servers.items()] + list(channels.items()):
-        if not large(g, BIG_FOR_CONVERSATIONAL):
-            continue
-        if (
-            after.get("who.replies", sc) == "conversational"
-            and st.get("who.replies", sc) != "conversational"
-        ):
-            if c:
-                n = look(c)
-                cname = (n if str(n).startswith("#") else f"#{n}") if n else f"channel {c}"
-                big.append(f"{cname} in {gdesc(g)}")
-            else:
-                big.append(gdesc(g))
-    if big:
-        out.warnings.append(
-            f"Chatty in {_join(big)}: anyone the bot answers there can keep "
-            f"talking to it for 2 minutes without @mentioning it."
-        )
-
-    # Replies in a row to other bots.
-    def botx(s, sc):
+    def botx(self, s, sc):
         lim = s.get("who.bot_exchange_limit", sc)
         return s.get("who.bots", sc) != "ignore" and (lim is None or lim > BOT_EXCHANGE_RISKY)
 
-    loose = [
-        n
-        for n, sc in [("Defaults", Scope.everywhere())]
-        + [(gname(g), sc) for g, sc in servers.items()]
-        if botx(after, sc) and not botx(st, sc)
-    ]
-    if loose:
-        out.warnings.append(
-            f"Two bots can keep answering each other in "
-            f"{_join(loose)} with no limit (or more than "
-            f"{BOT_EXCHANGE_RISKY} in a row), each answer "
-            f"a Muse turn."
-        )
-
-    # Notes.
-    def allow_ineffective(s):
+    def allow_ineffective(self, s):
         r = s.resolve(Scope.dm())
         return (
             r["who.replies"] != "off"
@@ -3316,13 +3267,239 @@ def assess(st, changes, info=None, names=None, named=()):
             and bool(r["who.allow"])
         )
 
-    if allow_ineffective(after) and not allow_ineffective(st):
-        out.notes.append(
-            "Only answer these people does not let anyone DM "
-            "the bot while Who can DM it is Only you; choose "
-            "You and people you pick for that."
-        )
-    return out
+    def dm_audience(self):
+        # DMs open to more people.
+        self.aud_b, self.aud_a = _dm_audience(self.st), _dm_audience(self.after)
+        grew = _audience_grew(self.aud_b, self.aud_a)
+        if isinstance(grew, set) and self.named:
+            grew = grew - {str(n) for n in self.named} or None
+        if grew is True and self.aud_a[0] == "any":
+            self.out.warnings.append(
+                "Anyone on Discord, strangers included, can DM "
+                "the bot and get answers. Each answer costs a "
+                "Muse turn."
+            )
+        elif grew is True:
+            self.out.warnings.append(
+                "Anyone who shares a server with the bot can DM it and get answers, not only you."
+            )
+        elif grew:
+            self.out.warnings.append(
+                f"{people_text(sorted(grew), self.look)} can DM the bot and get answers."
+            )
+
+    def bot_dm_access(self):
+        # Other bots in DMs.
+
+        if self.bot_dms(self.after) and not self.bot_dms(self.st):
+            self.out.warnings.append(
+                "Other bots can DM the bot and get answers; two "
+                "bots can keep answering each other, each "
+                "answer a Muse turn."
+            )
+
+    def memory_access(self):
+        # Memory: anything it remembers.
+
+        newly = [
+            g
+            for g, sc in self.servers.items()
+            if self.mem(self.after, sc) and not self.mem(self.st, sc)
+        ]
+        if newly or (self.mem(self.after, self.later) and not self.mem(self.st, self.later)):
+            places = [self.gdesc(g) for g in newly] or ["servers it joins later"]
+            big = [g for g in newly if self.large(g, BIG_FOR_MEMORY)]
+            text = (
+                f"In {_join(places)}, replies may draw on anything it "
+                f"remembers about you (your job, location, finances and "
+                f"other saved memory), and anyone there can ask the bot "
+                f"about you."
+            )
+            if big:
+                text = (
+                    f"More than {BIG_FOR_MEMORY} members (or size unknown): "
+                    f"{_join(self.gdesc(g) for g in big)}. " + text
+                )
+            self.out.warnings.append(text)
+        if (
+            self.aud_a[0] in ("shared", "any")
+            and self.mem(self.after, Scope.dm())
+            and not (self.aud_b[0] in ("shared", "any") and self.mem(self.st, Scope.dm()))
+        ):
+            self.out.warnings.append(
+                "People who DM the bot, strangers included, may "
+                "get replies drawing on anything it remembers "
+                "about you."
+            )
+
+    def generation_access(self):
+        # Image and video generation.
+        scopes: dict[tuple[str, ...], Scope] = {(g,): sc for g, sc in self.servers.items()}
+        scopes[("DMs",)] = Scope.dm()
+        scopes[("later",)] = self.later
+        for (g, c), sc in self.channels.items():
+            scopes[(g, c)] = sc
+
+        everyone, uncapped = [], []
+        for k, sc in scopes.items():
+            wb, ub = self.media(self.st, sc)
+            wa, ua = self.media(self.after, sc)
+            if wa == "everyone" and wb != "everyone":
+                everyone.append(self.where(k))
+            if ua and not ub:
+                uncapped.append(self.where(k))
+        if everyone:
+            self.out.warnings.append(
+                f"Anyone in {_join(everyone)} can ask for "
+                f"generated images and video. Generation "
+                f"can cost real money."
+            )
+        if uncapped:
+            self.out.warnings.append(
+                f"Generations per day: more than "
+                f"{MEDIA_PER_DAY_RISKY} (or no limit) for people other "
+                f"than you in {_join(uncapped)}. Generation can cost real "
+                f"money."
+            )
+
+    def restricted_audience(self):
+        # Only answer these people: newly limiting places.
+        allow_scopes = [(self.gname(g), sc) for g, sc in self.servers.items()] + [
+            ("servers it joins later", self.later)
+        ]
+        if self.aud_b[0] != "none":  # DMs answered someone besides the owners
+            allow_scopes.append(("DMs", Scope.dm()))
+        silenced, who = [], None
+        for name, sc in allow_scopes:
+            a = self.after.get("who.allow", sc)
+            if isinstance(a, list) and self.st.get("who.allow", sc) == "everyone":
+                silenced.append(name)
+                who = who or a
+        if silenced:
+            n = len(silenced)
+            self.out.warnings.append(
+                f"Only {people_text(who, self.look) if who else 'nobody'} and you "
+                f"will get answers in {n} place{'s' if n != 1 else ''} "
+                f"({_join(silenced)}); everyone else there is ignored."
+            )
+
+    def global_pause(self):
+        # Pause everywhere.
+
+        if self.paused_all(self.after) and not self.paused_all(self.st):
+            own = [
+                self.gname(g)
+                for g, sc in self.servers.items()
+                if self.after.get("who.replies", sc) != "off"
+            ]
+            text = (
+                "Pause everywhere: the bot stops answering everyone, in DMs "
+                "and in every server without its own setting, until you "
+                "resume."
+            )
+            if own:
+                text += (
+                    f" {_join(own)} set{'s' if len(own) == 1 else ''} "
+                    f"its own and keep{'s' if len(own) == 1 else ''} "
+                    f"answering."
+                )
+            self.out.warnings.append(text)
+
+    def reply_caps(self):
+        # A reply cap removed where the bot is large.
+        for key in ("limits.per_day", "limits.per_person_per_day"):
+            lost = []
+            for g, sc in self.servers.items():
+                if (
+                    self.large(g, BIG_FOR_CAPS)
+                    and self.st.cap_layers(key, sc)
+                    and not self.after.cap_layers(key, sc)
+                ):
+                    lost.append(self.gdesc(g))
+            if (
+                self.aud_a[0] in ("shared", "any")
+                and self.st.cap_layers(key, Scope.dm())
+                and not self.after.cap_layers(key, Scope.dm())
+            ):
+                lost.append("DMs (open to strangers)")
+            ev = Scope.everywhere()
+            unknown = not self.inf.guilds() or any(
+                self.inf.members(g) is None for g in self.inf.guilds()
+            )
+            if (
+                (self.total > BIG_FOR_CAPS or unknown)
+                and not lost
+                and self.st.cap_layers(key, ev)
+                and not self.after.cap_layers(key, ev)
+            ):
+                lost.append(
+                    "the bot as a whole (size unknown)"
+                    if not self.total
+                    else f"the bot as a whole ({self.total:,} members"
+                    + (", some of unknown size)" if unknown else ")")
+                )
+            if lost:
+                self.out.warnings.append(f"{label(key)}: no limit any more in {_join(lost)}.")
+
+    def server_conversations(self):
+        # Chatty in a big server.
+        big = []
+        for (g, c), sc in [((g, None), sc) for g, sc in self.servers.items()] + list(
+            self.channels.items()
+        ):
+            if not self.large(g, BIG_FOR_CONVERSATIONAL):
+                continue
+            if (
+                self.after.get("who.replies", sc) == "conversational"
+                and self.st.get("who.replies", sc) != "conversational"
+            ):
+                if c:
+                    n = self.look(c)
+                    cname = (n if str(n).startswith("#") else f"#{n}") if n else f"channel {c}"
+                    big.append(f"{cname} in {self.gdesc(g)}")
+                else:
+                    big.append(self.gdesc(g))
+        if big:
+            self.out.warnings.append(
+                f"Chatty in {_join(big)}: anyone the bot answers there can keep "
+                f"talking to it for 2 minutes without @mentioning it."
+            )
+
+    def bot_conversations(self):
+        # Replies in a row to other bots.
+
+        loose = [
+            n
+            for n, sc in [("Defaults", Scope.everywhere())]
+            + [(self.gname(g), sc) for g, sc in self.servers.items()]
+            if self.botx(self.after, sc) and not self.botx(self.st, sc)
+        ]
+        if loose:
+            self.out.warnings.append(
+                f"Two bots can keep answering each other in "
+                f"{_join(loose)} with no limit (or more than "
+                f"{BOT_EXCHANGE_RISKY} in a row), each answer "
+                f"a Muse turn."
+            )
+
+    def notes(self):
+        # Notes.
+
+        if self.allow_ineffective(self.after) and not self.allow_ineffective(self.st):
+            self.out.notes.append(
+                "Only answer these people does not let anyone DM "
+                "the bot while Who can DM it is Only you; choose "
+                "You and people you pick for that."
+            )
+
+
+def assess(st, changes, info=None, names=None, named=()):
+    """Assess newly introduced risks in effective settings, including undo.
+
+    Caller-supplied server sizes and names describe the same snapshot for
+    every policy. Unknown sizes are treated conservatively.
+    """
+    return ChangeAssessment(st, changes, info, names, named).run()
 
 
 # ---------------------------------------------------------------------------
@@ -3342,7 +3519,7 @@ class Watcher:
 
     def _signature(self):
         out = []
-        for p in [self.config_path, self.overlay_path] + server_config_paths(self.config_path):
+        for p in [self.config_path, self.overlay_path, *server_config_paths(self.config_path)]:
             try:
                 s = os.stat(p)
                 out.append((p, s.st_mtime_ns, s.st_size, s.st_ino))

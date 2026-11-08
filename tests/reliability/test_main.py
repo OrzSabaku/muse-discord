@@ -52,7 +52,7 @@ def run(scenario):
         try:
             _results[scenario] = json.loads(last)
         except ValueError:
-            raise AssertionError(out + err)
+            raise AssertionError(out + err) from None
     return _results[scenario]
 
 

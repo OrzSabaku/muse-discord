@@ -1,9 +1,21 @@
 """Monitor-authored eligibility for original, text-only owner DMs."""
 
+from dataclasses import dataclass
+
 from .policy import LEVELS
 
 
-def card(message, fragments, *, dm, owner, from_bot, level):
+@dataclass
+class DMOrigin:
+    dm: bool
+    owner: bool
+    from_bot: bool
+
+
+def card(message, fragments, *, origin, level):
+    dm = origin.dm
+    owner = origin.owner
+    from_bot = origin.from_bot
     direct = all(
         not m.get("attachments")
         and not m.get("message_reference")

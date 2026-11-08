@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness as H
+
 from muse_discord import settings_ui as UI
 
 MS = H.MS
@@ -181,8 +182,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         MS.apply(
             self.ctx.cfg,
             [MS.Change(MS.Place.server(H.G1), "style.length", "detailed")],
-            H.OWNER,
-            role="owner",
+            actor=MS.WriteActor(by=H.OWNER, role="owner"),
         )
         with self.assertRaises(MS.SettingsError):
             self.act("save")
@@ -206,8 +206,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         MS.apply(
             self.ctx.cfg,
             [MS.Change(MS.Place.server(H.G1), "style.length", "brief")],
-            H.OWNER,
-            role="owner",
+            actor=MS.WriteActor(by=H.OWNER, role="owner"),
         )
         with self.assertRaises(MS.SettingsError):
             self.act("undo")

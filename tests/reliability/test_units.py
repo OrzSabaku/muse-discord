@@ -9,21 +9,22 @@ import os
 import queue as pyqueue
 import sys
 import unittest
+from pathlib import Path
 from unittest import mock
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import signed  # noqa: E402
-import monitor_harness as H  # noqa: E402
+import monitor_harness as H
+from common import signed
 from monitor_harness import (
     BOT,
-    OWNER,
     G1,
-    msg,
-    chan,
-    sf,  # noqa: E402
+    OWNER,
     HTTPErr,
+    chan,
+    msg,
+    sf,
 )
 
 
@@ -42,7 +43,9 @@ class F2BurstLedger(unittest.TestCase):
         msgs = [msg("C1", "U1", c, mention=True) for c in contents]
         for m in msgs:
             mod.record_history(st, "C1", [m])
-        mod.stage_trigger(st, msgs[0], "Srv #general", G1, "mention")
+        mod.stage_trigger(
+            st, msgs[0], "Srv #general", "mention", place=mod.MessagePlace(guild_id=G1)
+        )
         for m in msgs[1:]:
             mod.classify_message(st, m, "Srv #general", G1)
         q = []
@@ -64,7 +67,11 @@ class F2BurstLedger(unittest.TestCase):
         self.assertEqual(
             ledger(mod).get(q2["id"], {}).get("status"), "queued", "fragment ledgered at enqueue"
         )
-        mod._settle(st, {"reply_to": q3["id"], "channel_id": "C1"}, "replied", replied=True)
+        mod._settle(
+            st,
+            {"reply_to": q3["id"], "channel_id": "C1"},
+            outcome=mod.Settlement(status="replied", replied=True),
+        )
         for m in (q1, q2, q3):
             self.assertEqual(ledger(mod)[m["id"]]["status"], "replied")
         self.assertEqual(self._sweep(mod, st, [q1, q2, q3]), [])
@@ -72,13 +79,13 @@ class F2BurstLedger(unittest.TestCase):
     def test_silent_item_naming_a_fragment_settles_burst(self):
         mod = H.load_monitor()
         st = new_state(mod)
-        (q1, q2, q3), q = self._burst(mod, st, ["a", "b", "c"])
+        (q1, q2, q3), _q = self._burst(mod, st, ["a", "b", "c"])
         mod._settle(
             st,
             {"reply_to": q2["id"], "channel_id": "C1"},
-            "skipped",
-            "no reply (worker's call)",
-            replied=True,
+            outcome=mod.Settlement(
+                status="skipped", reason="no reply (worker's call)", replied=True
+            ),
         )
         self.assertEqual(ledger(mod)[q3["id"]]["status"], "skipped")
         self.assertEqual(self._sweep(mod, st, [q1, q2, q3]), [])
@@ -102,7 +109,7 @@ class F4GuildAllowlist(unittest.TestCase):
         mod.api.routes["/channels/C9"] = {"id": "C9", "guild_id": "G2", "name": "x", "type": 0}
         inbox = pyqueue.Queue()
         inbox.put(msg("C9", "U1", "hi", mention=True, gid="G2", age=0))
-        mentions, dms = mod.drain_gateway(st, inbox, {})
+        mentions, _dms = mod.drain_gateway(st, inbox, {})
         self.assertEqual(mentions, [])
         self.assertFalse(st.get("pending"))
         self.assertNotIn("/channels/C9", mod.api.calls)
@@ -284,12 +291,23 @@ class SendDeletedReplyTarget(unittest.TestCase):
             return {"id": "1"}
 
         with mock.patch.object(mod, "discord_request", send):
-            mod.send_reply_with_files("123456789012345678", "hi", [(path, "a.png")], reply_to, "n2")
+            mod.send_reply_with_files(
+                "123456789012345678",
+                "hi",
+                [(path, "a.png")],
+                reply_to,
+                delivery=mod.DeliveryOptions(nonce="n2"),
+            )
         return seen[-1]
 
     def test_reply_reference_tolerates_missing_target(self):
         mod = H.load_monitor()
-        mod.send_reply("123456789012345678", "hi", "223456789012345678", nonce="n1")
+        mod.send_reply(
+            "123456789012345678",
+            "hi",
+            "223456789012345678",
+            delivery=mod.DeliveryOptions(nonce="n1"),
+        )
         data = mod.api.posts[-1][1]
         self.assertEqual(
             data["message_reference"],
@@ -360,7 +378,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
             self.assertEqual(json.load(f), [])
         self.assertFalse(
             os.path.exists(mod.OUTBOX_PROCESSING_FILE)
-            and json.load(open(mod.OUTBOX_PROCESSING_FILE))
+            and json.loads(Path(mod.OUTBOX_PROCESSING_FILE).read_text())
         )
 
 

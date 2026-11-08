@@ -15,7 +15,8 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR as REPO, scratch  # noqa: E402
+from common import MUT_DIR as REPO
+from common import scratch
 
 OLD_CFG = """token_from: /nonexistent
 """
@@ -60,7 +61,9 @@ def run(cfg_text):
         f.write(cfg_text)
     env = dict(os.environ, MUSE_DISCORD_CONFIG=cfg, TMPD=d)
     code = (
-        "import sys; sys.argv_repo = %r\n" % os.path.join(REPO, "src/muse_discord/monitor.py")
+        "import sys; sys.argv_repo = {!r}\n".format(
+            os.path.join(REPO, "src/muse_discord/monitor.py")
+        )
         + PROBE
     )
     r = subprocess.run(

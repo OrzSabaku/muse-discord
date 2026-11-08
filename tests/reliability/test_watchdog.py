@@ -14,7 +14,7 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import FAKE_PROC, copy_watchdog, scratch  # noqa: E402
+from common import FAKE_PROC, copy_watchdog, scratch
 
 
 def scenario(steps, env=None, token_file=True, token_env=None, presence=False, old_log=None):
@@ -101,7 +101,7 @@ class Watchdog(unittest.TestCase):
         self.assertNotIn("OK monitor restarted", out)
 
     def test_log_rotated_not_truncated(self):
-        out, d = _results["log_rotated"]
+        _out, d = _results["log_rotated"]
         with open(os.path.join(d, "monitor.log.1")) as f:
             self.assertIn("the crash we need", f.read())
 

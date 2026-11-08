@@ -5,16 +5,16 @@ import importlib.util
 import io
 import json
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(os.environ.get("MUT_DIR", Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / "src"))
-from muse_discord.discord_tools.messages import format_message, split_message  # noqa: E402 (local import path bootstrap)
 from muse_discord.discord_tools.media import MediaTools  # noqa: E402 (local import path bootstrap)
+from muse_discord.discord_tools.messages import format_message, split_message  # noqa: E402 (local import path bootstrap)
 from muse_discord.discord_tools.state import read_state  # noqa: E402 (local import path bootstrap)
 from muse_discord.discord_tools.tools import MessageTools, PartialSendError  # noqa: E402 (local import path bootstrap)
 

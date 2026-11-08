@@ -28,11 +28,8 @@ class Tool(unittest.TestCase):
             td.CALLS.append(("POST", path, payload)) or {"id": "1"}
         )
         td.CALLS.clear()
-        with contextlib.redirect_stdout(io.StringIO()):
-            try:
-                td.D.main(["discord-api.py", *td.SERVER, "thread", td.GEN_CH, *args])
-            except SystemExit:
-                pass
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.suppress(SystemExit):
+            td.D.main(["discord-api.py", *td.SERVER, "thread", td.GEN_CH, *args])
         self.assertFalse([c for c in td.CALLS if c[0] == "POST"], "the thread was posted")
 
     def test_thread_text_with_a_token_after_a_title(self):
@@ -65,11 +62,12 @@ class Upload(ts.tb.Base):
             opened.append(a)
             raise OSError("sent")
 
-        with mock.patch.object(m, "discord_request", urlopen), quiet():
-            try:
-                m.send_reply_with_files(CH, "see " + TOKEN[:30], [(half, "half.txt")])
-            except m.SecretBlocked, OSError:
-                pass
+        with (
+            mock.patch.object(m, "discord_request", urlopen),
+            quiet(),
+            contextlib.suppress(m.SecretBlocked, OSError),
+        ):
+            m.send_reply_with_files(CH, "see " + TOKEN[:30], [(half, "half.txt")])
         self.assertEqual(opened, [], "the upload was sent")
 
 

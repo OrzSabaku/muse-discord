@@ -4,9 +4,11 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import sqlite3
 import sys
+from pathlib import Path
+
+MAX_ARGUMENT_BYTES = 64 * 1024
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
@@ -36,14 +38,14 @@ def main(argv=None):
             broker = Broker(ROOT, os.environ.get("MUSE_DISCORD_CONFIG"))
             if args.command == "plan":
                 raw = sys.stdin.read(65537) if args.arguments == "-" else args.arguments
-                if len(raw.encode()) > 65536:
+                if len(raw.encode()) > MAX_ARGUMENT_BYTES:
                     raise Refused("INVALID_ARGUMENTS")
                 result = broker.plan(args.for_id, args.nonce, args.app, args.tool, json.loads(raw))
             else:
                 receipt = args.receipt
                 if receipt == "-":
                     receipt = sys.stdin.read(65537)
-                if receipt is not None and len(receipt.encode()) > 65536:
+                if receipt is not None and len(receipt.encode()) > MAX_ARGUMENT_BYTES:
                     raise Refused("INVALID_APPROVAL")
                 result = broker.execute(
                     args.for_id,

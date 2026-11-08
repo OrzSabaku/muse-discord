@@ -60,8 +60,6 @@ package config.yaml (../config.yaml relative to this file, or
 MUSE_DISCORD_CONFIG), read through muse_settings.py. The token is never printed.
 """
 
-from typing import Any
-
 import hmac
 import json
 import os
@@ -70,6 +68,7 @@ import sqlite3
 import sys
 import urllib.parse
 import uuid
+from typing import Any
 
 PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GENERATED_DIR = os.path.join(PACKAGE_DIR, "generated")
@@ -78,8 +77,13 @@ OWNER_ITEMS_FILE = os.path.join(PACKAGE_DIR, "owner_items.json")
 DM_TYPES = (1, 3)  # DM, group DM
 sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
 from muse_discord import secret_scan as SCAN  # noqa: E402
-from muse_discord.discord_tools.tools import MessageTools, PartialSendError  # noqa: E402
 from muse_discord.discord_tools.media import MediaTools  # noqa: E402
+from muse_discord.discord_tools.tools import MessageTools, PartialSendError  # noqa: E402
+
+FORUM_REQUIRED_ARGUMENTS = 3  # channel, title, content; optional upload follows
+HISTORY_REQUIRED_ARGUMENTS = 2  # channel, limit; optional before-id follows
+BINDING_OPTION_ARGUMENTS = 2  # --for/--nonce and its value
+
 
 # --for / --nonce from the command line (main), for guard_channel.
 BINDING: dict[str, Any] = {"for": None, "nonce": None, "entry": None, "cmd": None}
@@ -230,24 +234,13 @@ def _live_nonces():
         except OSError, ValueError:
             return None
 
-    def walk(v):
-        if isinstance(v, dict):
-            for k, x in v.items():
-                if k == "nonce" and isinstance(x, str) and x:
-                    out.add(x)
-                else:
-                    walk(x)
-        elif isinstance(v, list):
-            for x in v:
-                walk(x)
-
     here = os.path.dirname(OWNER_ITEMS_FILE)
     for path in [OWNER_DM_NONCES_FILE] + [os.path.join(here, n) for n in FLAT_NONCE_FILES]:
         data = load(path)
         if isinstance(data, dict):
             out |= {v for v in data.values() if isinstance(v, str) and v}
     for path in [OWNER_ITEMS_FILE] + [os.path.join(here, n) for n in RECORD_NONCE_FILES]:
-        walk(load(path))
+        _collect_record_nonces(load(path), out)
     return out
 
 
@@ -287,7 +280,7 @@ def guard_channel(cid):
     try:
         api("GET", f"/channels/{cid}/messages/{mid}")
     except SystemExit:
-        raise SystemExit(f"Refusing: {mid} is not a message in {cid}.")
+        raise SystemExit(f"Refusing: {mid} is not a message in {cid}.") from None
     return ch
 
 
@@ -326,7 +319,7 @@ def bot_id():
 
 
 def _request(method: str, path: str, data: Any = None, files=()) -> Any:
-    from muse_discord.discord_rest import transport, DiscordError
+    from muse_discord.discord_rest import DiscordError, transport
 
     try:
         result = transport(TOKEN, API).request(method, path, data, files=files, timeout=TIMEOUT)
@@ -432,7 +425,7 @@ def cmd_thread(args):
     inside the package's generated/ dir can be attached.
     """
     forum_id, title, text = snowflake(args[0]), args[1], args[2]
-    upload = generated_file(args[3]) if len(args) > 3 else None
+    upload = generated_file(args[3]) if len(args) > FORUM_REQUIRED_ARGUMENTS else None
     blob = ""
     if upload:  # what the file holds is posted too
         with open(upload, "rb") as f:
@@ -451,7 +444,7 @@ def cmd_thread(args):
     else:
         t = api("POST", f"/channels/{forum_id}/threads", payload)
     print(f"created thread {t['id']} '{t.get('name')}'")
-    if len(args) > 3:
+    if len(args) > FORUM_REQUIRED_ARGUMENTS:
         # A forum thread's starter message shares the thread's id; fetch
         # it back so the printed line proves the attachment really landed.
         m = api("GET", f"/channels/{t['id']}/messages/{t['id']}")
@@ -533,7 +526,7 @@ def _json_tool(action):
 def cmd_get_messages(args):
     """get-messages <channel_id> [limit] [before_id] -- JSON history, oldest first."""
     cid = snowflake(args[0])
-    before = snowflake(args[2]) if len(args) > 2 else None
+    before = snowflake(args[2]) if len(args) > HISTORY_REQUIRED_ARGUMENTS else None
     _json_tool(lambda: message_tools().messages(cid, args[1] if len(args) > 1 else 50, before))
 
 
@@ -646,7 +639,7 @@ def main(argv):
     # resolve-channel and list-threads (require_owner_command), and in
     # an owner's DM checked as that DM's nonce too (guard_channel).
     BINDING.update({"for": None, "nonce": None, "entry": None, "cmd": None})
-    while len(args) >= 2 and args[0] in ("--for", "--nonce"):
+    while len(args) >= BINDING_OPTION_ARGUMENTS and args[0] in ("--for", "--nonce"):
         BINDING[args[0][2:]] = args[1]
         args = args[2:]
     if not args or args[0] not in COMMANDS:
@@ -666,6 +659,18 @@ def main(argv):
     require_owner_command(lookup=args[0] in LOOKUPS)
     fn(args[1:])
     return 0
+
+
+def _collect_record_nonces(v, out):
+    if isinstance(v, dict):
+        for k, x in v.items():
+            if k == "nonce" and isinstance(x, str) and x:
+                out.add(x)
+            else:
+                _collect_record_nonces(x, out)
+    elif isinstance(v, list):
+        for x in v:
+            _collect_record_nonces(x, out)
 
 
 if __name__ == "__main__":

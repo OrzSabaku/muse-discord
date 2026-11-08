@@ -7,6 +7,7 @@ as long as the longest one. MUT_DIR = the package tree under test
 import collections
 import contextlib
 import io
+import itertools
 import json
 import os
 import subprocess
@@ -49,7 +50,7 @@ def run(scenario):
         try:
             _results[scenario] = json.loads(last)
         except ValueError:
-            raise AssertionError(out[-3000:] + err[-3000:])
+            raise AssertionError(out[-3000:] + err[-3000:]) from None
     return _results[scenario]
 
 
@@ -61,7 +62,7 @@ def staged_at(r):
 
 
 def max_gap(ts):
-    return max((b - a for a, b in zip(ts, ts[1:])), default=None)
+    return max((b - a for a, b in itertools.pairwise(ts)), default=None)
 
 
 def polls_by_channel(r):
@@ -114,7 +115,7 @@ class Scenarios(unittest.TestCase):
         r = run("outbox")
         sends = [t for p, t in r["posts"] if p.endswith("/messages")]
         self.assertEqual(len(sends), 2, r["out"])
-        for w, s in zip(r["outbox_written"], sends):
+        for w, s in zip(r["outbox_written"], sends, strict=False):
             self.assertLess(s - w, 0.5, (w, s))
 
 

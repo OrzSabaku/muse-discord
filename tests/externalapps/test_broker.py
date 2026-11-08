@@ -5,20 +5,21 @@ import copy
 import importlib.util
 import json
 import os
-from pathlib import Path
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 
 import yaml
 
 ROOT = Path(os.environ.get("MUT_DIR", Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(ROOT / "src"))
+from test_policy import policy  # noqa: E402 (local import path bootstrap)
+
 from muse_discord.external_apps.broker import Broker, store  # noqa: E402 (local import path bootstrap)
 from muse_discord.external_apps.policy import Refused, canonical  # noqa: E402 (local import path bootstrap)
-from test_policy import policy  # noqa: E402 (local import path bootstrap)
 
 OWNER = "100000000000000001"
 ITEM = "300000000000000001"

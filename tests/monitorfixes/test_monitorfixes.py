@@ -30,12 +30,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 from settings_harness import (  # noqa: E402 (local import path bootstrap)
     BOT,
     CH,
+    EPOCH,
     G1,
-    OTHER_BOT,  # noqa: E402
+    OTHER_BOT,
     OWNER,
     U1,
     U2,
-    EPOCH,
     HTTPErr,
     bump,
     dmsg,
@@ -138,7 +138,7 @@ class DailyCap(Base):
         frag = gmsg(U1, "and a detail", age=599)
         self.stage(second)
         self.assertIsNone(self.stage(frag)[0])  # folded into the burst
-        q, out = self.flush()
+        q, _out = self.flush()
         self.assertEqual(q, [])
         self.assertEqual(self.st["pending"], {})  # dropped, not retrying
         for mid in (second["id"], frag["id"]):
@@ -195,7 +195,7 @@ class DailyCap(Base):
         self.flush()
         capped = gmsg(U2, "@muse two", mention=True)
         self.stage(capped)
-        q, out = self.flush()
+        q, _out = self.flush()
         self.assertEqual(q, [])
         self.assertEqual(self.st["pending"], {})
         self.assertEqual(self.ledger(capped["id"])["status"], "skipped")
@@ -379,7 +379,7 @@ class NewThreads(Base):
 
     def test_old_threads_history_is_not_new(self):
         # Created long before the monitor started: seeded at its newest.
-        tid, starter, mention = self.setup_thread(time.time() - 3600)
+        tid, _starter, mention = self.setup_thread(time.time() - 3600)
         self.m.MONITOR_STARTED = time.time() - 60
         self.refresh()
         self.assertEqual(self.st["last_seen"][tid], mention["id"])

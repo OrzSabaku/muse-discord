@@ -15,6 +15,7 @@ sys.path.insert(
 )
 import harness as H
 from test_native import interaction
+
 from muse_discord import discord_connection as DC
 
 
@@ -173,11 +174,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
             with patch.object(DC.Connection, "start", new=AsyncMock(side_effect=failure)):
                 await DC.run(
                     "dummy",
-                    self.inbox,
-                    status,
-                    lambda: self.ctx,
-                    lambda *a: None,
-                    33281,
+                    DC.Connection(self.inbox, status, lambda: self.ctx, lambda *a: None, 33281),
                 )
             self.assertFalse(status["connected"])
             self.assertTrue(status["wake"].is_set())
@@ -202,8 +199,9 @@ class Connection(unittest.IsolatedAsyncioTestCase):
     async def test_real_discord_dispatch_routes_serialized_select_and_acknowledges(
         self,
     ):
-        from discord.webhook.async_ import async_context
         from unittest.mock import MagicMock
+
+        from discord.webhook.async_ import async_context
 
         await self.client._async_setup_hook()
         await self.client.setup_hook()

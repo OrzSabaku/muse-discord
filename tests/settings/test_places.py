@@ -14,7 +14,7 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR, scratch  # noqa: E402
+from common import MUT_DIR, scratch
 
 G1, CH, CH2, CAT = (
     "500000000000000001",
@@ -54,8 +54,13 @@ class Places(unittest.TestCase):
 
     def cli(self, *args):
         r = subprocess.run(
-            [sys.executable, os.path.join(MUT_DIR, "bin", "settings.py"), "--config", self.cfg]
-            + list(args),
+            [
+                sys.executable,
+                os.path.join(MUT_DIR, "bin", "settings.py"),
+                "--config",
+                self.cfg,
+                *list(args),
+            ],
             capture_output=True,
             text=True,
             timeout=60,

@@ -336,7 +336,7 @@ everywhere:
 def monitor_owners(cfg):
     """Import monitor.py from the tree under test against cfg (the
     settings harness way) and return the owners it loaded."""
-    from settings_harness import load_monitor  # noqa: E402
+    from settings_harness import load_monitor
 
     with open(cfg) as f:
         mod = load_monitor(f.read())
@@ -399,7 +399,7 @@ class OwnerlessServer(unittest.TestCase):
     nobody there until an owner chooses When it answers for it."""
 
     def test_quiet_where_no_owner_is(self):
-        from settings_harness import G1, G2, CH_G2, OWNER, U1, gmsg, load_monitor, quiet, state
+        from settings_harness import CH_G2, G1, G2, OWNER, U1, gmsg, load_monitor, quiet, state
 
         base = f'version: 1\nowners: ["{OWNER}"]\n'
         mod = load_monitor(base)
@@ -451,7 +451,7 @@ class OwnerlessServer(unittest.TestCase):
     def test_lost_state_keeps_the_gate(self):
         """With state.json gone, every server is checked again: one no
         owner is in stays quiet."""
-        from settings_harness import G1, G2, CH_G2, OWNER, U1, gmsg, load_monitor, quiet
+        from settings_harness import CH_G2, G1, G2, OWNER, U1, gmsg, load_monitor, quiet
 
         mod = load_monitor(f'version: 1\nowners: ["{OWNER}"]\n')
         mod.api.members[(G1, OWNER)] = []
@@ -467,12 +467,12 @@ class OwnerChecks(unittest.TestCase):
     def test_failing_checks_do_not_starve_the_others(self):
         """Servers whose owner check keeps failing back off, so the
         others (the owner's own new server here) still get checked."""
-        from settings_harness import HTTPErr, OWNER, load_monitor, quiet
+        from settings_harness import OWNER, HTTPErr, load_monitor, quiet
 
         mod = load_monitor(f'version: 1\nowners: ["{OWNER}"]\n')
         bad = [str(610000000000000000 + i) for i in range(5)]
         good = "690000000000000001"
-        guilds = {g: {"name": g} for g in bad + [good]}
+        guilds = {g: {"name": g} for g in [*bad, good]}
         st = mod.load_state()
         real_get = mod.api_get
 

@@ -10,8 +10,8 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import test_proactive as tp  # noqa: E402
-from settings_harness import HTTPErr, U1, sf  # noqa: E402
+import test_proactive as tp
+from settings_harness import U1, HTTPErr, sf
 
 HOUR = 3600
 
@@ -27,7 +27,7 @@ def dmc(i):
 class Audit(tp.Base):
     def people(self, n, age):
         for i in range(n):
-            self.m.DM_CHANNELS[dmc(i)] = "p%d" % i
+            self.m.DM_CHANNELS[dmc(i)] = f"p{int(i)}"
             self.dmed(uid(i), dmc(i), age=age)
 
     def test_blocked_person_is_not_dmed_again(self):

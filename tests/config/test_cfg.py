@@ -13,7 +13,7 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR, scratch  # noqa: E402
+from common import MUT_DIR, scratch
 
 PROBE = r"""
 import sys, json
@@ -50,7 +50,7 @@ def run(name, yaml_text):
     if p.returncode != 0:
         raise AssertionError(f"case {name} crashed:\n{p.stdout}{p.stderr}")
     lines = p.stdout.splitlines()
-    data = json.loads([ln for ln in lines if ln.startswith("JSON")][0][4:])
+    data = json.loads(next(ln for ln in lines if ln.startswith("JSON"))[4:])
     warnings = [ln for ln in lines if ln.startswith("WARNING")]
     return data, warnings, lines
 
@@ -87,7 +87,7 @@ class Config(unittest.TestCase):
     def test_zeros_out_of_range_and_garbage(self):
         """Explicit zeros: honored where meaningful (caps), clamped where
         not (no hot loops)."""
-        d, w, _ = run(
+        d, _w, _ = run(
             "zeros",
             """engine:
   rest_poll_seconds: 0
@@ -118,7 +118,7 @@ everywhere:
         self.check("DAILY_REPLY_CAP", d["DAILY_REPLY_CAP"], 0)
         self.check("PER_USER_DAILY_CAP", d["PER_USER_DAILY_CAP"], 0)
         # Out of range above (Discord's 2000-character limit) / garbage.
-        d, w, _ = run(
+        d, _w, _ = run(
             "range",
             """engine:
   rest_poll_seconds: 45

@@ -40,12 +40,7 @@ def shape_problems(item: object) -> list[str]:
         return ["not a JSON object"]
     item = cast(dict[object, object], item)
     errors: list[str] = []
-    for field in ID_FIELDS:
-        value = item.get(field)
-        if field != "channel_id" and value in (None, ""):
-            continue
-        if not is_snowflake(value):
-            errors.append(f"{field} is not a Discord id")
+    errors.extend(_id_problems(item))
     if item.get("text") is not None and not isinstance(item["text"], str):
         errors.append("text is not a string")
     for field in ("parts", "reactions", "attachments", "remember"):
@@ -92,3 +87,14 @@ def content_problem(item: Reply, *, has_text: bool | None = None) -> str | None:
         "",
     )
     return "nothing to send: no text, parts, or reactions, and not silent: true" + hint
+
+
+def _id_problems(item: dict[object, object]) -> list[str]:
+    errors: list[str] = []
+    for field in ID_FIELDS:
+        value = item.get(field)
+        if field != "channel_id" and value in (None, ""):
+            continue
+        if not is_snowflake(value):
+            errors.append(f"{field} is not a Discord id")
+    return errors

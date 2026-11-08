@@ -28,6 +28,7 @@ item on its side. Never needs the bot token and never touches the
 network.
 """
 
+import contextlib
 import fcntl
 import json
 import os
@@ -37,7 +38,11 @@ import tempfile
 
 PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(PACKAGE_DIR, "src"))
+
 from muse_discord import muse_watches, reply_protocol  # noqa: E402 (local import path bootstrap)
+
+FILE_ARGUMENT_COUNT = 2  # script name and optional input file
+
 
 OUTBOX = os.path.join(PACKAGE_DIR, "reply_outbox.json")
 LOCK = os.path.join(PACKAGE_DIR, "reply.lock")
@@ -95,11 +100,10 @@ def problems(item):
             'person\'s own message (with its "item")'
         )
     nonce = item.get("owner_dm_nonce")
-    if nonce is not None:
-        if not (isinstance(nonce, str) and NONCE_RE.fullmatch(nonce)):
-            out.append(
-                'owner_dm_nonce: copy the item\'s "owner_dm_nonce" from the wake payload exactly'
-            )
+    if nonce is not None and not (isinstance(nonce, str) and NONCE_RE.fullmatch(nonce)):
+        out.append(
+            'owner_dm_nonce: copy the item\'s "owner_dm_nonce" from the wake payload exactly'
+        )
     out += nonce_problems(item)
     if out:
         return out
@@ -111,30 +115,7 @@ def problems(item):
     return [problem] if problem else []
 
 
-def main():
-    if len(sys.argv) > 2:
-        print("usage: outbox-append.py [FILE]  (JSON on stdin by default)", file=sys.stderr)
-        return 2
-    try:
-        if len(sys.argv) == 2:
-            with open(sys.argv[1]) as f:
-                raw = f.read()
-        else:
-            raw = sys.stdin.read()
-        data = json.loads(raw)
-    except (OSError, ValueError) as e:
-        print(f"error: could not read a JSON item list ({e}); nothing appended", file=sys.stderr)
-        return 1
-    items = data if isinstance(data, list) else [data]
-    errors = [f"item {i + 1}: {p}" for i, item in enumerate(items) for p in problems(item)]
-    if errors:
-        print("error: nothing appended; fix these and run it again:", file=sys.stderr)
-        for e in errors:
-            print(f"  {e}", file=sys.stderr)
-        return 1
-    if not items:
-        print("nothing to append")
-        return 0
+def append_items(items):
     fd = os.open(LOCK, os.O_RDWR | os.O_CREAT, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -161,13 +142,40 @@ def main():
                 json.dump(outbox, f)
             os.replace(tmp, OUTBOX)
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp)
-            except OSError:
-                pass
             raise
     finally:
         os.close(fd)
+
+
+def main():
+    if len(sys.argv) > FILE_ARGUMENT_COUNT:
+        print("usage: outbox-append.py [FILE]  (JSON on stdin by default)", file=sys.stderr)
+        return 2
+    try:
+        if len(sys.argv) == FILE_ARGUMENT_COUNT:
+            with open(sys.argv[1]) as f:
+                raw = f.read()
+        else:
+            raw = sys.stdin.read()
+        data = json.loads(raw)
+    except (OSError, ValueError) as e:
+        print(f"error: could not read a JSON item list ({e}); nothing appended", file=sys.stderr)
+        return 1
+    items = data if isinstance(data, list) else [data]
+    errors = [f"item {i + 1}: {p}" for i, item in enumerate(items) for p in problems(item)]
+    if errors:
+        print("error: nothing appended; fix these and run it again:", file=sys.stderr)
+        for e in errors:
+            print(f"  {e}", file=sys.stderr)
+        return 1
+    if not items:
+        print("nothing to append")
+        return 0
+    code = append_items(items)
+    if code is not None:
+        return code
     missing = sum(1 for item in items if not item.get("item"))
     print(f"appended {len(items)} item(s) to the outbox")
     if missing:

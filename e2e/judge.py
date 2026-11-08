@@ -17,6 +17,7 @@ raises. $CLAUDE_BIN overrides the CLI path (tests use a fake);
 $E2E_CLAUDE_MODEL picks a model.
 """
 
+import contextlib
 import datetime
 import json
 import os
@@ -111,36 +112,36 @@ def render_transcript(scenario, transcript):
 
     lines = []
     for n, msg in enumerate(messages, 1):
-        head = "[%d]" % n
+        head = f"[{int(n)}]"
         ts = _ts(msg.get("ts"))
         if ts is not None and t0 is not None:
-            try:
-                head += " +%ds" % (ts - t0).total_seconds()
-            except TypeError:  # naive vs aware
-                pass
+            with contextlib.suppress(TypeError):  # naive vs aware
+                head += f" +{int((ts - t0).total_seconds())}s"
         head += " " + labels.get(msg.get("author"), str(msg.get("author") or "?"))
         rt = msg.get("reply_to")
         if rt:
-            head += " -> " + ("[%d]" % index[str(rt)] if str(rt) in index else "(earlier message)")
+            head += " -> " + (
+                f"[{int(index[str(rt)])}]" if str(rt) in index else "(earlier message)"
+            )
         if str(msg.get("id")) in tags:
-            head += " (%s)" % tags[str(msg.get("id"))]
+            head += " ({})".format(tags[str(msg.get("id"))])
         if msg.get("thread"):
-            head += " [in thread %s]" % msg["thread"]
+            head += " [in thread {}]".format(msg["thread"])
         text = str(msg.get("content") or "")
         text = re.sub(r"<@!?(\d+)>", mention, text)
         if len(text) > MAX_CONTENT:
             text = text[:MAX_CONTENT] + " [...]"
-        line = head + ": " + (text if text else "(no text)")
+        line = head + ": " + (text or "(no text)")
         if msg.get("attachments"):
             line += "\n    attachments: " + ", ".join(str(a) for a in msg["attachments"])
         lines.append(line)
     if not lines:
         lines.append("(no messages)")
     if dropped:
-        lines.append("(%d later messages not shown)" % dropped)
+        lines.append(f"({int(dropped)} later messages not shown)")
     if transcript.get("converse_turns") is not None:
         lines.append(
-            "SUT turns during the scripted conversation: %s" % transcript["converse_turns"]
+            "SUT turns during the scripted conversation: {}".format(transcript["converse_turns"])
         )
     return "\n".join(lines), who
 
@@ -149,7 +150,7 @@ def build_prompt(scenario, transcript, persona=None):
     if persona is None:
         try:
             with open(PERSONA) as f:
-                persona = re.sub(r"<!--.*?-->\s*", "", f.read(), flags=re.S).strip()
+                persona = re.sub(r"<!--.*?-->\s*", "", f.read(), flags=re.DOTALL).strip()
         except OSError:
             persona = "(persona file missing)"
     rubric = (
@@ -194,15 +195,16 @@ def parse_output(stdout):
         if data.get("is_error"):
             return {
                 "verdict": "error",
-                "reason": "judge run failed: %s"
-                % str(data.get("result") or data.get("subtype"))[:300],
+                "reason": "judge run failed: {}".format(
+                    str(data.get("result") or data.get("subtype"))[:300]
+                ),
             }
         if isinstance(data.get("result"), str):
             text = data["result"]
     found = extract_verdict(text)
     if found:
         return found
-    return {"verdict": "error", "reason": "unparseable judge output: %r" % text.strip()[:300]}
+    return {"verdict": "error", "reason": f"unparseable judge output: {text.strip()[:300]!r}"}
 
 
 def _kill_group(proc):
@@ -250,19 +252,19 @@ def judge(scenario, transcript, timeout=300):
             except OSError as e:
                 return {
                     "verdict": "error",
-                    "reason": "cannot run the claude CLI (%s): %s" % (args[0], e),
+                    "reason": f"cannot run the claude CLI ({args[0]}): {e}",
                 }
             try:
                 out, err = proc.communicate(prompt, timeout=timeout)
             except subprocess.TimeoutExpired:
                 _kill_group(proc)
-                return {"verdict": "error", "reason": "judge timed out after %ss" % timeout}
+                return {"verdict": "error", "reason": f"judge timed out after {timeout}s"}
         if proc.returncode != 0:
             detail = (err or out or "").strip()[-300:]
-            return {"verdict": "error", "reason": "judge exited %s: %s" % (proc.returncode, detail)}
+            return {"verdict": "error", "reason": f"judge exited {proc.returncode}: {detail}"}
         return parse_output(out)
     except Exception as e:
-        return {"verdict": "error", "reason": "judge failed: %s: %s" % (type(e).__name__, e)}
+        return {"verdict": "error", "reason": f"judge failed: {type(e).__name__}: {e}"}
 
 
 if __name__ == "__main__":

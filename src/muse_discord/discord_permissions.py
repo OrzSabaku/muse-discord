@@ -7,15 +7,17 @@ remain in the monitor. Only the SDK model construction is adapted here.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import TYPE_CHECKING, cast
 
 import discord
 
 if TYPE_CHECKING:
+    from discord.types.channel import PermissionOverwrite
+    from discord.types.channel import TextChannel as TextChannelPayload
     from discord.types.guild import Guild as GuildPayload
     from discord.types.member import MemberWithUser
-    from discord.types.channel import TextChannel as TextChannelPayload, PermissionOverwrite
 
 if not (2, 7, 1) <= discord.version_info[:3] < (2, 8, 0):
     raise ImportError("discord.py 2.7.x (>=2.7.1) is required; run uv sync")
@@ -60,37 +62,46 @@ def _member(
     )
 
 
-def guild_permissions(
-    gid: str, roles: Mapping[str, int], owner_id: str | None, uid: str, role_ids: Iterable[str]
-) -> int:
-    guild = _guild(str(gid), str(owner_id or ""), tuple(sorted(roles.items())))
-    return _member(guild, roles, uid, role_ids).guild_permissions.value
+@dataclass(frozen=True)
+class PermissionSnapshot:
+    """Guild identity and roles shared by member and channel permission checks."""
 
+    guild_id: str
+    roles: Mapping[str, int]
+    owner_id: str | None
 
-def channel_permissions(
-    gid: str,
-    roles: Mapping[str, int],
-    owner_id: str | None,
-    uid: str | None,
-    role_ids: Iterable[str],
-    overwrites: Sequence[PermissionOverwrite] | None,
-) -> int:
-    guild = _guild(str(gid), str(owner_id or ""), tuple(sorted(roles.items())))
-    member = _member(guild, roles, uid, role_ids) if uid is not None else guild.default_role
-    channel = discord.TextChannel(
-        guild=guild,
-        state=_STATE,
-        data=cast(
-            "TextChannelPayload",
-            {
-                "id": "1",
-                "type": 0,
-                "name": "",
-                "position": 0,
-                "permission_overwrites": overwrites or [],
-            },
-        ),
-    )
-    # The monitor uses a thread's parent snapshot and separately checks
-    # Send in Threads and private-thread membership.
-    return channel.permissions_for(member).value if member is not None else 0
+    def guild_permissions(self, uid: str, role_ids: Iterable[str]) -> int:
+        guild = _guild(
+            str(self.guild_id), str(self.owner_id or ""), tuple(sorted(self.roles.items()))
+        )
+        return _member(guild, self.roles, uid, role_ids).guild_permissions.value
+
+    def channel_permissions(
+        self,
+        uid: str | None,
+        role_ids: Iterable[str],
+        overwrites: Sequence[PermissionOverwrite] | None,
+    ) -> int:
+        guild = _guild(
+            str(self.guild_id), str(self.owner_id or ""), tuple(sorted(self.roles.items()))
+        )
+        member = (
+            _member(guild, self.roles, uid, role_ids) if uid is not None else guild.default_role
+        )
+        channel = discord.TextChannel(
+            guild=guild,
+            state=_STATE,
+            data=cast(
+                "TextChannelPayload",
+                {
+                    "id": "1",
+                    "type": 0,
+                    "name": "",
+                    "position": 0,
+                    "permission_overwrites": overwrites or [],
+                },
+            ),
+        )
+        # The monitor uses a thread's parent snapshot and separately checks
+        # Send in Threads and private-thread membership.
+        return channel.permissions_for(member).value if member is not None else 0

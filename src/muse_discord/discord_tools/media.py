@@ -2,11 +2,17 @@
 
 import hashlib
 import os
-from pathlib import Path
 import re
 import tempfile
+from pathlib import Path
+from typing import override
 from urllib.parse import urlsplit
-from urllib.request import Request, HTTPRedirectHandler, build_opener
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+MAX_EMOJI_CHARACTERS = 16
+MIN_EMOJI_CODEPOINT = 0x2000
+ZERO_WIDTH_JOINER = 0x200D
+EMOJI_VARIATION_SELECTOR = 0xFE0F
 
 MAX_BYTES = 25 * 1024 * 1024
 INLINE_BYTES = 5 * 1024 * 1024
@@ -15,6 +21,7 @@ TWEMOJI = "https://cdn.jsdelivr.net/gh/jdecked/twemoji@15.1.0/assets/72x72"
 
 
 class NoRedirect(HTTPRedirectHandler):
+    @override
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise ValueError("CDN redirects are not allowed.")
 
@@ -130,12 +137,16 @@ class MediaTools:
         else:
             if (
                 not value
-                or len(value) > 16
+                or len(value) > MAX_EMOJI_CHARACTERS
                 or value.isascii()
-                or any(ord(c) < 0x2000 for c in value)
+                or any(ord(c) < MIN_EMOJI_CODEPOINT for c in value)
             ):
                 raise ValueError("Invalid emoji.")
             codes = [ord(c) for c in value]
-            key = "-".join(f"{code:x}" for code in codes if 0x200D in codes or code != 0xFE0F)
+            key = "-".join(
+                f"{code:x}"
+                for code in codes
+                if ZERO_WIDTH_JOINER in codes or code != EMOJI_VARIATION_SELECTOR
+            )
             url, filename = f"{TWEMOJI}/{key}.png", f"emoji-{key}.png"
         return self.download(url, filename, self.package_dir)

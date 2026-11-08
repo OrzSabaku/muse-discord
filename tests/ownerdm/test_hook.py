@@ -20,7 +20,7 @@ import unittest
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import HOOK_RUNTIME, MUT_DIR, scratch  # noqa: E402
+from common import HOOK_RUNTIME, MUT_DIR, scratch
 
 HOOK = os.path.join(MUT_DIR, "hooks", "mention-watch.sh")
 N1, N2 = "a" * 32, "b" * 32
@@ -224,7 +224,7 @@ class OwnerCommandsWakeAlone(_Hook):
         return r.stdout, (json.loads(lines[1]) if lines and lines[0].startswith("WAKE:") else None)
 
     def test_owner_command_wakes_alone_with_its_nonce(self):
-        self.write("reply_queue.json", [item("1")] + self.queue)
+        self.write("reply_queue.json", [item("1"), *self.queue])
         # Owner DMs first, then the owner's command, then the stranger.
         out, p = self.run_hook()
         self.assertEqual(
@@ -243,7 +243,7 @@ class OwnerCommandsWakeAlone(_Hook):
 
     def test_owner_dm_command_gets_its_dm_nonce(self):
         self.write("reply_queue.json", [dict(item("1"), owner_command=True)])
-        out, p = self.run_hook()
+        _out, p = self.run_hook()
         self.assertEqual(p["items"][0].get("owner_command_nonce"), N1)
         self.assertEqual(p["items"][0].get("owner_dm_nonce"), N1)
 
@@ -252,7 +252,7 @@ class OwnerCommandsWakeAlone(_Hook):
         # without a nonce (the tool then refuses to act).
         os.remove(os.path.join(self.pkg, "owner_items.json"))
         self.write("reply_queue.json", self.queue)
-        out, p = self.run_hook()
+        _out, p = self.run_hook()
         self.assertEqual(
             [(i["message_id"], i.get("owner_command_nonce")) for i in p["items"]],
             [(self.OWN, None)],
@@ -263,11 +263,11 @@ class OwnerCommandsWakeAlone(_Hook):
         with open(os.path.join(self.pkg, "owner_items.json"), "w") as f:
             f.write("{broken")
         self.write("reply_queue.json", self.queue)
-        out, p = self.run_hook()
+        _out, p = self.run_hook()
         self.assertEqual([i["message_id"] for i in p["items"]], ["5"])
         self.assertIsNone(self.run_hook()[1])  # 5 is leased; OWN waits
         self.write("owner_items.json", self.items)
-        out, p = self.run_hook()
+        _out, p = self.run_hook()
         self.assertEqual(
             [(i["message_id"], i.get("owner_command_nonce")) for i in p["items"]],
             [(self.OWN, self.C)],
@@ -277,7 +277,7 @@ class OwnerCommandsWakeAlone(_Hook):
         os.remove(self.env["HOOK_STATE"])
         self.write("owner_items.json", {})
         self.write("reply_queue.json", [dict(self.queue[1], queued_at=time.time() - 61)])
-        out, p = self.run_hook()
+        _out, p = self.run_hook()
         self.assertEqual(
             [(i["message_id"], i.get("owner_command_nonce")) for i in p["items"]],
             [(self.OWN, None)],

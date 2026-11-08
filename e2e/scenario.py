@@ -363,7 +363,7 @@ def _validate_settings(s, where):
     | {undo: scope}, each with an optional timeout: a live change
     written the way /settings writes it."""
     _need_map(s, where)
-    _only_keys(s, SETTINGS_OPS + ("value", "scope", "timeout"), where)
+    _only_keys(s, (*SETTINGS_OPS, "value", "scope", "timeout"), where)
     ops = [k for k in SETTINGS_OPS if k in s]
     if len(ops) != 1:
         _fail(where, "needs exactly one of set, reset, undo")
@@ -493,13 +493,13 @@ def _arg_queue_item(v, w, labels, kinds):
     """{label, follow_up?, kind?, from_bot?, owner_command?, settings?}:
     the queue item the fake worker saw for the label's message."""
     _need_map(v, w)
-    _only_keys(v, ("label", "settings") + QUEUE_ITEM_FIELDS, w, required=("label",))
+    _only_keys(v, ("label", "settings", *QUEUE_ITEM_FIELDS), w, required=("label",))
     _label_ref(v["label"], labels, f"{w}.label")
     if len(v) == 1:
         _fail(
             w,
             "needs at least one field to compare ("
-            + ", ".join(QUEUE_ITEM_FIELDS + ("settings",))
+            + ", ".join((*QUEUE_ITEM_FIELDS, "settings"))
             + ")",
         )
     for k in ("follow_up", "from_bot", "owner_command"):
@@ -615,7 +615,7 @@ def _check_config_placeholder(v, where):
         _fail(
             where,
             f"bad placeholder in {v!r}: use exactly one of "
-            + ", ".join("{{%s}}" % p for p in CONFIG_PLACEHOLDERS)
+            + ", ".join(f"{{{{{p}}}}}" for p in CONFIG_PLACEHOLDERS)
             + " as the whole value or key",
         )
 

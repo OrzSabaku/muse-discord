@@ -21,10 +21,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 import monitor_harness as H  # noqa: E402
 from common import (  # noqa: E402 (local import path bootstrap)
     FAKE_PROC,
-    HOOK_RUNTIME as RUNTIME,  # noqa: E402
     MUT_DIR,
     copy_watchdog,
     scratch,
+)
+from common import (  # noqa: E402 (local import path bootstrap)
+    HOOK_RUNTIME as RUNTIME,
 )
 
 V0 = "v1.0.0"
@@ -331,8 +333,8 @@ class Interactions(unittest.TestCase):
         self.assertEqual(seen["path"], "/interactions/9001/tok-en_1/callback")
         self.assertEqual(seen["method"], "POST")
         self.assertEqual(seen["data"], {"type": 7, "data": {}})
-        self.assertTrue(seen["anonymous"])
-        self.assertLess(seen["timeout"], 3)
+        self.assertTrue(seen["options"].anonymous)
+        self.assertLess(seen["options"].timeout, 3)
 
 
 # ---------------------------------------------------------------- watchdog
@@ -583,7 +585,7 @@ updates:
         commits)."""
         with open(os.path.join(MUT_DIR, "docs/UPDATING.md")) as f:
             doc = f.read()
-        blocks = re.findall(r"```bash\n(.*?)```", doc, re.S)
+        blocks = re.findall(r"```bash\n(.*?)```", doc, re.DOTALL)
         find = [b for b in blocks if "ls-remote" in b]
         self.assertEqual(len(find), 1)
         step1 = [b for b in blocks if "fetch --no-tags origin tag" in b]
@@ -705,7 +707,7 @@ class Hook(unittest.TestCase):
         st["handed"][k] -= 21601
         with open(self.state, "w") as f:
             json.dump(st, f)
-        out, err = self.run_hook()
+        out, _err = self.run_hook()
         self.assertTrue(out.startswith("WAKE:"), out)
         out, _ = self.run_hook()
         self.assertTrue(out.startswith("SILENT:"), out)

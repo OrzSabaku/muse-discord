@@ -104,9 +104,12 @@ class Outbox(tb.Base):
         with open(leak, "w") as f:
             f.write("x " + TOKEN)
         opened = []
-        with mock.patch.object(m, "discord_request", lambda *a, **k: opened.append(a)), quiet():
-            with self.assertRaises(m.SecretBlocked):
-                m.send_reply_with_files(CH, "ok", [(leak, "cat.png")])
+        with (
+            mock.patch.object(m, "discord_request", lambda *a, **k: opened.append(a)),
+            quiet(),
+            self.assertRaises(m.SecretBlocked),
+        ):
+            m.send_reply_with_files(CH, "ok", [(leak, "cat.png")])
         self.assertEqual(opened, [])
 
 

@@ -26,19 +26,19 @@ from unittest import mock
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import HOOK_RUNTIME, MUT_DIR, scratch  # noqa: E402
+from common import HOOK_RUNTIME, MUT_DIR, scratch
 from settings_harness import (
     BOT,
     CH,
     CH2,
     CH_G2,
     G1,
-    OTHER_BOT,  # noqa: E402
+    G2,
+    MS,
+    OTHER_BOT,
     OWNER,
     U1,
     U2,
-    G2,
-    MS,
     HTTPErr,
     bump,
     dmsg,
@@ -152,7 +152,11 @@ class Base(unittest.TestCase):
     def queue_msg(self, msg, dm, guild=None):
         q = []
         with quiet():
-            self.assertTrue(self.m.enqueue_message(msg, "x", self.st, q, dm=dm, guild_id=guild))
+            self.assertTrue(
+                self.m.enqueue_message(
+                    msg, "x", self.st, q, context=self.m.QueueContext(dm=dm, guild_id=guild)
+                )
+            )
         self.m.queue_edit(add=q)
         return msg
 
@@ -213,7 +217,7 @@ class Base(unittest.TestCase):
         ]
 
     def apply(self, changes):
-        MS.apply(self.m.cfg_path, changes, OWNER, role="owner")
+        MS.apply(self.m.cfg_path, changes, actor=MS.WriteActor(by=OWNER, role="owner"))
         bump(os.path.join(self.m.tmp, "config.discord.yaml"))
 
     def assert_refused(self):
@@ -566,7 +570,7 @@ class Posting(Base):
 
     def test_quiet_hours(self):
         h = time.gmtime(self.now).tm_hour
-        hours = "%02d:00-%02d:00" % (h, (h + 2) % 24)
+        hours = f"{h:02d}:00-{(h + 2) % 24:02d}:00"
         self.m.PRO.every = lambda key, _e=self.m.PRO.every: (
             hours if key == "proactive.quiet_hours" else _e(key)
         )
@@ -583,7 +587,7 @@ class Posting(Base):
         it on their message (it may hold several people's) moves
         nothing by itself (review K)."""
         h = time.gmtime(self.now).tm_hour
-        hours = "%02d:00-%02d:00" % ((h + 6) % 24, (h + 8) % 24)
+        hours = f"{(h + 6) % 24:02d}:00-{(h + 8) % 24:02d}:00"
         self.m.PRO.every = lambda key, _e=self.m.PRO.every: (
             hours if key == "proactive.quiet_hours" else _e(key)
         )
@@ -922,7 +926,7 @@ class OwnerDmGate(Base):
         dm = dmsg(OWNER, "hey", channel=OWNER_DM)
         dm["id"] = sf(2 * HOUR)  # not a conversation going on
         with quiet():
-            self.m.enqueue_message(dm, "DM", self.st, q, dm=True)
+            self.m.enqueue_message(dm, "DM", self.st, q, context=self.m.QueueContext(dm=True))
         self.m.queue_edit(add=q)
         for it in (
             # An ordinary item posting into the owner's DM, with the

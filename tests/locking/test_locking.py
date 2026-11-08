@@ -14,20 +14,23 @@ import time
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
+from common import signed
 from harness import (
     ARGV,
-    monitor,
-    fresh_pkg,
-    new_state,  # noqa: E402
-    snowflake,
-    msg,
-    read,
-    write,
     capture,
+    fresh_pkg,
+    monitor,
+    msg,
+    new_state,
+    read,
     sent_texts,
+    snowflake,
     typing_calls,
+    write,
 )
-from common import signed  # noqa: E402
 
 m = monitor
 
@@ -139,7 +142,7 @@ def test_concurrent_appends_stress_each_sent_once():
             )
             for _ in ids
         ]
-        for p, i in zip(procs, ids):
+        for p, i in zip(procs, ids, strict=False):
             p.stdin.write(
                 json.dumps(
                     [S(st, {"item": i, "channel_id": "101", "reply_to": i, "text": "r" + i})]
@@ -169,7 +172,7 @@ def test_queue_write_no_resurrect_no_drop():
     x, y, w = snowflake(), snowflake(), snowflake()
     write(m.QUEUE_FILE, [qitem(x), qitem(y)])
     trig = msg()
-    m.stage_trigger(st, trig, "S #c", "G", "mention")
+    m.stage_trigger(st, trig, "S #c", "mention", place=m.MessagePlace(guild_id="G"))
     st["pending"][next(iter(st["pending"]))]["first_seen"] -= 10
 
     def slow_media(_msg):
@@ -209,7 +212,7 @@ def test_queue_stress_threads():
             seen = {q["message_id"] for q in m.load_queue()}
             take = {i for i in seen if int(i) % 2 == 0}
             if take:
-                m.queue_edit(drop=lambda q: q["message_id"] in take)
+                m.queue_edit(drop=lambda q, take=take: q["message_id"] in take)
                 removed.update(take)
             if fin and not take:
                 break
@@ -446,8 +449,12 @@ def test_typing_thread_lifecycle():
 
     try:
         # 1. pending burst types; a burst in enqueue back-off does not
-        m.stage_trigger(st, msg(cid="101", author="U1"), "S #a", "G", "mention")
-        m.stage_trigger(st, msg(cid="103", author="U3"), "S #c", "G", "mention")
+        m.stage_trigger(
+            st, msg(cid="101", author="U1"), "S #a", "mention", place=m.MessagePlace(guild_id="G")
+        )
+        m.stage_trigger(
+            st, msg(cid="103", author="U3"), "S #c", "mention", place=m.MessagePlace(guild_id="G")
+        )
         st["pending"]["103:U3"]["next_try"] = clock.now + 300
         write(m.QUEUE_FILE, [])
         with capture():
@@ -507,9 +514,9 @@ def _drain(st, inbox_items):
         q.put(it)
     chans = {"101": {"name": "c", "guild_id": "G", "guild_name": "S"}}
     with capture():
-        mentions, dms = m.drain_gateway(st, q, chans)
+        mentions, _dms = m.drain_gateway(st, q, chans)
         for mm, cname, gid, kind in mentions:
-            m.stage_trigger(st, mm, cname, gid, kind)
+            m.stage_trigger(st, mm, cname, kind, place=m.MessagePlace(guild_id=gid))
     return mentions
 
 
@@ -568,7 +575,7 @@ def _no_gateway_waits_full_window():
     t = msg(author="U1")
     with capture():
         kind = m.classify_message(st, t, "S #c", "G")
-        m.stage_trigger(st, t, "S #c", "G", kind)
+        m.stage_trigger(st, t, "S #c", kind, place=m.MessagePlace(guild_id="G"))
     entry = st["pending"]["101:U1"]
     entry["first_seen"] -= 4.0
     q = []

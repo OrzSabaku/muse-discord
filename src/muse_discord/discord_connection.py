@@ -5,20 +5,22 @@ forward decoded dispatch events without changing ingestion/dedup semantics.
 Legacy approval/update buttons still use the monitor's interaction worker.
 """
 
-from collections.abc import Callable
-from typing import Any
-
 import asyncio
 import json
 import os
 import time
 import urllib.request
+from collections.abc import Callable
+from typing import Any
 
 import discord
 from discord.ext import tasks
 
 from muse_discord import muse_settings as ms
 from muse_discord import settings_ui
+
+PRESENCE_UPDATE_SECONDS = 5
+AUTHENTICATION_FAILED = 4004
 
 
 class Connection(discord.Client):
@@ -85,7 +87,7 @@ class Connection(discord.Client):
         kind = st.presence_kind if name else ""
         want = (enabled, name, kind)
         now = time.monotonic()
-        if want == self._presence_sent or now - self._presence_at < 5:
+        if want == self._presence_sent or now - self._presence_at < PRESENCE_UPDATE_SECONDS:
             return
         activity = None
         if name:
@@ -127,10 +129,7 @@ class Connection(discord.Client):
         elif event == "RESUMED":
             print("Gateway session resumed.", flush=True)
         elif event == "MESSAGE_CREATE":
-            self.inbox.put(data)
-            self.gateway_status["last_event"] = time.time()
-            if self.gateway_status.get("wake"):
-                self.gateway_status["wake"].set()
+            self.receive_message(data)
         elif event in ("GUILD_CREATE", "GUILD_DELETE"):
             if event == "GUILD_DELETE" and data.get("unavailable"):
                 return
@@ -163,9 +162,18 @@ class Connection(discord.Client):
                 }
             )
         elif event == "INTERACTION_CREATE" and not self.native_settings(data):
-            inbox = self.gateway_status.get("interactions")
-            if inbox is not None:
-                inbox.put(data)
+            self.receive_interaction(data)
+
+    def receive_message(self, data):
+        self.inbox.put(data)
+        self.gateway_status["last_event"] = time.time()
+        if self.gateway_status.get("wake"):
+            self.gateway_status["wake"].set()
+
+    def receive_interaction(self, data):
+        inbox = self.gateway_status.get("interactions")
+        if inbox is not None:
+            inbox.put(data)
 
     @staticmethod
     def native_settings(raw):
@@ -222,15 +230,15 @@ class Connection(discord.Client):
             )
 
 
-async def run(token, inbox, status, context_factory, guard, intents):
-    client = Connection(inbox, status, context_factory, guard, intents)
+async def run(token, client):
+    status = client.gateway_status
     try:
         async with client:
             await client.start(token)
     except discord.LoginFailure:
         status["token_rejected"] = True
     except discord.ConnectionClosed as exc:
-        if exc.code == 4004:
+        if exc.code == AUTHENTICATION_FAILED:
             status["token_rejected"] = True
         else:
             print(

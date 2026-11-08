@@ -17,10 +17,11 @@ Nothing more elaborate: a determined encoder gets past any filter, and
 this one must never alter text it lets through.
 """
 
-from collections.abc import Iterable
-
 import base64
 import re
+from collections.abc import Iterable
+
+MIN_TOKEN_LENGTH = 20
 
 _TOKEN_SHAPE = re.compile(
     r"(?<![A-Za-z0-9_-])([A-Za-z0-9_-]{17,40})\.([A-Za-z0-9_-]{4,10})"
@@ -64,7 +65,7 @@ def find(text: object, token: str | None = None, nonces: Iterable[str] = ()) -> 
         return None
     squashed = _NOT_ALNUM.sub("", text)
     backwards = squashed[::-1]
-    if token and len(token) >= 20:
+    if token and len(token) >= MIN_TOKEN_LENGTH:
         flat, cores, hexed = _token_forms(token)
         if (
             token in text

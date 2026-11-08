@@ -2,10 +2,10 @@
 
 import io
 import os
-from pathlib import Path
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(os.environ.get("MUT_DIR", Path(__file__).resolve().parents[2]))

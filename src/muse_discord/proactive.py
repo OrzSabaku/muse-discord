@@ -66,7 +66,8 @@ import random
 import secrets
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from http import HTTPStatus
 
 VERSION = 1
 KIND = "proactive"
@@ -113,7 +114,7 @@ ASK_SEND_SECS = 10 * 60  # an ask not sent by then is dropped
 def iso(ts):
     if not ts:
         return None
-    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def snowflake_ts(mid):
@@ -126,13 +127,13 @@ def snowflake_ts(mid):
 # -- time ---------------------------------------------------------------------
 def zone(name):
     if not name or str(name).upper() == "UTC":
-        return timezone.utc
+        return UTC
     try:
         from zoneinfo import ZoneInfo
 
         return ZoneInfo(str(name))
     except Exception:
-        return timezone.utc
+        return UTC
 
 
 def parse_hours(text):
@@ -259,7 +260,6 @@ class Proactive:
             f"the bot reaches out to nobody."
         )
         print(f"Proactive: {self._alert}", flush=True)
-        return None
 
     @staticmethod
     def _slot_ok(s):
@@ -405,19 +405,7 @@ class Proactive:
                 return
             people = self.data()["people"]
             p = people.setdefault(uid, {})
-            ts = snowflake_ts(mid) or self.clock()
-            cid = str(meta.get("channel_id") or "")
-            if ts >= p.get("last", 0):
-                p.update(last=ts, last_mid=str(mid), last_cid=cid)
-            seen = p.setdefault("seen", {})  # last message per place
-            if cid and ts > seen.get(cid, 0):
-                seen[cid] = ts
-                for old in sorted(seen, key=seen.get)[:-10]:
-                    del seen[old]
-            if meta.get("dm") and meta.get("channel_id"):
-                p["dm"] = str(meta["channel_id"])
-            if meta.get("author"):
-                p["name"] = str(meta["author"])[:100]
+            self._update_person(mid, meta, p)
             if len(people) > PEOPLE_MAX:
                 for old in sorted(people, key=lambda u: people[u].get("last", 0))[
                     : len(people) - PEOPLE_MAX
@@ -426,6 +414,21 @@ class Proactive:
             self._dirty = True
         except Exception as e:
             print(f"Proactive note error: {e}", flush=True)
+
+    def _update_person(self, mid, meta, p):
+        ts = snowflake_ts(mid) or self.clock()
+        cid = str(meta.get("channel_id") or "")
+        if ts >= p.get("last", 0):
+            p.update(last=ts, last_mid=str(mid), last_cid=cid)
+        seen = p.setdefault("seen", {})  # last message per place
+        if cid and ts > seen.get(cid, 0):
+            seen[cid] = ts
+            for old in sorted(seen, key=seen.get)[:-10]:
+                del seen[old]
+        if meta.get("dm") and meta.get("channel_id"):
+            p["dm"] = str(meta["channel_id"])
+        if meta.get("author"):
+            p["name"] = str(meta["author"])[:100]
 
     def hook_nonces(self):
         """{slot id: nonce} for the wake hook: the live, unspent slot
@@ -516,6 +519,10 @@ class Proactive:
             return "per person per day cap"
         if len(self.sent_to("user_id", uid, now - WEEK)) >= week:
             return "per person per week cap"
+        return self._person_conversation_problem(state, uid, cid, now)
+
+    def _person_conversation_problem(self, state, uid, cid, now):
+        d = self.data()
         mine = self.sent_to("user_id", uid, 0)
         p = d["people"].get(uid) or {}
         hist = self.history(state, cid)
@@ -553,11 +560,20 @@ class Proactive:
             return "proactive is off there"
         if here["who.replies"] == "off":
             return "replies are off (or paused) there"
+        problem = self._channel_cap_problem(cid, now, here)
+        if problem:
+            return problem
+        return self._channel_conversation_problem(state, cid, now)
+
+    def _channel_cap_problem(self, cid, now, here):
         if self.sent_total(now) >= self.total_cap():
             return "the day's total is reached"
         cap = here["proactive.per_channel_per_day"]
         if len(self.sent_to("channel_id", cid, now - DAY)) >= cap:
             return "per channel per day cap"
+        return None
+
+    def _channel_conversation_problem(self, state, cid, now):
         hist = self.history(state, cid)
         humans = [snowflake_ts(h.get("id")) for h in hist if self.human(h)]
         if not humans:
@@ -613,9 +629,12 @@ class Proactive:
         """Why target t (a slot's binding entry) is not eligible now."""
         if self.quiet_now(now, t.get("user_id")):
             return "quiet hours"
-        st, MS = self.st(), self.m.MS
         if t["type"] == "channel":
             return self.channel_problem(state, t["channel_id"], now)
+        return self._dm_target_problem(state, t, now)
+
+    def _dm_target_problem(self, state, t, now):
+        st, MS = self.st(), self.m.MS
         dm_here = st.resolve(MS.Scope.dm())
         if not dm_here["proactive.enabled"]:
             return "proactive is off for DMs"
@@ -626,14 +645,20 @@ class Proactive:
         if t["type"] == "owner" and not owner:
             return "no longer an owner"
         if t["type"] == "dm":
-            if owner:
-                return "an owner now (owner check-ins instead)"
-            p = self.data()["people"].get(uid) or {}
-            if p.get("dm") != t["channel_id"]:
-                return "never DMed the bot there"
-            if self.m.dm_refusal({"id": uid, "username": p.get("name") or uid}) is not None:
-                return "the DM settings no longer answer them"
+            problem = self._dm_identity_problem(t, uid, owner)
+            if problem:
+                return problem
         return self.person_problem(state, uid, t["channel_id"], now)
+
+    def _dm_identity_problem(self, t, uid, owner):
+        if owner:
+            return "an owner now (owner check-ins instead)"
+        p = self.data()["people"].get(uid) or {}
+        if p.get("dm") != t["channel_id"]:
+            return "never DMed the bot there"
+        if self.m.dm_refusal({"id": uid, "username": p.get("name") or uid}) is not None:
+            return "the DM settings no longer answer them"
+        return None
 
     def eligible(self, state, now):
         """[target] the bot may reach out to now (the slot's list)."""
@@ -652,6 +677,9 @@ class Proactive:
                     cands.append({"type": "dm", "user_id": uid, "channel_id": p["dm"]})
         for cid in sorted(m.CHANNELS):
             cands.append({"type": "channel", "user_id": None, "channel_id": str(cid)})
+        return self._eligible_targets(state, cands, now)
+
+    def _eligible_targets(self, state, cands, now):
         out = []
         for t in cands:
             try:
@@ -691,7 +719,12 @@ class Proactive:
             info = m.CHANNELS.get(cid) or {}
             gid = info.get("guild_id")
             scope = m.scope_for(gid, cid)
-            card = m.settings_card(scope, self.st().resolve(scope), None, False, cid)
+            card = m.settings_card(
+                scope,
+                self.st().resolve(scope),
+                cid,
+                speaker=m.Speaker(author_id=None, from_bot=False),
+            )
             card.pop("speaker", None)
             humans = [h for h in hist if not self.is_bot_msg(h)]
             out.update(
@@ -709,7 +742,12 @@ class Proactive:
                 p["name"] = name
                 self._dirty = True
             scope = m.MS.Scope.dm()
-            card = m.settings_card(scope, self.st().resolve(scope), uid, False, cid)
+            card = m.settings_card(
+                scope,
+                self.st().resolve(scope),
+                cid,
+                speaker=m.Speaker(author_id=uid, from_bot=False),
+            )
             card.pop("places", None)
             last_them = max(
                 [p.get("last", 0)]
@@ -826,6 +864,32 @@ class Proactive:
             return
         self._next_tick = now + TICK_SECS
         d = self.data()
+        self._tick_upkeep(state, now)
+        due = self.due_heartbeats(now)
+        if due:
+            if d.get("slot"):
+                print("Heartbeat deferred: the last one is still open.", flush=True)
+            elif self.blocked():
+                print(
+                    "Heartbeat skipped: a bad proactive.json is set aside "
+                    "(docs/PROTOCOL.md, proactive.json).",
+                    flush=True,
+                )
+            elif self.sent_total(now) < self.total_cap():
+                candidates = [t for t in self.eligible(state, now) if self.heartbeat_key(t) in due]
+                targets = self.pick_side(candidates)
+                available = {self.heartbeat_key(t) for t in candidates}
+                selected = {self.heartbeat_key(t) for t in targets}
+                self.advance_heartbeats((due - available) | selected, now)
+                if targets:
+                    self.make_slot(state, targets, now)
+                    return
+                print("Heartbeat: nobody and nowhere to reach out to now; no wake.", flush=True)
+        if self._dirty and now - self._flushed >= FLUSH_SECS:
+            self.save()
+
+    def _tick_upkeep(self, state, now):
+        d = self.data()
         s = d.get("slot")
         if s and not self._slot_ok(s):
             print("Proactive: a damaged slot record was dropped.", flush=True)
@@ -854,28 +918,6 @@ class Proactive:
                 self.note_item(mid, meta)
             d["seeded"] = True
             self._dirty = True
-        due = self.due_heartbeats(now)
-        if due:
-            if d.get("slot"):
-                print("Heartbeat deferred: the last one is still open.", flush=True)
-            elif self.blocked():
-                print(
-                    "Heartbeat skipped: a bad proactive.json is set aside "
-                    "(docs/PROTOCOL.md, proactive.json).",
-                    flush=True,
-                )
-            elif self.sent_total(now) < self.total_cap():
-                candidates = [t for t in self.eligible(state, now) if self.heartbeat_key(t) in due]
-                targets = self.pick_side(candidates)
-                available = {self.heartbeat_key(t) for t in candidates}
-                selected = {self.heartbeat_key(t) for t in targets}
-                self.advance_heartbeats((due - available) | selected, now)
-                if targets:
-                    self.make_slot(state, targets, now)
-                    return
-                print("Heartbeat: nobody and nowhere to reach out to now; no wake.", flush=True)
-        if self._dirty and now - self._flushed >= FLUSH_SECS:
-            self.save()
 
     def drop_orphans(self):
         """A proactive queue item that is not the live slot (its record
@@ -924,8 +966,7 @@ class Proactive:
             print(f"Proactive: slot {sid}: {type(e).__name__}: {e}", flush=True)
             return Verdict(f"slot {sid}: could not be checked", spent=sid)
 
-    def _decide(self, state, item, d, s, sid):
-        now = self.clock()
+    def _slot_binding_problem(self, item, s, sid):
         if str(item.get("item") or "") != sid:
             return Verdict(f"slot {sid}: item must be the slot's message_id")
         bad = [k for k in FORBIDDEN if k in item]
@@ -939,10 +980,10 @@ class Proactive:
         ):
             # A forgery from another wake: the slot is untouched.
             return Verdict(f"slot {sid}: bad nonce")
-        cid = str(item.get("channel_id") or "")
-        post = s["posts"].get(cid)
-        if post and post.get("status") == "sending":
-            return self._send(state, s, cid, item, now)  # a retry
+        return None
+
+    def _slot_status_problem(self, s, now):
+        sid = s["id"]
         if s.get("spent"):
             return Verdict(f"slot {sid}: already used", spent=sid)
         if self.blocked():
@@ -950,11 +991,31 @@ class Proactive:
             return Verdict(f"slot {sid}: proactive.json is set aside", spent=sid)
         if now > s.get("expires", 0):
             return Verdict(f"slot {sid}: expired", spent=sid)
+        return None
+
+    def _decide(self, state, item, d, s, sid):
+        now = self.clock()
+        problem = self._slot_binding_problem(item, s, sid)
+        if problem is not None:
+            return problem
+        cid = str(item.get("channel_id") or "")
+        post = s["posts"].get(cid)
+        if post and post.get("status") == "sending":
+            return self._send(state, s, cid, item, now)  # a retry
+        problem = self._slot_status_problem(s, now)
+        if problem is not None:
+            return problem
         if item.get("silent"):
             s["spent"] = True
             self.save()
             print(f"Slot {sid}: the worker chose not to reach out.", flush=True)
             return Verdict(spent=sid)
+        return self._accept_post(state, item, s, now)
+
+    def _accept_post(self, state, item, s, now):
+        sid = s["id"]
+        cid = str(item.get("channel_id") or "")
+        d = self.data()
         t = s["targets"].get(cid)
         if t is None:
             s["spent"] = True
@@ -1007,51 +1068,11 @@ class Proactive:
         try:
             # The monitor's one send path (plain messages: no reply_to),
             # each part's Discord nonce seeded with the slot id.
-            msgs = self.m.send_fragmented(cid, parts, None, (), mentions=mentions, nonce_key=sid)
-        except Exception as e:
-            code = getattr(e, "code", None)
-            post["n"] = post.get("n", 0) + 1
-            # A secret in it (the monitor's send guard): never retried,
-            # the slot is used up, nothing counts toward the caps.
-            blocked = isinstance(e, self.m.SecretBlocked)
-            # A part may have landed: any part after the first (on this
-            # or an earlier attempt), or the first one when the error
-            # does not say it was refused (a timeout can land).
-            part = getattr(e, "failed_part", None)
-            if part != 0 or getattr(e, "sent_ids", None):
-                post["landed"] = True
-            refused = isinstance(code, int) and 400 <= code < 500
-            maybe = not blocked and (post.get("landed") or not refused)
-            if code == 403 or blocked or now - post["first"] >= SEND_RETRY_SECS:
-                post["status"] = "failed"
-                if maybe or code == 403:
-                    # It counts, as a reply that may have landed does; a
-                    # 403 (blocked, or no longer allowed there) too, so
-                    # nobody is tried again before they write.
-                    for x in self.data()["sent"]:
-                        if x.get("slot") == sid and x.get("channel_id") == cid:
-                            x["msgs"] = list(getattr(e, "sent_ids", None) or [])[-4:]
-                else:
-                    self.data()["sent"] = [
-                        x
-                        for x in self.data()["sent"]
-                        if not (x.get("slot") == sid and x.get("channel_id") == cid)
-                    ]
-                self.save()
-                print(
-                    f"Slot {sid}: could not post to {cid} ({e}); "
-                    f"dropped{' (part of it may have landed)' if maybe else ''}.",
-                    flush=True,
-                )
-                return Verdict(spent=sid)
-            post["next"] = now + min(30, 2 ** post["n"])
-            self.save()
-            print(
-                f"Slot {sid}: post to {cid} failed (attempt "
-                f"{post['n']}; retrying, same nonce): {e}",
-                flush=True,
+            msgs = self.m.send_fragmented(
+                cid, parts, None, (), delivery=self.m.DeliveryOptions(mentions=mentions, nonce=sid)
             )
-            return Verdict(retry=True, spent=sid)
+        except Exception as e:
+            return self._send_failure(s, cid, now, e)
         post["status"] = "sent"
         post.pop("parts", None)
         for x in self.data()["sent"]:
@@ -1065,7 +1086,85 @@ class Proactive:
         )
         return Verdict(spent=sid)
 
+    def _send_failure(self, s, cid, now, e):
+        sid, post = s["id"], s["posts"][cid]
+        code = getattr(e, "code", None)
+        post["n"] = post.get("n", 0) + 1
+        # A secret in it (the monitor's send guard): never retried,
+        # the slot is used up, nothing counts toward the caps.
+        blocked = isinstance(e, self.m.SecretBlocked)
+        # A part may have landed: any part after the first (on this
+        # or an earlier attempt), or the first one when the error
+        # does not say it was refused (a timeout can land).
+        part = getattr(e, "failed_part", None)
+        if part != 0 or getattr(e, "sent_ids", None):
+            post["landed"] = True
+        refused = (
+            isinstance(code, int)
+            and HTTPStatus.BAD_REQUEST <= code < HTTPStatus.INTERNAL_SERVER_ERROR
+        )
+        maybe = not blocked and (post.get("landed") or not refused)
+        if code == HTTPStatus.FORBIDDEN or blocked or now - post["first"] >= SEND_RETRY_SECS:
+            post["status"] = "failed"
+            if maybe or code == HTTPStatus.FORBIDDEN:
+                # It counts, as a reply that may have landed does; a
+                # 403 (blocked, or no longer allowed there) too, so
+                # nobody is tried again before they write.
+                for x in self.data()["sent"]:
+                    if x.get("slot") == sid and x.get("channel_id") == cid:
+                        x["msgs"] = list(getattr(e, "sent_ids", None) or [])[-4:]
+            else:
+                self.data()["sent"] = [
+                    x
+                    for x in self.data()["sent"]
+                    if not (x.get("slot") == sid and x.get("channel_id") == cid)
+                ]
+            self.save()
+            print(
+                f"Slot {sid}: could not post to {cid} ({e}); "
+                f"dropped{' (part of it may have landed)' if maybe else ''}.",
+                flush=True,
+            )
+            return Verdict(spent=sid)
+        post["next"] = now + min(30, 2 ** post["n"])
+        self.save()
+        print(
+            f"Slot {sid}: post to {cid} failed (attempt {post['n']}; retrying, same nonce): {e}",
+            flush=True,
+        )
+        return Verdict(retry=True, spent=sid)
+
     # -- "stop messaging me" ------------------------------------------------------
+    def _opt_reply_problem(self, item, qid, index, meta):
+        rt = str(item.get("reply_to") or "")
+        if (
+            item.get("silent")
+            or item.get("standalone")
+            or not self.m.normalize_parts(item)
+            or (rt != qid and index["frags"].get(rt) != qid)
+        ):
+            return (
+                f"{FIELD}: goes on a reply with text, under that message (reply_to), so they see it"
+            )
+        if item.get(FIELD) == "opt-in" and not (meta.get("dm") and meta.get("kind") == "dm"):
+            return f"{FIELD}: opt-in only in the person's own DM"
+        return None
+
+    def _opt_message_meta(self, state, item, index, qid):
+        if qid not in index["channels"]:
+            return None, f"{FIELD}: that message is no longer waiting for a reply"
+        meta = self.m.queued_item_meta(state, qid, index)
+        if not isinstance(meta, dict) or meta.get("bot") or meta.get("kind") not in TEXT_KINDS:
+            return (
+                None,
+                f"{FIELD}: goes on the reply to the person's own message (item: its message_id)",
+            )
+        if str(item.get("channel_id")) != str(meta.get("channel_id")) or index["channels"].get(
+            qid
+        ) != str(meta.get("channel_id")):
+            return None, f"{FIELD}: channel_id must be that message's channel"
+        return meta, None
+
     def opt_action(self, state, item, index=None):
         """None when the outbox item carries no opt-out / opt-in, or it was
         recorded; else why it is refused. The person is the author of
@@ -1082,27 +1181,13 @@ class Proactive:
             return f'{FIELD}: expected "opt-out" or "opt-in"'
         qid = str(item.get("item") or "")
         index = index or {"frags": {}, "channels": {}}
-        if qid not in index["channels"]:
-            return f"{FIELD}: that message is no longer waiting for a reply"
-        meta = self.m.queued_item_meta(state, qid, index)
-        if not isinstance(meta, dict) or meta.get("bot") or meta.get("kind") not in TEXT_KINDS:
-            return f"{FIELD}: goes on the reply to the person's own message (item: its message_id)"
-        if str(item.get("channel_id")) != str(meta.get("channel_id")) or index["channels"].get(
-            qid
-        ) != str(meta.get("channel_id")):
-            return f"{FIELD}: channel_id must be that message's channel"
-        rt = str(item.get("reply_to") or "")
-        if (
-            item.get("silent")
-            or item.get("standalone")
-            or not self.m.normalize_parts(item)
-            or (rt != qid and index["frags"].get(rt) != qid)
-        ):
-            return (
-                f"{FIELD}: goes on a reply with text, under that message (reply_to), so they see it"
-            )
-        if v == "opt-in" and not (meta.get("dm") and meta.get("kind") == "dm"):
-            return f"{FIELD}: opt-in only in the person's own DM"
+        meta, problem = self._opt_message_meta(state, item, index, qid)
+        if problem is not None:
+            return problem
+        assert meta is not None
+        problem = self._opt_reply_problem(item, qid, index, meta)
+        if problem is not None:
+            return problem
         uid = str(meta.get("author_id") or "")
         if not uid:
             return f"{FIELD}: whose message it is is not known"
@@ -1231,7 +1316,6 @@ class Proactive:
                     a["channel_id"],
                     self.ask_text(a),
                     None,
-                    nonce=tok,
                     components=[
                         {
                             "type": 1,
@@ -1245,13 +1329,16 @@ class Proactive:
                             ],
                         }
                     ],
-                    mentions={"parse": []},
+                    delivery=self.m.DeliveryOptions(nonce=tok, mentions={"parse": []}),
                 )
                 a["sent"], a["at"] = True, now
             except Exception as e:
                 a["n"] = a.get("n", 0) + 1
                 a["next"] = now + min(30, 2 ** a["n"])
-                if getattr(e, "code", None) == 403 or now - a["at"] >= ASK_SEND_SECS:
+                if (
+                    getattr(e, "code", None) == HTTPStatus.FORBIDDEN
+                    or now - a["at"] >= ASK_SEND_SECS
+                ):
                     a["done"] = True
                 print(f"Proactive: could not send the button to {a['user_id']} ({e}).", flush=True)
             self._dirty = True

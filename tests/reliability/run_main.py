@@ -14,8 +14,8 @@ import time
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-import monitor_harness as H  # noqa: E402
-from monitor_harness import G1, BOT, msg, chan, HTTPErr  # noqa: E402
+import monitor_harness as H
+from monitor_harness import BOT, G1, HTTPErr, chan, msg
 
 scenario = sys.argv[1]
 seconds = float(sys.argv[2]) if len(sys.argv) > 2 else 5

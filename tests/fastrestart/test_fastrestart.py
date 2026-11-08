@@ -6,6 +6,7 @@ so pgrep/pkill only ever see this suite's fakes and every fake dies with
 the namespace. MUT_DIR = the package tree under test.
 """
 
+import contextlib
 import json
 import os
 import shutil
@@ -18,9 +19,12 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
+
 from common import (  # noqa: E402 (local import path bootstrap)
     HOOK_RUNTIME as RUNTIME,
-    MUT_DIR,  # noqa: E402
+)
+from common import (  # noqa: E402 (local import path bootstrap)
+    MUT_DIR,
     copy_watchdog,
 )
 
@@ -39,8 +43,8 @@ if os.environ.get("FR_IN_NS") != "1":
             "-c",
             f"python3 '{os.path.abspath(__file__)}' \"$@\"; exit $?",
             "x",
-        ]
-        + sys.argv[1:],
+            *sys.argv[1:],
+        ],
         env=env,
     )
     sys.exit(r.returncode)
@@ -128,10 +132,8 @@ updates:
         )
         out, _ = proc.communicate(timeout=30)
         secs = time.monotonic() - t
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
         self.last_hook_pid = proc.pid
         return secs, out
 
@@ -221,14 +223,14 @@ class HookTrigger(Base):
     def test_queue_work_still_wakes_and_keeps_both_states(self):
         with open(self.p("reply_queue.json"), "w") as f:
             json.dump([{"message_id": "1", "channel_id": "9"}], f)
-        secs, out = self.hook()
+        _secs, out = self.hook()
         self.assertIn("\nWAKE:", "\n" + out)
         self.assertEqual(len(self.wait_calls(1)), 1)
         st = self.get_state()
         self.assertIn("1", st["woken"])
         self.assertEqual(st["restart"]["fails"], 1)
         # And a later queue-only run keeps .restart.
-        secs, out = self.hook()
+        _secs, out = self.hook()
         self.assertIn("SILENT", out)
         self.assertEqual(self.get_state()["restart"]["fails"], 1)
 
@@ -275,7 +277,7 @@ class HookTrigger(Base):
         now = int(time.time())
         self.put_state({"restart": {"next": now + 100, "fails": 3}})
         mon = self.start_monitor(self.p("bin/monitor.py"))
-        secs, out = self.hook()
+        _secs, _out = self.hook()
         # Alive but its window has not passed yet: keep the record.
         self.assertEqual(self.get_state()["restart"]["fails"], 3)
         self.expire()
@@ -349,7 +351,7 @@ class RealWatchdog(Base):
         )
 
     def test_hook_brings_monitor_back_and_lock_is_released(self):
-        secs, out = self.hook()
+        secs, _out = self.hook()
         self.assertLess(secs, 1.0)
         end = time.time() + 20
         while time.time() < end and not self.starts():

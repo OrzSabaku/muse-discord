@@ -59,9 +59,12 @@ import secrets
 import sys
 import time
 
+MAX_DISCORD_ID_DIGITS = 25
+
 PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(PKG, "src"), os.path.join(PKG, "bin")]
 import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
+
 from muse_discord import muse_settings as MS  # noqa: E402
 
 
@@ -157,6 +160,14 @@ def cmd_validate(args):
     return 0
 
 
+def show_setting(spec, kinds, source):
+    return (
+        spec is not None
+        and bool(kinds & set(spec.scopes))
+        and not (spec.hidden and source.startswith("built-in"))
+    )
+
+
 def cmd_show(args):
     cfg = _cfg_path(args)
     st = MS.load(cfg)
@@ -173,22 +184,7 @@ def cmd_show(args):
         scope = MS.Scope.everywhere()
     print(f"Settings for: {scope.label()}")
     if scope.kind == "everywhere":
-        print(f"  owners                   {', '.join(st.owners) or '(none)'}")
-        print(f"  persona                  {st.persona}")
-        print(
-            "  token_from               "
-            + ", ".join(f"env:{w}" if k == "env" else w for k, w in st.token_sources())
-        )
-        for key in (
-            "presence.status",
-            "presence.kind",
-            "updates.notify",
-            "telemetry.usage_stats",
-            "memory.save_dms",
-        ):
-            print(f"  {key:<24} {_fmt(MS.TOP[key], st.top(key))}")
-        if not st.presence_enabled:
-            print("  presence.enabled         off")
+        show_global(st)
     kinds = {
         MS._scope_kind(p)
         for p, _n in st.chain(scope)
@@ -198,13 +194,11 @@ def cmd_show(args):
         kinds |= {"server", "channel"}
     for key, value, source, rows in st.explain(scope):
         spec = st.spec(key)
-        if spec is None or not kinds & set(spec.scopes):
-            continue
-        if spec.hidden and source.startswith("built-in"):
+        if not show_setting(spec, kinds, source):
             continue
         print(f"  {key:<24} {_fmt(spec, value):<18} [{source}]")
         if args.explain:
-            for name, path, is_set, v, src in rows:
+            for name, _path, is_set, v, src in rows:
                 shown = _fmt(spec, v) if is_set else "(not set)"
                 where = MS._source_text(src) if is_set else ""
                 print(f"      {name:<28} {shown}" + (f"  ({where})" if where else ""))
@@ -250,13 +244,13 @@ def _place(args, info):
         if place.kind != "channel":
             raise MS.SettingsError("--category goes with a channel place")
         cat = str(args.category).strip()
-        if not cat.isdigit() or len(cat) > 25 or cat == place.channel_id:
+        if not cat.isdigit() or len(cat) > MAX_DISCORD_ID_DIGITS or cat == place.channel_id:
             raise MS.SettingsError(f"--category {cat}: expected the channel's category id (digits)")
         place.category_id = cat
     return place
 
 
-def _run(args, st, cfg, info, changes, by):
+def _run(args, st, cfg, info, changes):
     """Print the changes and their risks; make them unless they are risky
     and --yes is missing."""
     names = MS.names_from(info, st)
@@ -276,7 +270,11 @@ def _run(args, st, cfg, info, changes, by):
         print("Warning: " + w)
     if risk.risky and not args.yes:
         raise NeedsYes()
-    MS.apply(cfg, [r.change for r in todo], by, group=f"cli-{secrets.token_hex(4)}", role="owner")
+    MS.apply(
+        cfg,
+        [r.change for r in todo],
+        actor=MS.WriteActor(by=args.by, group=f"cli-{secrets.token_hex(4)}", role="owner"),
+    )
     print("Done.")
     return 0
 
@@ -302,7 +300,7 @@ def cmd_set(args, reset=False):
             )
     else:
         changes = [MS.Change(place, key, MS.parse_value(st, key, args.value))]
-    return _run(args, st, cfg, info, changes, args.by)
+    return _run(args, st, cfg, info, changes)
 
 
 def cmd_reset(args):
@@ -321,7 +319,7 @@ def cmd_preset(args):
             f"already matches {args.name.capitalize()}."
         )
         return 0
-    return _run(args, st, cfg, info, changes, args.by)
+    return _run(args, st, cfg, info, changes)
 
 
 def cmd_pause(args, resume=False):
@@ -337,7 +335,7 @@ def cmd_pause(args, resume=False):
             return 0
     else:
         changes = MS.pause_changes(place)
-    return _run(args, st, cfg, info, changes, args.by)
+    return _run(args, st, cfg, info, changes)
 
 
 def cmd_resume(args):
@@ -361,7 +359,9 @@ def cmd_undo(args):
         print("Warning: " + w)
     if risk.risky and not args.yes:
         raise NeedsYes()
-    MS.undo_changes(cfg, place, args.by, children=children, role="owner", expect=ident)
+    MS.undo_changes(
+        cfg, place, children=children, expect=ident, actor=MS.WriteActor(by=args.by, role="owner")
+    )
     print("Done.")
     return 0
 
@@ -449,7 +449,7 @@ def main(argv=None):
             p.add_argument(*a[0], **a[1])
         p.add_argument(
             "--place",
-            required=name not in ("explain",),
+            required=name != "explain",
             help="defaults, dms, server:ID or channel:ID:ID",
         )
         p.add_argument("--category", help="the channel's category id")
@@ -508,6 +508,25 @@ def main(argv=None):
     except MS.SettingsError as e:
         print(str(e), file=sys.stderr)
         return 1
+
+
+def show_global(st):
+    print(f"  owners                   {', '.join(st.owners) or '(none)'}")
+    print(f"  persona                  {st.persona}")
+    print(
+        "  token_from               "
+        + ", ".join(f"env:{w}" if k == "env" else w for k, w in st.token_sources())
+    )
+    for key in (
+        "presence.status",
+        "presence.kind",
+        "updates.notify",
+        "telemetry.usage_stats",
+        "memory.save_dms",
+    ):
+        print(f"  {key:<24} {_fmt(MS.TOP[key], st.top(key))}")
+    if not st.presence_enabled:
+        print("  presence.enabled         off")
 
 
 if __name__ == "__main__":

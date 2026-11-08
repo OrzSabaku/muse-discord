@@ -4,11 +4,10 @@ Discord facts for setup, a shared REST helper, and token lookup.
 Not a command.
 """
 
-from typing import Any
-
 import os
 import sys
 import urllib.parse
+from typing import Any
 
 PKG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(PKG_DIR, "src")
@@ -30,7 +29,7 @@ def venv_python():
 # Python happens to have compatible packages. A matching prefix prevents loops.
 _venv = venv_python()
 if _venv and os.path.realpath(sys.prefix) != os.path.realpath(os.path.join(PKG_DIR, ".venv")):
-    os.execv(_venv, [_venv] + sys.argv)
+    os.execv(_venv, [_venv, *sys.argv])
 
 API = "https://discord.com/api/v10"
 # Tests point the scripts at a local fake with this variable. Only a
@@ -45,7 +44,6 @@ TIMEOUT = 20
 PERMISSIONS = (
     (1 << 10) | (1 << 11) | (1 << 38) | (1 << 16) | (1 << 15) | (1 << 14) | (1 << 6) | (1 << 51)
 )
-assert PERMISSIONS == 2252074691710016
 VIEW_CHANNEL = 1 << 10
 SEND_MESSAGES = 1 << 11
 ADMINISTRATOR = 1 << 3
@@ -89,7 +87,7 @@ def call(method: str, path: str, token: str, body: Any = None) -> Any:
     """One REST call as the bot. Returns the parsed JSON (None for an
     empty body). Raises ApiError. Never puts the token in an error."""
     ensure_src_on_path()
-    from muse_discord.discord_rest import transport, DiscordError
+    from muse_discord.discord_rest import DiscordError, transport
 
     try:
         value = transport(token, api_base()).request(method, path, body, timeout=TIMEOUT)

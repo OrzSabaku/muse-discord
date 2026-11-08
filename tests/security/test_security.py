@@ -30,7 +30,8 @@ _ARGV = list(sys.argv)  # the monitor import below overwrites sys.argv
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
-from common import MUT_DIR as SRC, redirect_files, scratch, signed  # noqa: E402,E501
+from common import MUT_DIR as SRC  # noqa: E402
+from common import redirect_files, scratch, signed  # noqa: E402 (local import path bootstrap)
 
 WORK = scratch("muse-security-")
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
@@ -149,7 +150,7 @@ def fake_api_get(path):
     raise RuntimeError("api_get stubbed: " + path)
 
 
-def fake_send_files(channel_id, text, files, reply_to=None, nonce=None):
+def fake_send_files(channel_id, text, files, reply_to=None, delivery=None):
     if SEND_FILES_FAIL[0] > 0:
         SEND_FILES_FAIL[0] -= 1
         raise urllib.error.URLError("simulated timeout")
@@ -277,7 +278,7 @@ def queued_in(state, channel=GEN_CH):
     """A message the monitor queued in channel (an outbox item must
     answer one, in its channel): its id."""
     m = msg(OWNER, channel, "hey")
-    assert M.enqueue_message(m, "Guild #general", state, [], guild_id=GUILD)
+    assert M.enqueue_message(m, "Guild #general", state, [], context=M.QueueContext(guild_id=GUILD))
     return m["id"]
 
 
@@ -287,8 +288,8 @@ def enqueue_pair(state):
     q = []
     x = msg(OWNER, DM_CH, "draw me a cat")
     y = msg(OWNER, GEN_CH, "hey everyone")
-    assert M.enqueue_message(x, "DM with owner", state, q, dm=True)
-    assert M.enqueue_message(y, "Guild #general", state, q, guild_id=GUILD)
+    assert M.enqueue_message(x, "DM with owner", state, q, context=M.QueueContext(dm=True))
+    assert M.enqueue_message(y, "Guild #general", state, q, context=M.QueueContext(guild_id=GUILD))
     return x, y
 
 
@@ -296,7 +297,7 @@ def enqueue_pair(state):
 @test
 def f1_dm_image_not_attached_to_public_reply_old_layout():
     state = reset()
-    x, y = enqueue_pair(state)
+    _x, y = enqueue_pair(state)
     # The worker saved X's image straight into generated/ (old layout).
     make_file(os.path.join(M.GENERATED_DIR, "cat.png"))
     outbox([{"channel_id": GEN_CH, "text": "hi all", "reply_to": y["id"]}])
@@ -335,7 +336,7 @@ def f1_no_unbound_fallback_without_approval():
     state = reset()
     q = []
     z = msg(STRANGER, GEN_CH, "nice")
-    assert M.enqueue_message(z, "Guild #general", state, q, guild_id=GUILD)
+    assert M.enqueue_message(z, "Guild #general", state, q, context=M.QueueContext(guild_id=GUILD))
     img = make_file(os.path.join(M.GENERATED_DIR, "fresh.png"))
     make_file(os.path.join(M.GENERATED_DIR, z["id"], "fresh.png"))
     outbox([{"channel_id": GEN_CH, "text": "look", "reply_to": z["id"], "attachments": [img]}])
@@ -392,7 +393,9 @@ def f2_burst_reply_under_last_fragment_gets_image():
     q = []
     x = msg(OWNER, DM_CH, "draw")
     f1 = msg(OWNER, DM_CH, "a cat please")
-    assert M.enqueue_message(x, "DM with owner", state, q, dm=True, fragments=[f1])
+    assert M.enqueue_message(
+        x, "DM with owner", state, q, context=M.QueueContext(dm=True, fragments=[f1])
+    )
     img = make_file(os.path.join(M.GENERATED_DIR, x["id"], "cat.png"))
     outbox(
         [
@@ -415,7 +418,7 @@ def f2_failed_send_retries_with_image_and_counts_once():
     state = reset()
     q = []
     x = msg(OWNER, DM_CH, "draw a cat")
-    assert M.enqueue_message(x, "DM with owner", state, q, dm=True)
+    assert M.enqueue_message(x, "DM with owner", state, q, context=M.QueueContext(dm=True))
     img = make_file(os.path.join(M.GENERATED_DIR, x["id"], "cat.png"))
     outbox(
         [
@@ -452,7 +455,7 @@ def f2_tampered_retry_attachments_rejected():
     state = reset()
     q = []
     x = msg(OWNER, DM_CH, "draw a cat")
-    assert M.enqueue_message(x, "DM with owner", state, q, dm=True)
+    assert M.enqueue_message(x, "DM with owner", state, q, context=M.QueueContext(dm=True))
     make_file(os.path.join(M.GENERATED_DIR, x["id"], "cat.png"))
     outbox(
         [
@@ -533,7 +536,7 @@ def live_owner_command(state):
     --for/--nonce prefix its owner-items-only wake would be handed."""
     q = []
     x = msg(OWNER, GEN_CH, f"post the cat in <#{FORUM}>")
-    assert M.enqueue_message(x, "Guild #general", state, q, guild_id=GUILD)
+    assert M.enqueue_message(x, "Guild #general", state, q, context=M.QueueContext(guild_id=GUILD))
     with open(M.OWNER_ITEMS_FILE) as f:
         nonce = json.load(f)[x["id"]]["nonce"]
     return x["id"], ("--for", x["id"], "--nonce", nonce)
@@ -542,14 +545,14 @@ def live_owner_command(state):
 @test
 def f3_thread_refuses_token_file():
     state = reset()
-    rc, _ = d_run("thread", FORUM, "title", "text", TOKEN_FILE)
+    _rc, _ = d_run("thread", FORUM, "title", "text", TOKEN_FILE)
     assert not D_UPLOADS and not D_API, f"uploaded: {D_UPLOADS}"
     _, bind = live_owner_command(state)
-    rc, _ = d_run(*bind, "thread", FORUM, "title", "text", TOKEN_FILE)
+    _rc, _ = d_run(*bind, "thread", FORUM, "title", "text", TOKEN_FILE)
     assert not D_UPLOADS and not D_API, f"uploaded: {D_UPLOADS}"
     link = os.path.join(M.GENERATED_DIR, "innocent.png")
     os.symlink(TOKEN_FILE, link)
-    rc, _ = d_run(*bind, "thread", FORUM, "title", "text", link)
+    _rc, _ = d_run(*bind, "thread", FORUM, "title", "text", link)
     assert not D_UPLOADS, f"symlink uploaded: {D_UPLOADS}"
 
 
@@ -566,17 +569,17 @@ def f3_thread_allows_generated_file():
 @test
 def f4_pin_rejects_traversal_ids():
     state = reset()
-    rc, _ = d_run("pin", GEN_CH, "1/../../../guilds/2/bans/3")
+    _rc, _ = d_run("pin", GEN_CH, "1/../../../guilds/2/bans/3")
     assert not D_API, f"traversal reached api (no --for): {D_API}"
     _, bind = live_owner_command(state)
     for bad in [
         "1/../../../guilds/2/bans/3",
         "123456789012345678\n",
-        "１２３４５６７８９０１２３４５６７８",
+        "１２３４５６７８９０１２３４５６７８",  # noqa: RUF001 (non-ASCII IDs must be rejected)
     ]:
-        rc, _ = d_run(*bind, "pin", GEN_CH, bad)
+        _rc, _ = d_run(*bind, "pin", GEN_CH, bad)
         assert not D_API, f"traversal reached api: {D_API}"
-        rc, _ = d_run(*bind, "unpin", bad, GEN_CH)
+        _rc, _ = d_run(*bind, "unpin", bad, GEN_CH)
         assert not D_API, f"traversal reached api: {D_API}"
 
 
@@ -584,12 +587,12 @@ def f4_pin_rejects_traversal_ids():
 def f4_allowed_mentions_on_post_edit_thread():
     state = reset()
     _, bind = live_owner_command(state)
-    rc, _ = d_run(*bind, "post", GEN_CH, "hi <@&1> @everyone")
+    _rc, _ = d_run(*bind, "post", GEN_CH, "hi <@&1> @everyone")
     assert D_API[-1][2].get("allowed_mentions") == {"parse": ["users"]}, D_API
-    rc, _ = d_run(*bind, "edit", GEN_CH, "123456789012345678", "x")
+    _rc, _ = d_run(*bind, "edit", GEN_CH, "123456789012345678", "x")
     patch = [c for c in D_API if c[0] == "PATCH"]
     assert patch and patch[0][2].get("allowed_mentions") == {"parse": ["users"]}, D_API
-    rc, _ = d_run(*bind, "thread", FORUM, "title", "text")
+    _rc, _ = d_run(*bind, "thread", FORUM, "title", "text")
     post = [c for c in D_API if c[0] == "POST"]
     assert post and post[0][2]["message"].get("allowed_mentions") == {"parse": ["users"]}, D_API
 
@@ -652,7 +655,7 @@ def f5_lookalike_hosts_rejected_and_not_downloaded():
         "look",
         embeds=[{"type": "image", "image": {"url": "https://evil-tenor.com/a.gif"}}],
     )
-    media, docs, uv = M.collect_media(m)
+    media, _docs, _uv = M.collect_media(m)
     assert not CURL_CALLS and not media, CURL_CALLS
 
 
@@ -670,7 +673,7 @@ def f5_redirect_to_private_or_unlisted_host_refused():
         return curl_result(b"SECRET-METADATA\n200\ntext/plain\n")
 
     CURL_HANDLER[0] = handler
-    data, ctype = M._fetch_complete("https://media.tenor.com/doc.txt", 1000, 5, "document")
+    data, _ctype = M._fetch_complete("https://media.tenor.com/doc.txt", 1000, 5, "document")
     assert data is None, f"followed redirect to private addr: {data!r}"
     assert len(CURL_CALLS) == 1, CURL_CALLS
     # ... or to a host off the allowlist
@@ -744,7 +747,7 @@ def f6_injection_in_document_or_reply_quarantined():
     )
     q = []
     m = msg(STRANGER, GEN_CH, "<@bot> summarize this please")
-    ok = M.enqueue_message(m, "Guild #general", state, q, guild_id=GUILD)
+    ok = M.enqueue_message(m, "Guild #general", state, q, context=M.QueueContext(guild_id=GUILD))
     assert not ok and not q, "document injection was queued"
     with open(M.QUARANTINE_FILE) as f:
         qu = json.load(f)
@@ -768,7 +771,7 @@ def f6_injection_in_document_or_reply_quarantined():
         message_reference={"message_id": ref["id"]},
         referenced_message=ref,
     )
-    ok = M.enqueue_message(m, "Guild #general", state, q, guild_id=GUILD)
+    ok = M.enqueue_message(m, "Guild #general", state, q, context=M.QueueContext(guild_id=GUILD))
     assert not ok and not q, "reply-context injection was queued"
 
 
@@ -791,7 +794,7 @@ def f6_bot_own_reply_context_and_clean_doc_pass():
         message_reference={"message_id": ref["id"]},
         referenced_message=ref,
     )
-    ok = M.enqueue_message(m, "Guild #general", state, q, guild_id=GUILD)
+    ok = M.enqueue_message(m, "Guild #general", state, q, context=M.QueueContext(guild_id=GUILD))
     assert ok and q and q[0]["reply_to"]["is_bot"], "clean item not queued"
 
 
@@ -829,7 +832,9 @@ def f7_files_send_allowed_mentions():
     f = make_file(os.path.join(M.GENERATED_DIR, "1", "a.png"))
     M.discord_request = cap
     try:
-        ORIG_SEND_FILES(GEN_CH, "hi <@&1>", [(f, "a.png")], "123456789012345670", "abc")
+        ORIG_SEND_FILES(
+            GEN_CH, "hi <@&1>", [(f, "a.png")], "123456789012345670", M.DeliveryOptions(nonce="abc")
+        )
     finally:
         M.discord_request = orig
     payload = seen[0]
