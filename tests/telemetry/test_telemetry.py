@@ -51,6 +51,7 @@ from settings_harness import (  # noqa: E402 (local import path bootstrap)
 
 sys.path.insert(0, MUT_DIR)
 from muse_discord import telemetry as T  # noqa: E402
+from muse_discord.settings_presets import preset_changes  # noqa: E402 (source path bootstrap)
 
 DAY = 86400
 BASE = f"""version: 1
@@ -149,7 +150,7 @@ class Base(unittest.TestCase):
 
     def tick(self):
         with quiet():
-            self.tm.tick(self.m.settings, self.m.GUILDS, {G1: 37, "x": 3}, force=True)
+            self.tm.tick(self.m.settings, self.m._DIRECTORY.guilds, {G1: 37, "x": 3}, force=True)
 
     def wait_send(self, secs=5):
         """Until the send thread finished and its result was taken (at
@@ -234,14 +235,14 @@ class NeverIdentifying(Base):
         ignored = gmsg(U2, f"<@{BOT}> {secret} again", mention=True)
         with quiet():
             for msg in (mention, chatter, ignored):
-                kind = m.classify_message(self.st, msg, "Lounge #general", G1)
+                kind = m._receiver(self.st).classify(msg, "Lounge #general", G1)
                 if kind and kind != "join":
-                    m.stage_found(self.st, msg, "Lounge #general", G1, kind)
+                    m._receiver(self.st).stage(msg, "Lounge #general", G1, kind)
             for entry in self.st.get("pending", {}).values():
                 entry["first_seen"] = 0
             q = []
-            m.flush_pending(self.st, q)
-            m.queue_edit(add=q)
+            m._bursts(self.st).flush(q)
+            m._queue_files().edit(add=q)
         self.assertEqual([i["message_id"] for i in q], [mention["id"]])
         with open(m.OUTBOX_FILE, "w") as f:
             json.dump(
@@ -260,16 +261,16 @@ class NeverIdentifying(Base):
                 f,
             )
         with quiet():
-            m.process_outbox(self.st)
+            m._OUTBOX.process(self.st)
         self.assertTrue(m.api.channel_posts(CH))
 
         # Settings changes: /settings (an owner, by id), a preset, a DM
         # request and the CLI; every key names the server's id.
-        ctx = m.SettingsCtx()
+        ctx = m.settings_context()
         place = MS.parse_place(f"server:{G1}")
         with quiet():
             ctx.write(f"servers.{G1}.style.notes", "talk about PINEAPPLE", OWNER)
-            ctx.apply(MS.preset_changes(m.settings(), "community", place), OWNER, "owner")
+            ctx.apply(preset_changes(m.settings(), "community", place), OWNER, "owner")
             MS.apply(
                 m.cfg_path,
                 [MS.Change(place, "style.length", "brief")],

@@ -16,6 +16,11 @@ from common import signed
 from harness import ARGV, capture, fresh_pkg, msg, new_state, read, sent_texts, snowflake, write
 from harness import monitor as m
 
+from muse_discord.message_models import MessagePlace
+from muse_discord.outbox_store import OUTBOX_POISON_TRIES
+from muse_discord.reply_delivery import SEND_RETRY_SECS
+from muse_discord.storage import SharedLockTimeout
+
 
 @contextmanager
 def held_lock():
@@ -30,24 +35,24 @@ class LockTimeout(unittest.TestCase):
         self.timeout = patch.object(m, "LOCK_WAIT_SECS", 0)
         self.timeout.start()
         self.addCleanup(self.timeout.stop)
-        m._OUTBOX_POISON.clear()
+        m._OUTBOX.poison.clear()
 
     def test_queue_is_unchanged_until_lock_released_and_retry_preserves_worker_append(self):
         first, worker, incoming = [{"message_id": snowflake()} for _ in range(3)]
         write(m.QUEUE_FILE, [first])
         with held_lock():
-            with self.assertRaises(m.SharedLockTimeout):
-                m.queue_edit(add=[incoming], drop=lambda q: q == first)
+            with self.assertRaises(SharedLockTimeout):
+                m._queue_files().edit(add=[incoming], drop=lambda q: q == first)
             self.assertEqual(read(m.QUEUE_FILE), [first])
             write(m.QUEUE_FILE, [first, worker])  # the lock holder's write
-        self.assertEqual(m.queue_edit(add=[incoming], drop=lambda q: q == first), 1)
+        self.assertEqual(m._queue_files().edit(add=[incoming], drop=lambda q: q == first), 1)
         self.assertEqual(read(m.QUEUE_FILE), [worker, incoming])
 
     def test_non_contention_lock_error_is_propagated_without_entering_body(self):
         with (
-            patch.object(m.fcntl, "flock", side_effect=OSError(errno.EIO, "lock I/O error")),
+            patch.object(fcntl, "flock", side_effect=OSError(errno.EIO, "lock I/O error")),
             self.assertRaises(OSError) as raised,
-            m.shared_lock(),
+            m._queue_files().lock(),
         ):
             self.fail("the writer entered without acquiring the lock")
         self.assertEqual(raised.exception.errno, errno.EIO)
@@ -56,11 +61,11 @@ class LockTimeout(unittest.TestCase):
         state = new_state()
         item = {"item": snowflake(), "channel_id": "101", "text": "waiting"}
         write(m.OUTBOX_FILE, [item])
-        with held_lock(), self.assertRaises(m.SharedLockTimeout):
-            m.outbox_pass(state)
+        with held_lock(), self.assertRaises(SharedLockTimeout):
+            m._OUTBOX.pass_once(state)
         self.assertEqual(read(m.OUTBOX_FILE), [item])
         self.assertFalse(os.path.exists(m.OUTBOX_PROCESSING_FILE))
-        self.assertEqual(m._OUTBOX_POISON, {})
+        self.assertEqual(m._OUTBOX.poison, {})
         self.assertEqual(sent_texts(), [])
 
     def test_failed_settlement_keeps_nonce_and_retry_does_not_send_twice(self):
@@ -80,19 +85,19 @@ class LockTimeout(unittest.TestCase):
             with (
                 patch.object(m, "api_post", post),
                 capture(),
-                self.assertRaises(m.SharedLockTimeout),
+                self.assertRaises(SharedLockTimeout),
             ):
-                m.outbox_pass(state)
+                m._OUTBOX.pass_once(state)
             self.assertEqual(state["reply_nonces"][mid]["nonce"], nonce)
             self.assertEqual(len(read(m.QUEUE_FILE)), 1)
             self.assertEqual(read(m.OUTBOX_PROCESSING_FILE), [item])
         with capture():
-            m.outbox_pass(state)
+            m._OUTBOX.pass_once(state)
         self.assertEqual(sent_texts(), ["hi"])
         self.assertEqual(read(m.QUEUE_FILE), [])
         self.assertNotIn(mid, state["reply_nonces"])
         self.assertFalse(os.path.exists(m.OUTBOX_PROCESSING_FILE))
-        self.assertEqual(m._OUTBOX_POISON, {})
+        self.assertEqual(m._OUTBOX.poison, {})
 
     def test_retry_progress_survives_repeated_settlement_contention_and_reload(self):
         state, mid = new_state(), snowflake()
@@ -109,8 +114,8 @@ class LockTimeout(unittest.TestCase):
 
             with patch.object(m, "api_post", side_effect=fail_send) as send, capture():
                 for attempt in (1, 2):
-                    with self.assertRaises(m.SharedLockTimeout):
-                        m.outbox_pass(state)
+                    with self.assertRaises(SharedLockTimeout):
+                        m._OUTBOX.pass_once(state)
                     checkpoint = read(m.STATE_FILE)
                     retry = next(iter(checkpoint["outbox_retries"].values()))
                     self.assertEqual(retry["n"], attempt)
@@ -122,13 +127,13 @@ class LockTimeout(unittest.TestCase):
                     self.assertEqual(send.call_count, attempt)
                     state = checkpoint  # restart with progress loaded from state.json
                     fcntl.flock(holder, fcntl.LOCK_UN)
-                    m.outbox_pass(state)  # still before the saved backoff deadline
+                    m._OUTBOX.pass_once(state)  # still before the saved backoff deadline
                     self.assertEqual(send.call_count, attempt)
                     self.assertEqual(read(m.OUTBOX_FILE)[0]["_retry"], retry)
                     self.assertNotIn("outbox_retries", read(m.STATE_FILE))
                     clock[0] = retry["next"] + 0.1
-                clock[0] = first + m.SEND_RETRY_SECS + 1
-                m.outbox_pass(state)
+                clock[0] = first + SEND_RETRY_SECS + 1
+                m._OUTBOX.pass_once(state)
                 self.assertEqual(send.call_count, 2)  # expired replies are never sent again
         self.assertEqual(read(m.OUTBOX_FILE), [])
         self.assertEqual(read(m.QUEUE_FILE), [])
@@ -139,31 +144,36 @@ class LockTimeout(unittest.TestCase):
         write(m.QUEUE_FILE, [{"message_id": mid, "channel_id": "101"}])
         item = signed(m, state, {"item": mid, "reply_to": mid, "channel_id": "101", "text": "hi"})
         write(m.OUTBOX_FILE, [item])
-        original_publish = m.reply_nonces_write
+        original_publish = m._CAPABILITIES.write_replies
 
         def publish(current):
             with held_lock():
                 pass  # another writer can acquire the lock while publication runs
             return original_publish(current)
 
-        with patch.object(m, "reply_nonces_write", publish), capture():
-            m.outbox_pass(state)
+        with patch.object(m._CAPABILITIES, "write_replies", publish), capture():
+            m._OUTBOX.pass_once(state)
         self.assertEqual(sent_texts(), ["hi"])
         self.assertEqual(read(m.QUEUE_FILE), [])
 
     def test_staged_addition_survives_timeout_and_restart_then_next_tick_publishes_it(self):
         state, incoming = new_state(), msg()
         write(m.QUEUE_FILE, [])
-        with patch.object(m, "COALESCE_SECS", 0), capture():
-            m.stage_trigger(state, incoming, "general", "mention", place=m.MessagePlace("G"))
-            with held_lock(), self.assertRaises(m.SharedLockTimeout):
-                m._stage_polled_messages(state, [])
+        with (
+            patch.object(
+                m._SETTINGS, "engine", m._SETTINGS.engine.model_copy(update={"coalesce_seconds": 0})
+            ),
+            capture(),
+        ):
+            m._bursts(state).stage(incoming, "general", "mention", place=MessagePlace("G"))
+            with held_lock(), self.assertRaises(SharedLockTimeout):
+                m._QUEUE_STAGING.stage(state, [])
         restored = read(m.STATE_FILE)
         self.assertFalse(restored["pending"])
         self.assertEqual(restored["queue_backlog"][0]["message_id"], incoming["id"])
         self.assertEqual(read(m.QUEUE_FILE), [])
         with capture():
-            m._stage_polled_messages(restored, [])
+            m._QUEUE_STAGING.stage(restored, [])
         self.assertEqual([q["message_id"] for q in read(m.QUEUE_FILE)], [incoming["id"]])
         self.assertNotIn("queue_backlog", read(m.STATE_FILE))
 
@@ -172,32 +182,32 @@ class LockTimeout(unittest.TestCase):
         write(m.QUEUE_FILE, [{"message_id": mid, "channel_id": "101"}])
         item = signed(m, state, {"item": mid, "reply_to": mid, "channel_id": "101", "text": "hi"})
         write(m.OUTBOX_FILE, [item])
-        with patch.object(m.OutboxDelivery, "actions", side_effect=m.SharedLockTimeout("busy")):
-            for _ in range(m.OUTBOX_POISON_TRIES):
-                with self.assertRaises(m.SharedLockTimeout):
-                    m.outbox_pass(state)
-        self.assertEqual(m._OUTBOX_POISON, {})
+        with patch.object(m.OutboxDelivery, "actions", side_effect=SharedLockTimeout("busy")):
+            for _ in range(OUTBOX_POISON_TRIES):
+                with self.assertRaises(SharedLockTimeout):
+                    m._OUTBOX.pass_once(state)
+        self.assertEqual(m._OUTBOX.poison, {})
         self.assertEqual(read(m.OUTBOX_PROCESSING_FILE), [item])
         self.assertFalse(os.path.exists(m.OUTBOX_REJECTED_FILE))
         with capture():
-            m.outbox_pass(state)
+            m._OUTBOX.pass_once(state)
         self.assertEqual(sent_texts(), ["hi"])
 
     def test_startup_continues_with_pending_burst_when_queue_is_locked(self):
         state, incoming = new_state(), msg()
         with capture():
-            m.stage_trigger(state, incoming, "general", "mention", place=m.MessagePlace("G"))
+            m._bursts(state).stage(incoming, "general", "mention", place=MessagePlace("G"))
         inbox, status = object(), {"connected": False}
         with (
-            patch.object(m, "_acquire_singleton"),
+            patch.object(m._PROCESS_LOCK, "acquire"),
             patch.object(m.TM, "start"),
             patch.object(m, "api_get", return_value={"id": "999", "username": "pip"}),
             patch.object(m, "discover_channels", return_value=({}, {})),
             patch.object(m, "publish_directory"),
             patch.object(m, "load_state", return_value=state),
-            patch.object(m, "sync_guilds"),
-            patch.object(m, "CHANNELS", {}),
-            patch.object(m, "GUILDS", {}),
+            patch.object(m._GUILD_LIFECYCLE, "sync"),
+            patch.object(m._DIRECTORY, "channels", {}),
+            patch.object(m._DIRECTORY, "guilds", {}),
             patch.object(m, "_start_monitor_threads", return_value=(inbox, status)),
             held_lock(),
             capture(),
@@ -208,7 +218,7 @@ class LockTimeout(unittest.TestCase):
         self.assertIs(actual_status, status)
         self.assertEqual(read(m.STATE_FILE)["queue_backlog"][0]["message_id"], incoming["id"])
         with capture():
-            m._stage_polled_messages(restored, [])
+            m._QUEUE_STAGING.stage(restored, [])
         self.assertEqual([q["message_id"] for q in read(m.QUEUE_FILE)], [incoming["id"]])
 
     def test_replayed_backlog_does_not_resurrect_a_settled_item(self):
@@ -218,7 +228,7 @@ class LockTimeout(unittest.TestCase):
                 state["queue_backlog"] = [{"message_id": mid, "channel_id": "101"}]
                 write(m.QUEUE_FILE, [])
                 write(m.LEDGER_FILE, {"entries": {mid: {"status": status}}})
-                m.publish_queue_additions(state)
+                m._queue_publication().publish(state)
                 self.assertEqual(read(m.QUEUE_FILE), [])
                 self.assertNotIn("queue_backlog", state)
 

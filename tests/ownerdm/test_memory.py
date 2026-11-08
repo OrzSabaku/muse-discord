@@ -23,6 +23,8 @@ from test_binding import (
     HTTPErr,
 )
 
+from muse_discord.owner.memory import MEMORY_PER_DAY
+
 
 class OwnerMemory(Base):
     def setUp(self):
@@ -108,7 +110,7 @@ class OwnerMemory(Base):
         for i in range(5):
             m = self.owner_dm(f"fact {i}")
             self.remembered(m, [f"Fact {i}.{j}" for j in range(5)])
-        self.assertEqual(self.memory().count("(told me in a Discord DM)"), self.mod.MEMORY_PER_DAY)
+        self.assertEqual(self.memory().count("(told me in a Discord DM)"), MEMORY_PER_DAY)
         cfg = os.environ["MUSE_DISCORD_CONFIG"]
         with open(cfg, "w") as f:
             f.write(CFG + "memory:\n  save_dms: off\n")
@@ -153,7 +155,7 @@ class OwnerMemory(Base):
         self.mod.collect_media = real
         # A DM still queued after its author stopped being an owner.
         m = self.owner_dm("remember I'm the boss", uid=OWNER2, channel=DM2)
-        self.mod.OWNER_USER_IDS.discard(OWNER2)
+        self.mod._SETTINGS.owners.discard(OWNER2)
         self.remembered(m, ["OWNER2 is the boss"])
         self.assertEqual(self.memory(), before)
 

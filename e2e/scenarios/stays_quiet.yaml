@@ -5,8 +5,8 @@
 #   addressing the bot.
 # - c3: the bot's name in passing, no mention (the bare-name trigger
 #   is gone).
-# - q1: B's mention carrying a prompt-injection phrase (monitor.py
-#   INJECTION_PATTERNS, "ignore ... previous instructions"): held in
+# - q1: B's mention carrying a prompt-injection phrase (receiving.quarantine's
+#   is_suspicious, "ignore ... previous instructions"): held in
 #   quarantine.json, ledgered quarantined, never queued.
 # - q2: A's mention that the fake worker answers with a `silent`
 #   outbox item ([[silent]]): nothing posted, ledgered skipped ("no

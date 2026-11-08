@@ -33,6 +33,10 @@ sys.path.insert(
 from common import MUT_DIR as SRC  # noqa: E402
 from common import redirect_files, scratch, signed  # noqa: E402 (local import path bootstrap)
 
+from muse_discord.discord_tools.cli import create_cli  # noqa: E402 (source path bootstrap)
+from muse_discord.media import fetch, video  # noqa: E402
+from muse_discord.response_policy import _media_counts as media_counts  # noqa: E402
+
 WORK = scratch("muse-security-")
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
@@ -123,15 +127,13 @@ spec = importlib.util.spec_from_file_location(
 )
 M = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(M)
+M.initialize(token_override="dummy-token")
 redirect_files(M, os.path.join(WORK, "run"))
-spec = importlib.util.spec_from_file_location(
-    "discord_api", os.path.join(SRC, "bin", "discord-api.py")
-)
-D = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(D)
 
-M.BOT_ID = M.BOT_USER_ID = BOTID
-M.BOT_NAME = "musebot"
+D = create_cli(SRC)
+
+M._IDENTITY.user_id = BOTID
+M._IDENTITY.name = "musebot"
 API_POSTS = []
 FILE_SENDS = []
 SEND_FILES_FAIL = [0]
@@ -160,11 +162,11 @@ def fake_send_files(channel_id, text, files, reply_to=None, delivery=None):
     return {"id": "999999999999999998"}
 
 
-ORIG_SEND_FILES = M.send_reply_with_files
+ORIG_SEND_FILES = M._SENDER.files
 M.api_post = fake_api_post
 M.api_get = fake_api_get
-M.send_typing = lambda cid: None
-M.send_reply_with_files = fake_send_files
+M._TYPING.send = lambda cid: None
+M._PARTS.sender.files = fake_send_files
 ORIG_COLLECT = M.collect_media
 _ORIG_ENQ = M.enqueue_message
 _ST = [None]  # the current test's state (reset)
@@ -175,7 +177,7 @@ def _enqueue_and_queue(msg_, cname, state, queue, *a, **kw):
     n = len(queue)
     ok = _ORIG_ENQ(msg_, cname, state, queue, *a, **kw)
     if ok:
-        M.queue_edit(add=queue[n:])
+        M._queue_files().edit(add=queue[n:])
     return ok
 
 
@@ -198,7 +200,7 @@ def reset():
     M.GENERATED_DIR = os.path.join(d, "generated")
     M.MEDIA_DIR = os.path.join(d, "media")
     os.makedirs(M.GENERATED_DIR)
-    D.GENERATED_DIR = M.GENERATED_DIR
+    D.session.generated_dir = M.GENERATED_DIR
     API_POSTS.clear()
     FILE_SENDS.clear()
     CURL_CALLS.clear()
@@ -206,9 +208,9 @@ def reset():
     CURL_HANDLER[0] = None
     SEND_FILES_FAIL[0] = 0
     M.collect_media = ORIG_COLLECT
-    M.MAX_REPLY_CHARS = 1800
-    M._OWNER_ITEMS_WRITTEN["body"] = None
-    D.OWNER_ITEMS_FILE = M.OWNER_ITEMS_FILE
+    M._SETTINGS.engine = M._SETTINGS.engine.model_copy(update={"max_reply_chars": 1800})
+    M._CAPABILITIES.files.commands.cache["body"] = None
+    D.session.owner_items_file = M.OWNER_ITEMS_FILE
     st = M.load_state()
     st["guild_joined"] = {GUILD: 0}
     _ST[0] = st
@@ -301,7 +303,7 @@ def f1_dm_image_not_attached_to_public_reply_old_layout():
     # The worker saved X's image straight into generated/ (old layout).
     make_file(os.path.join(M.GENERATED_DIR, "cat.png"))
     outbox([{"channel_id": GEN_CH, "text": "hi all", "reply_to": y["id"]}])
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     sent = [f for s in FILE_SENDS for f in s["files"]]
     assert not sent, f"public reply carried generated files: {sent}"
 
@@ -322,7 +324,7 @@ def f1_dm_image_bound_to_its_item():
             },
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     pub = [s for s in FILE_SENDS if s["channel"] == GEN_CH]
     dm = [s for s in FILE_SENDS if s["channel"] == DM_CH]
     assert not pub, f"public reply carried files: {pub}"
@@ -340,7 +342,7 @@ def f1_no_unbound_fallback_without_approval():
     img = make_file(os.path.join(M.GENERATED_DIR, "fresh.png"))
     make_file(os.path.join(M.GENERATED_DIR, z["id"], "fresh.png"))
     outbox([{"channel_id": GEN_CH, "text": "look", "reply_to": z["id"], "attachments": [img]}])
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not FILE_SENDS, f"unapproved item got files: {FILE_SENDS}"
 
 
@@ -357,7 +359,7 @@ def f1_reply_cannot_claim_other_item_or_channel():
             {"channel_id": GEN_CH, "text": "b", "reply_to": x["id"], "standalone": True},
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not FILE_SENDS, f"files leaked: {FILE_SENDS}"
 
 
@@ -382,7 +384,7 @@ def f1_symlink_and_traversal_rejected():
             }
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not FILE_SENDS, f"files leaked: {FILE_SENDS}"
 
 
@@ -407,7 +409,7 @@ def f2_burst_reply_under_last_fragment_gets_image():
             }
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert FILE_SENDS and FILE_SENDS[0]["files"] == [os.path.realpath(img)], (
         f"burst reply missed its image: {FILE_SENDS}"
     )
@@ -431,20 +433,20 @@ def f2_failed_send_retries_with_image_and_counts_once():
         ]
     )
     SEND_FILES_FAIL[0] = 1
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not FILE_SENDS
-    assert M._media_counts(state)["sent_today"] == 0, "media.per_day counted a failed send"
+    assert media_counts(state)["sent_today"] == 0, "media.per_day counted a failed send"
     assert x["id"] in state.get("gen_approved", {}), "approval popped early"
     assert os.path.realpath(img) not in state.get("gen_sent", []), "gen_sent recorded before send"
     ob = read_outbox()
     assert len(ob) == 1 and ob[0].get("_retry"), ob
     ob[0]["_retry"]["next"] = 0
     outbox(ob)
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert FILE_SENDS and FILE_SENDS[0]["files"] == [os.path.realpath(img)], (
         f"retry went out without the image: {FILE_SENDS}"
     )
-    assert M._media_counts(state)["sent_today"] == 1, "media.per_day must count the sent reply once"
+    assert media_counts(state)["sent_today"] == 1, "media.per_day must count the sent reply once"
     assert x["id"] not in state.get("gen_approved", {})
     assert os.path.realpath(img) in state.get("gen_sent", [])
     assert read_outbox() == []
@@ -468,12 +470,12 @@ def f2_tampered_retry_attachments_rejected():
         ]
     )
     SEND_FILES_FAIL[0] = 1
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     ob = read_outbox()
     ob[0]["_retry"]["next"] = 0
     ob[0]["_retry"]["attachments"] = [[TOKEN_FILE, TOKEN_FILE]]
     outbox(ob)
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     sent = [f for s in FILE_SENDS for f in s["files"]]
     assert TOKEN_FILE not in sent and os.path.realpath(TOKEN_FILE) not in sent, (
         f"token file sent: {sent}"
@@ -507,8 +509,8 @@ def d_multipart(path, payload, file_path):
     return {"id": "500000000000000001", "name": "t"}
 
 
-D.api = d_api
-D.api_multipart = d_multipart
+D.session.api = d_api
+D.session.api_multipart = d_multipart
 
 
 def d_acts():
@@ -606,7 +608,7 @@ def f4_monitor_outbox_rejects_malformed_ids():
             {"channel_id": GEN_CH, "text": "y", "reply_to": "1/../../x"},
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     assert not API_POSTS, f"malformed ids reached the API: {API_POSTS}"
 
 
@@ -614,17 +616,17 @@ def f4_monitor_outbox_rejects_malformed_ids():
 def f4_monitor_reaction_slash_encoded():
     reset()
     seen = []
-    orig = M.discord_request
+    orig = M._DISCORD.request
 
     def cap(method, path, data=None, **kwargs):
         seen.append(path)
         return {}
 
-    M.discord_request = cap
+    M._DISCORD.request = cap
     try:
-        M.add_reaction(GEN_CH, "123456789012345678", "../../x")
+        M._SENDER.reaction(GEN_CH, "123456789012345678", "../../x")
     finally:
-        M.discord_request = orig
+        M._DISCORD.request = orig
     assert seen and "%2F" in seen[0] and "/../" not in seen[0], seen
 
 
@@ -644,9 +646,9 @@ def f5_lookalike_hosts_rejected_and_not_downloaded():
         "https://media.giphy.com/a",
     ]
     for u in bad:
-        assert not M.embed_host_allowed(u), u
+        assert not fetch.embed_host_allowed(u), u
     for u in good:
-        assert M.embed_host_allowed(u), u
+        assert fetch.embed_host_allowed(u), u
     reset()
     CURL_HANDLER[0] = lambda cmd: curl_result(b"GIF89a\nimage/gif")
     m = msg(
@@ -673,7 +675,7 @@ def f5_redirect_to_private_or_unlisted_host_refused():
         return curl_result(b"SECRET-METADATA\n200\ntext/plain\n")
 
     CURL_HANDLER[0] = handler
-    data, _ctype = M._fetch_complete("https://media.tenor.com/doc.txt", 1000, 5, "document")
+    data, _ctype = fetch._fetch_complete("https://media.tenor.com/doc.txt", 1000, 5, "document")
     assert data is None, f"followed redirect to private addr: {data!r}"
     assert len(CURL_CALLS) == 1, CURL_CALLS
     # ... or to a host off the allowlist
@@ -687,7 +689,7 @@ def f5_redirect_to_private_or_unlisted_host_refused():
         return curl_result(b"internal\n200\ntext/plain\n")
 
     CURL_HANDLER[0] = handler
-    data, _ = M._fetch_complete("https://media.tenor.com/a.txt", 1000, 5, "document")
+    data, _ = fetch._fetch_complete("https://media.tenor.com/a.txt", 1000, 5, "document")
     assert data is None, data
 
 
@@ -701,7 +703,7 @@ def f5_allowlisted_redirect_followed_and_pinned():
         return curl_result(b"GIF89a-bytes\n200\nimage/gif\n")
 
     CURL_HANDLER[0] = handler
-    data, ctype = M._fetch_complete("https://media.tenor.com/a.gif", 1000, 5, "image")
+    data, ctype = fetch._fetch_complete("https://media.tenor.com/a.gif", 1000, 5, "image")
     assert data == b"GIF89a-bytes" and ctype == "image/gif", (data, ctype)
     assert "-L" not in CURL_CALLS[0] and "-f" in CURL_CALLS[0]
     i = CURL_CALLS[1].index("--resolve")
@@ -710,7 +712,7 @@ def f5_allowlisted_redirect_followed_and_pinned():
 
 @test
 def f5_urllib_redirect_handler_checks_hops():
-    h = M._FetchRedirectHandler()
+    h = fetch._FetchRedirectHandler()
     req = urllib.request.Request("https://media.tenor.com/a.gif")
     for bad in [
         "https://metadata.tenor.com/x",
@@ -811,7 +813,7 @@ def f7_role_mention_not_allowed():
             }
         ]
     )
-    M.process_outbox(state)
+    M._OUTBOX.process(state)
     msgs = [d for p, d in API_POSTS if p.endswith("/messages")]
     assert msgs and msgs[0].get("allowed_mentions") == {"parse": ["users"], "replied_user": True}, (
         msgs
@@ -823,20 +825,20 @@ def f7_role_mention_not_allowed():
 def f7_files_send_allowed_mentions():
     reset()
     seen = []
-    orig = M.discord_request
+    orig = M._DISCORD.request
 
     def cap(method, path, data=None, **kwargs):
         seen.append(data)
         return {}
 
     f = make_file(os.path.join(M.GENERATED_DIR, "1", "a.png"))
-    M.discord_request = cap
+    M._DISCORD.request = cap
     try:
         ORIG_SEND_FILES(
-            GEN_CH, "hi <@&1>", [(f, "a.png")], "123456789012345670", M.DeliveryOptions(nonce="abc")
+            GEN_CH, "hi <@&1>", [(f, "a.png")], "123456789012345670", DeliveryOptions(nonce="abc")
         )
     finally:
-        M.discord_request = orig
+        M._DISCORD.request = orig
     payload = seen[0]
     assert payload.get("allowed_mentions") == {"parse": ["users"], "replied_user": True}, payload
     assert payload.get("nonce") == "abc" and payload.get("enforce_nonce")
@@ -859,9 +861,9 @@ def f7_overlong_parts_clamped():
     for cap, text in cases:
         API_POSTS.clear()
         state["replied_to"] = []
-        M.MAX_REPLY_CHARS = cap
+        M._SETTINGS.engine = M._SETTINGS.engine.model_copy(update={"max_reply_chars": cap})
         outbox([{"channel_id": GEN_CH, "text": text, "reply_to": queued_in(state)}])
-        M.process_outbox(state)
+        M._OUTBOX.process(state)
         msgs = [d for p, d in API_POSTS if p.endswith("/messages")]
         assert msgs and all(len(d["content"]) <= 2000 for d in msgs), [
             len(d["content"]) for d in msgs
@@ -875,7 +877,7 @@ def f8_ffmpeg_inputs_whitelisted():
     reset()
     FF_REAL[0] = False
     try:
-        M.extract_frames("/nonexistent/x.vid", os.path.join(WORK, "fr"), 2)
+        video.extract_frames("/nonexistent/x.vid", os.path.join(WORK, "fr"), 2)
     finally:
         FF_REAL[0] = True
     probes = [c for c in FF_CALLS if c[0] == "ffprobe"]
@@ -923,7 +925,7 @@ def f8_concat_playlist_refused():
         # A relative name passes the concat demuxer's own "safe" check.
         f.write("ffconcat version 1.0\nfile 'real.mp4'\nduration 1\n")
     FF_OUT.clear()
-    frames = M.extract_frames(evil, os.path.join(VID_DIR, "evil"), 2)
+    frames = video.extract_frames(evil, os.path.join(VID_DIR, "evil"), 2)
     assert not frames, f"concat playlist was demuxed: {frames}"
     # ffprobe reading the playlist's target reports its duration.
     probes = [o for o in FF_OUT if o[0] == "ffprobe"]
@@ -936,7 +938,7 @@ def f8_real_video_still_works():
     real = _make_real_video()
     vid = os.path.join(VID_DIR, "ok.vid")
     shutil.copy(real, vid)
-    frames = M.extract_frames(vid, os.path.join(VID_DIR, "ok"), 2)
+    frames = video.extract_frames(vid, os.path.join(VID_DIR, "ok"), 2)
     assert len(frames) == 2, frames
     webm = os.path.join(VID_DIR, "real.webm")
     REAL_RUN(
@@ -944,7 +946,7 @@ def f8_real_video_still_works():
     )
     if os.path.exists(webm):
         shutil.copy(webm, os.path.join(VID_DIR, "w.vid"))
-        frames = M.extract_frames(os.path.join(VID_DIR, "w.vid"), os.path.join(VID_DIR, "w"), 2)
+        frames = video.extract_frames(os.path.join(VID_DIR, "w.vid"), os.path.join(VID_DIR, "w"), 2)
         assert len(frames) == 2, ("webm", frames)
 
 
@@ -961,9 +963,12 @@ def misc_sweep_generated_item_dirs():
     t = time.time() - 7200
     os.utime(old, (t, t))
     os.utime(old_dir, (t, t))
-    M.sweep_generated()
+    M._generated_replies().sweep_files()
     assert not os.path.exists(old) and not os.path.exists(old_dir)
     assert os.path.exists(new) and os.path.isdir(empty_new)
+
+
+from muse_discord.message_models import DeliveryOptions  # noqa: E402
 
 
 class Security(unittest.TestCase):

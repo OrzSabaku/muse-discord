@@ -6,10 +6,8 @@ a broken scenario fails at load time instead of mid-run.
 Run from the repo root: python3 -m unittest discover -s e2e/tests -t .
 """
 
-import ast
 import copy
 import os
-import re
 import shutil
 import sys
 import tempfile
@@ -25,6 +23,7 @@ import scenario  # noqa: E402
 import sut  # noqa: E402
 
 from muse_discord import muse_settings  # noqa: E402
+from muse_discord.receiving.quarantine import is_suspicious  # noqa: E402
 
 IDS = {"SUT": "111", "A": "222", "B": "333", "SUT_NAME": "muse-test"}
 GUILD, A, B, CHAN = "100", "200", "300", "400"
@@ -42,19 +41,6 @@ def base():
         ],
         "expect": {"settle": 5, "checks": [{"sut_reply_count": {"eq": 1}}, {"replies_to": "q1"}]},
     }
-
-
-def injection_patterns():
-    """monitor.py's INJECTION_PATTERNS, read without importing monitor
-    (its import reads config and the token)."""
-    with open(os.path.join(REPO, "src/muse_discord/monitor.py")) as f:
-        tree = ast.parse(f.read())
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(
-            getattr(t, "id", None) == "INJECTION_PATTERNS" for t in node.targets
-        ):
-            return ast.literal_eval(node.value)
-    raise AssertionError("INJECTION_PATTERNS not found in monitor.py")
 
 
 class Shipped(unittest.TestCase):
@@ -103,7 +89,6 @@ class Shipped(unittest.TestCase):
         quarantined silently, so a scenario about something else would
         test nothing; and a quarantine check whose text no longer
         matches tests nothing either."""
-        pats = injection_patterns()
         for sc in self.all:
             want = {c["quarantined"] for c in sc["expect"]["checks"] if "quarantined" in c}
             for step in sc["steps"]:
@@ -112,9 +97,7 @@ class Shipped(unittest.TestCase):
                     send.get("text") or "",
                     *list((step.get("converse") or {}).get("lines") or []),
                 ]
-                hit = any(
-                    re.search(p, scenario.render(t, IDS).lower()) for t in lines for p in pats
-                )
+                hit = any(is_suspicious(scenario.render(t, IDS)) for t in lines)
                 self.assertEqual(hit, send.get("label") in want, (sc["id"], send.get("label")))
 
 

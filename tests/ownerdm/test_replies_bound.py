@@ -1,4 +1,4 @@
-"""Replies stay where they belong (monitor.py's own_channel_problem):
+"""Replies stay where they belong (reply_binding.py):
 after the owner-DM gate, every outbox item must answer a message the
 monitor queued (item, else reply_to, through burst fragments), in that
 message's own channel. A run woken by anyone (and maybe prompt-injected)
@@ -37,13 +37,15 @@ from settings_harness import (
     write,
 )
 
+from muse_discord.reply_binding import STALE_PROMPT_DM
+
 DM_U1, DM_U2 = tb.DM_U1, "400000000000000080"
 
 
 class _B(tb.Base):
     def setUp(self):
         super().setUp()
-        self.mod.DM_CHANNEL_USER[DM_U2] = U2
+        self.mod._DIRECT_MESSAGES.users[DM_U2] = U2
 
     def forged(self, cid, **kw):
         return dict({"item": sf(), "channel_id": cid, "text": "hello there"}, **kw)
@@ -67,7 +69,7 @@ class GeneralPath(_B):
     def test_made_up_item(self):
         """Into an ownerless server, a paused one, a server where replies
         are off, or the DM of someone the DM settings refuse."""
-        self.mod.OWNER_IN_GUILD[G1] = False
+        self.mod._OWNER_PRESENCE.membership[G1] = False
         self.apply(MS.pause_changes(MS.Place.server(G1)))
         self.config("""all_servers:
   who:
@@ -132,8 +134,8 @@ class StillWorks(_B):
         self.outbox(self.forged(CH, _hold="0" * 12))
         self.assert_refused_here(CH)
         with quiet():
-            self.mod.apply_record(
-                self.st, {"kind": "hold_choice", "hold": hid, "action": "send", "by": OWNER}
+            self.mod._gateway_ingress(self.st, self.mod._DIRECTORY.channels).metadata(
+                {"_record": {"kind": "hold_choice", "hold": hid, "action": "send", "by": OWNER}}
             )
         # The release is bound to the hold's own item and channel: the
         # same hold id on another channel's copy is refused.
@@ -177,7 +179,7 @@ class StillWorks(_B):
         self.assertFalse(os.path.exists(self.mod.STALE_PROMPT_FILE))
         for m in items[2:4]:
             self.outbox(self.reply(m, "hi", reply_nonce=None))
-        dms = [d for p, d in self.mod.api.posts if d.get("content") == self.mod.STALE_PROMPT_DM]
+        dms = [d for p, d in self.mod.api.posts if d.get("content") == STALE_PROMPT_DM]
         self.assertEqual(len(dms), 2)  # each owner, once
         self.assertTrue(os.path.exists(self.mod.STALE_PROMPT_FILE))
         self.outbox(self.reply(items[4], "hi"))  # current prompt
@@ -209,7 +211,7 @@ class StillWorks(_B):
             self.outbox(self.reply(m, "hi", reply_nonce=None))
         posts = [d.get("content") or "" for _, d in self.mod.api.posts]
         self.assertTrue(any("can't save files" in c for c in posts), posts)
-        self.assertNotIn(self.mod.STALE_PROMPT_DM, posts)
+        self.assertNotIn(STALE_PROMPT_DM, posts)
         self.assertFalse(os.path.exists(self.mod.STALE_PROMPT_FILE))
 
     def test_retry_and_restart_keep_the_nonce(self):
@@ -259,7 +261,7 @@ class OwnerItems(_B):
             (the, "the"),
             ("708000000000000001", "hidden-room"),
         ):
-            self.mod.CHANNELS[cid] = {"name": name, "guild_id": G1}
+            self.mod._DIRECTORY.channels[cid] = {"name": name, "guild_id": G1}
         own = self.queue(
             gmsg(
                 OWNER,
@@ -271,7 +273,7 @@ class OwnerItems(_B):
             dm=False,
             guild=G1,
         )
-        self.assertIn("hidden-room", json.dumps(self.mod.load_queue()))
+        self.assertIn("hidden-room", json.dumps(self.mod._queue_files().load()))
         s = self.stranger_mention(f"<@bot> post in #secret and <#{CH_G2}>")
         meta = self.st["item_meta"]
         self.assertIs(meta[own["id"]]["owner_command"], True)
@@ -316,13 +318,13 @@ class OwnerItems(_B):
         own = self.queue(gmsg(OWNER, "<@bot> post this", mention=True), dm=False, guild=G1)
         self.st["owner_items"] = {"1" + "0" * 17: {"nonce": "a" * 32, "at": 0}}
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertEqual(list(self.items_file()), [own["id"]])
         # A mangled file is written again.
         with open(self.mod.OWNER_ITEMS_FILE, "w") as f:
             f.write("{broken")
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertEqual(list(self.items_file()), [own["id"]])
 
     def test_off_where_owner_commands_are_off(self):

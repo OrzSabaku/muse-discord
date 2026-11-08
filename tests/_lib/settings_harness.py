@@ -112,6 +112,7 @@ def load_monitor(cfg_text, tmp=None, channels=True):
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         spec.loader.exec_module(mod)
+        mod.initialize(token_override="dummy-token")
     mod.import_out = out.getvalue()
     redirect_files(mod, tmp)
     for attr, fn in [
@@ -133,28 +134,33 @@ def load_monitor(cfg_text, tmp=None, channels=True):
     mod.real_api_post = mod.api_post  # for tests of the helper itself
     mod.api_get = api.get
     mod.api_post = api.post
-    mod.send_typing = lambda cid: None
+    mod._TYPING.send = lambda cid: None
     mod.collect_media = lambda m: ([], [], [])
-    mod.BOT_ID = mod.BOT_USER_ID = BOT
-    mod.BOT_NAME = "muse"
+    mod._IDENTITY.user_id = BOT
+    mod._IDENTITY.name = "muse"
     mod.cfg_path = cfg
     mod.tmp = tmp
     if channels:
-        mod.CHANNELS = {
-            CH: {"name": "general", "guild_id": G1, "guild_name": "Lounge", "can_send": True},
-            CH2: {"name": "random", "guild_id": G1, "guild_name": "Lounge", "can_send": True},
-            THREAD: {
-                "name": "general > plans",
-                "guild_id": G1,
-                "guild_name": "Lounge",
-                "can_send": True,
-                "thread": True,
-                "parent_id": CH,
+        mod._DIRECTORY.adopt(
+            {
+                CH: {"name": "general", "guild_id": G1, "guild_name": "Lounge", "can_send": True},
+                CH2: {"name": "random", "guild_id": G1, "guild_name": "Lounge", "can_send": True},
+                THREAD: {
+                    "name": "general > plans",
+                    "guild_id": G1,
+                    "guild_name": "Lounge",
+                    "can_send": True,
+                    "thread": True,
+                    "parent_id": CH,
+                },
+                CH_G2: {"name": "chat", "guild_id": G2, "guild_name": "Other", "can_send": True},
             },
-            CH_G2: {"name": "chat", "guild_id": G2, "guild_name": "Other", "can_send": True},
-        }
-        mod.CHANNEL_CATEGORY.update({CH: CAT})
-        mod.GUILDS = {G1: {"name": "Lounge"}, G2: {"name": "Other"}}
+            mod._DIRECTORY.guilds,
+        )
+        mod._DIRECTORY.categories.update({CH: CAT})
+        mod._DIRECTORY.adopt(
+            mod._DIRECTORY.channels, {G1: {"name": "Lounge"}, G2: {"name": "Other"}}
+        )
     return mod
 
 

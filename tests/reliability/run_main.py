@@ -33,12 +33,13 @@ calls = {"list_dm_channels": 0, "sweep_media": 0}
 gw_action = {"fn": None}
 
 
-def fake_gw(token, inbox, status):
+def fake_gw():
+    inbox, status = mod._GATEWAY.inbox, mod._GATEWAY.status
     if gw_action["fn"]:
         gw_action["fn"](inbox, status)
 
 
-mod._gateway_thread_main = fake_gw
+mod._GATEWAY.run = fake_gw
 _orig_ldc = mod.list_dm_channels
 
 
@@ -59,7 +60,7 @@ def counting_sm():
 mod.sweep_media = counting_sm
 me = {"id": BOT, "username": "musebot"}
 mod.api.routes["/users/@me"] = me
-mod.BOT_ID = mod.BOT_USER_ID = None  # main() fetches it
+mod._IDENTITY.user_id = None  # main() fetches it
 until = None  # () -> True once the scenario has seen enough
 one_channel = ({"C1": chan()}, {G1: {"name": "Srv", "system_channel_id": None, "joined_at": None}})
 
@@ -111,7 +112,7 @@ elif scenario == "phases":
     def broken_outbox(state):
         raise RuntimeError("corrupt outbox")
 
-    mod.process_outbox = broken_outbox
+    mod._OUTBOX.process = broken_outbox
     until = lambda: calls["sweep_media"]  # noqa: E731  (a full cycle)
 elif scenario == "identity_pending":
     # Non-401 identity failure; REST otherwise fine.
@@ -130,7 +131,7 @@ elif scenario == "ready_identity":
         status["wake"].set()
 
     gw_action["fn"] = act
-    until = lambda: mod.BOT_USER_ID  # noqa: E731
+    until = lambda: mod._IDENTITY.user_id  # noqa: E731
 elif scenario == "batch_fold":
     mod.discover_channels = lambda previous=None: one_channel
     m0 = msg("C1", "U2", "earlier", age=60)
@@ -138,7 +139,7 @@ elif scenario == "batch_fold":
     m1 = msg("C1", "U1", "@bot quick question", mention=True, age=5)
     m2 = msg("C1", "U1", "what's the deploy command?", age=4)
     mod.api.msgs["C1"] = [m0, m1, m2]
-    until = lambda: mod.load_queue()  # noqa: E731
+    until = lambda: mod._queue_files().load()  # noqa: E731
 else:
     sys.exit(f"unknown scenario {scenario}")
 

@@ -61,7 +61,7 @@ telemetry.send_now
 *.log.1
 
 # Downloaded and generated media
-media/
+/media/
 generated/
 
 __pycache__/

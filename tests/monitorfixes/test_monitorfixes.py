@@ -64,10 +64,10 @@ class NoSendPermission(unittest.TestCase):
         m = load_monitor(BASE)
         msg = gmsg(U1, mention=True)
         with quiet() as output:
-            m._note_no_send(msg, "#general")
-            m._note_no_send(msg, "#general")
+            m._RECEPTION_AUDIT.no_send(msg, "#general")
+            m._RECEPTION_AUDIT.no_send(msg, "#general")
         self.assertEqual(output.getvalue().count("the bot cannot send"), 1)
-        record = m._ledger_load()["entries"][msg["id"]]
+        record = m._LEDGER.load()["entries"][msg["id"]]
         self.assertEqual(record["status"], "skipped")
         self.assertEqual(record["code"], "no-send")
         self.assertIn("no send permission", record["reason"])
@@ -85,31 +85,34 @@ class Base(unittest.TestCase):
         bump(self.m.cfg_path)
 
     def ledger(self, mid):
-        return self.m._ledger_load()["entries"].get(mid)
+        return self.m._LEDGER.load()["entries"].get(mid)
 
     def stage(self, msg, guild=G1, cname="Lounge #general"):
         """Classify and stage msg the way the poll / gateway do."""
         with quiet() as buf:
-            kind = self.m.classify_message(self.st, msg, cname, guild)
+            kind = self.m._receiver(self.st).classify(msg, cname, guild)
             if kind:
-                self.m.stage_found(self.st, msg, cname, guild, kind)
+                self.m._receiver(self.st).stage(msg, cname, guild, kind)
         return kind, buf.getvalue()
 
     def flush(self, force=False):
-        """flush_pending; unforced, every staged burst counts as matured
+        """Flush pending bursts; unforced, every staged burst counts as matured
         (its coalesce window over), as in the main loop."""
         for entry in self.st.get("pending", {}).values():
             entry["first_seen"] = 0
         q = []
         with quiet() as buf:
-            self.m.flush_pending(self.st, q, force=force)
+            self.m._bursts(self.st).flush(q, force=force)
         return q, buf.getvalue()
 
     def sweep(self, channels=None, dms=False):
         q = []
         with quiet():
             self.m.sweep_mentions(
-                self.st, q, channels if channels is not None else {CH: self.m.CHANNELS[CH]}, dms=dms
+                self.st,
+                q,
+                channels if channels is not None else {CH: self.m._DIRECTORY.channels[CH]},
+                dms=dms,
             )
         return q
 
@@ -261,19 +264,19 @@ class RefusedStaysRefused(Base):
     replies: "off"
 """
         )
-        m.DM_CHANNELS[DM_CH] = "owner"
+        m._DIRECT_MESSAGES.names[DM_CH] = "owner"
         dm = dmsg(OWNER, "you there?")
         dm["id"] = sf(600)
         inbox = queue.Queue()
         inbox.put(dm)
         with quiet():
-            self.assertEqual(m.drain_gateway(self.st, inbox, m.CHANNELS)[1], [])
+            self.assertEqual(m._gateway_ingress(self.st, m._DIRECTORY.channels).drain(inbox)[1], [])
         self.assertEqual(self.ledger(dm["id"])["status"], "skipped")
         # A stranger's declined DM stays unrecorded.
         stranger = dmsg(U1, "hello", channel="400000000000000078")
         inbox.put(stranger)
         with quiet():
-            m.drain_gateway(self.st, inbox, m.CHANNELS)
+            m._gateway_ingress(self.st, m._DIRECTORY.channels).drain(inbox)
         self.assertIsNone(self.ledger(stranger["id"]))
         # An owner DM lost while DMs are off is not answered by the sweep
         # either (it used to be: the DM sweep ignored who.replies).
@@ -317,8 +320,8 @@ class ThreadAPI:
 class NewThreads(Base):
     def setUp(self):
         super().setUp()
-        self.m.CHANNELS.pop("703000000000000001", None)
-        self.m.CHANNEL_CATEGORY.clear()
+        self.m._DIRECTORY.channels.pop("703000000000000001", None)
+        self.m._DIRECTORY.categories.clear()
 
     def setup_thread(self, created, starter_mentions=False):
         tid = sf_at(created)
@@ -331,7 +334,7 @@ class NewThreads(Base):
 
     def refresh(self):
         with quiet() as buf:
-            for _ in self.m.thread_refresh_iter(self.st):
+            for _ in self.m._directory_refresh().threads(self.st):
                 pass
         return buf.getvalue()
 
@@ -340,7 +343,7 @@ class NewThreads(Base):
         for msg in msgs:
             inbox.put(msg)
         with quiet():
-            return self.m.drain_gateway(self.st, inbox, self.m.CHANNELS)[0]
+            return self.m._gateway_ingress(self.st, self.m._DIRECTORY.channels).drain(inbox)[0]
 
     def poll(self, tid):
         with quiet():
@@ -352,7 +355,7 @@ class NewThreads(Base):
         # stage it again.
         tid, starter, mention = self.setup_thread(time.time() - 1)
         self.refresh()
-        self.assertIn(tid, self.m.CHANNELS)
+        self.assertIn(tid, self.m._DIRECTORY.channels)
         found = self.drain(starter, mention)
         self.assertEqual([x[0]["id"] for x in found], [mention["id"]])
         self.assertEqual(self.poll(tid), [])
@@ -380,7 +383,7 @@ class NewThreads(Base):
     def test_old_threads_history_is_not_new(self):
         # Created long before the monitor started: seeded at its newest.
         tid, _starter, mention = self.setup_thread(time.time() - 3600)
-        self.m.MONITOR_STARTED = time.time() - 60
+        self.m._DIRECTORY.started_at = time.time() - 60
         self.refresh()
         self.assertEqual(self.st["last_seen"][tid], mention["id"])
         self.assertEqual(self.poll(tid), [])
@@ -389,8 +392,8 @@ class NewThreads(Base):
         # created since that listing is new.
         self.setUp()
         m = self.m
-        m.MONITOR_STARTED = time.time() - 7200
-        m._THREADS_LISTED[G1] = time.time() - 300
+        m._DIRECTORY.started_at = time.time() - 7200
+        m._DIRECTORY.threads_listed[G1] = time.time() - 300
         tid, _, mention = self.setup_thread(time.time() - 1200)
         tid2 = sf_at(time.time() - 200)
         api = ThreadAPI(
@@ -413,7 +416,7 @@ class NewThreads(Base):
 class SystemNotices(Base):
     def test_pin_in_open_follow_up_window_is_ignored(self):
         m = self.m
-        m.open_follow_up(self.st, CH, U1)
+        m._conversation().open_follow_up(self.st, CH, U1)
         pin = gmsg(U1, "", age=0)
         pin["type"] = 6  # CHANNEL_PINNED_MESSAGE
         started = gmsg(U1, "side chat", age=0)
@@ -426,14 +429,14 @@ class SystemNotices(Base):
         reply["type"] = 19
         self.assertEqual(self.stage(reply)[0], "mention")
         # A pin in an owner's DM is not a trigger either (gateway, sweep).
-        m.DM_CHANNELS[DM_CH] = "owner"
+        m._DIRECT_MESSAGES.names[DM_CH] = "owner"
         pin = dmsg(OWNER, "")
         pin["type"] = 6
         pin["id"] = sf(600)
         inbox = queue.Queue()
         inbox.put(pin)
         with quiet():
-            self.assertEqual(m.drain_gateway(self.st, inbox, m.CHANNELS)[1], [])
+            self.assertEqual(m._gateway_ingress(self.st, m._DIRECTORY.channels).drain(inbox)[1], [])
         m.api.history[DM_CH] = [pin]
         self.assertEqual(self.sweep({}, dms=True), [])
 
@@ -475,7 +478,7 @@ class PoisonBurst(Base):
 
 class ReplyBudget(Base):
     def test_parts_share_one_max_reply_chars(self):
-        cap = self.m.MAX_REPLY_CHARS
+        cap = self.m._SETTINGS.engine.max_reply_chars
         for parts in (["a" * cap] * 4, ["a" * (cap - 5), "b" * 50]):
             got = self.m.normalize_parts({"parts": parts})
             self.assertLessEqual(sum(map(len, got)), cap, got)

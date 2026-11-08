@@ -73,7 +73,7 @@ class FakeAPI:
         raise HTTPErr(404)
 
     def get(self, path):
-        return self.mod._api_call(lambda: self._get(path))
+        return self.mod._DISCORD.call(lambda: self._get(path))
 
     def post(self, path, data):
         self.posts.append((path, data))
@@ -110,6 +110,7 @@ def load_monitor(tmp=None, cfg_extra=""):
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    mod.initialize(token_override="dummy-token")
     redirect_files(mod, tmp)
     for attr, fn in [
         ("STATE_FILE", "state.json"),
@@ -126,11 +127,10 @@ def load_monitor(tmp=None, cfg_extra=""):
     mod.api = FakeAPI(mod)
     mod.api_get = mod.api.get
     mod.api_post = mod.api.post
-    mod.send_typing = lambda cid: None
+    mod._TYPING.send = lambda cid: None
     mod.collect_media = lambda m: ([], [], [])
-    mod.get_reply_context = lambda m: None
-    mod.BOT_ID = mod.BOT_USER_ID = BOT
-    mod.BOT_NAME = "musebot"
+    mod._IDENTITY.user_id = BOT
+    mod._IDENTITY.name = "musebot"
     mod.TMP = tmp
     return mod
 

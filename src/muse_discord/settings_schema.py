@@ -6,18 +6,22 @@ Each layer validates only supplied values, so defaults never erase inheritance.
 """
 
 from dataclasses import dataclass
-from typing import Annotated, Literal, Required, TypedDict, cast
+from functools import cache
+from typing import Annotated, ClassVar, Literal, Required, TypedDict, cast
 from zoneinfo import ZoneInfo
 
 from pydantic import (
     AfterValidator,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StrictInt,
     StrictStr,
     TypeAdapter,
     ValidationError,
+    ValidationInfo,
+    field_validator,
 )
 from pydantic.fields import FieldInfo
 
@@ -65,6 +69,87 @@ def setting(default, scopes, *, editor=None, **options):
 
 class SettingsModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_default=True, frozen=True)
+
+
+@cache
+def _engine_bounds(model, field_name):
+    return TypeAdapter(model.model_fields[field_name].rebuild_annotation()).json_schema()
+
+
+class EngineModel(SettingsModel):
+    """Normalize operational knobs using the defaults and bounds in their schema."""
+
+    path: ClassVar[str] = "engine"
+    model_config = ConfigDict(
+        extra="forbid", validate_default=True, frozen=True, allow_inf_nan=False
+    )
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def normalize(cls, value, info: ValidationInfo):
+        assert info.field_name is not None
+        field = cls.model_fields[info.field_name]
+        if value is None:
+            return field.get_default(call_default_factory=True)
+        if field.annotation not in (int, float):
+            return value
+        cast_number = field.annotation
+        try:
+            number = cast_number(value)
+        except TypeError, ValueError, OverflowError:
+            cls.warn(info, f"{value!r} is not a number; using the default {field.default}.")
+            return field.default
+        bounds = _engine_bounds(cls, info.field_name)
+        for name, comparison in (("minimum", number.__lt__), ("maximum", number.__gt__)):
+            limit = bounds.get(name)
+            if limit is not None and comparison(limit):
+                direction = "below" if name == "minimum" else "above"
+                cls.warn(info, f"{value!r} is {direction} the {name} {limit}; using {limit}.")
+                return cast_number(limit)
+        return number
+
+    @classmethod
+    def warn(cls, info, message):
+        if info.context is not None:
+            info.context.setdefault("warnings", []).append(
+                f"WARNING: config {cls.path}.{info.field_name}={message}"
+            )
+
+
+class SweepSettings(EngineModel):
+    path: ClassVar[str] = "engine.sweep"
+    every_cycles: int = Field(default=6, ge=1)
+    grace_seconds: float = Field(default=240.0, ge=0)
+    max_age_hours: float = Field(default=6.0, ge=0)
+    max_recoveries: int = Field(default=2, ge=0)
+
+    @property
+    def max_age_seconds(self):
+        return self.max_age_hours * 3600
+
+
+class BackoffSettings(EngineModel):
+    path: ClassVar[str] = "engine.backoff"
+    initial_seconds: float = Field(default=60.0, ge=1)
+    max_seconds: float = Field(default=900.0, ge=1)
+
+
+class EngineSettings(EngineModel):
+    rest_poll_seconds: int = Field(default=30, ge=10)
+    discovery_refresh_minutes: float = Field(default=30.0, ge=1)
+    coalesce_seconds: float = Field(default=5.0, ge=0)
+    max_reply_chars: int = Field(default=1800, ge=1, le=2000)
+    guild_ids: list[Annotated[DiscordId, BeforeValidator(str)]] = Field(default_factory=list)
+    sweep: SweepSettings = Field(default_factory=SweepSettings)
+    backoff: BackoffSettings = Field(default_factory=BackoffSettings)
+
+    @property
+    def bot_coalesce_seconds(self):
+        return max(self.coalesce_seconds, 15.0)
+
+    @property
+    def discovery_refresh_cycles(self):
+        return max(1, round(self.discovery_refresh_minutes * 60 / self.rest_poll_seconds))
 
 
 class WhoSettings(SettingsModel):

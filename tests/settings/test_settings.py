@@ -45,6 +45,9 @@ from settings_harness import (
     write,
 )
 
+from muse_discord.settings import overlay as settings_overlay
+from muse_discord.settings import resolution as settings_resolution
+
 NEW_BASE = f"""version: 1
 owners: ["{OWNER}"]
 token_from: env:MUSE_TEST_TOKEN
@@ -244,7 +247,10 @@ channels:
 
     def test_freely_is_a_more_permissive_rule(self):
         self.assertTrue(MS.loosens("who.replies", "conversational", "freely"))
-        self.assertEqual(MS._quieter("who.replies", "freely", "when-addressed"), "when-addressed")
+        self.assertEqual(
+            settings_resolution._quieter("who.replies", "freely", "when-addressed"),
+            "when-addressed",
+        )
 
 
 class RemovedPlugins(unittest.TestCase):
@@ -329,7 +335,7 @@ class Overlay(unittest.TestCase):
         st = MS.load(cfg)
         self.assertEqual(st.retire, [])
         self.assertEqual(st.get("who.replies", S()), "off")
-        doc = MS._read_overlay_doc(st.overlay_path)
+        doc = settings_overlay._read_overlay_doc(st.overlay_path)
         self.assertEqual(doc["values"][key]["base"], "when-addressed")
         # inherit: as if the server set nothing.
         MS.reset(cfg, key, OWNER)
@@ -346,7 +352,7 @@ class Overlay(unittest.TestCase):
         st2 = MS.load(cfg)
         self.assertEqual(st2.retire, [])
         self.assertEqual(st2.commit_retirements(), [])
-        hist = MS._read_overlay_doc(st.overlay_path)["history"]
+        hist = settings_overlay._read_overlay_doc(st.overlay_path)["history"]
         self.assertEqual(hist[-1]["retired"], "file changed")
 
     def test_number_cap_overlay_survives_reload(self):
@@ -357,7 +363,7 @@ class Overlay(unittest.TestCase):
         st, cfg = load_text(NEW_BASE)
         key = f'servers."{G1}".proactive.per_channel_per_day'
         MS.set_value(cfg, key, 30, actor=MS.WriteActor(by=OWNER))
-        doc = MS._read_overlay_doc(MS.overlay_path_for(cfg))
+        doc = settings_overlay._read_overlay_doc(MS.overlay_path_for(cfg))
         self.assertIsNone(doc["values"][key]["base"])
         st = MS.load(cfg)
         self.assertEqual(st.retire, [])
@@ -556,12 +562,12 @@ class MonitorBase(unittest.TestCase):
         with open(self.m.OUTBOX_FILE, "w") as f:
             json.dump([out], f)
         with quiet() as buf:
-            self.m.process_outbox(self.st)
+            self.m._OUTBOX.process(self.st)
         return buf.getvalue()
 
     def kind(self, msg, guild=G1):
         with quiet():
-            return self.m.classify_message(self.st, msg, "#c", guild)
+            return self.m._receiver(self.st).classify(msg, "#c", guild)
 
 
 class LiveReload(MonitorBase):
@@ -579,7 +585,7 @@ class LiveReload(MonitorBase):
         # An invalid edit keeps the last good settings, logged once.
         self.rewrite(NEW_BASE + "all_servers:\n  who:\n    replies: maybe\n")
         with quiet():
-            self.assertIsNone(m.trigger_kind(gmsg(U1, mention=True), G1))
+            self.assertIsNone(m._admission().trigger_verdict(gmsg(U1, mention=True), G1)[0])
         # The overlay is watched too.
         self.rewrite(
             NEW_BASE
@@ -595,13 +601,13 @@ class LiveReload(MonitorBase):
             "when-addressed",
             actor=MS.WriteActor(by=OWNER),
         )
-        bump(m._SETTINGS.overlay_path)
+        bump(m._SETTINGS.watcher.overlay_path)
         self.assertEqual(self.kind(gmsg(U1, mention=True)), "mention")
         # Owners are re-read too.
         self.rewrite(NEW_BASE.replace(OWNER, U2))
         with quiet():
             m.settings()
-        self.assertEqual(m.OWNER_USER_IDS, {U2})
+        self.assertEqual(m._SETTINGS.owners, {U2})
 
     def test_conflict_rule_dms_owners_once(self):
         m = self.m
@@ -609,11 +615,15 @@ class LiveReload(MonitorBase):
         MS.set_value(
             m.cfg_path, "everywhere.style.length", "detailed", actor=MS.WriteActor(by=OWNER)
         )
-        bump(m._SETTINGS.overlay_path)
+        bump(m._SETTINGS.watcher.overlay_path)
         self.rewrite(NEW_BASE + "everywhere:\n  style:\n    length: normal\n")
         with quiet():
-            self.assertEqual(m.retire_overlay_changes(), 1)
-            self.assertEqual(m.retire_overlay_changes(), 0)
+            self.assertEqual(
+                m._SETTINGS.retire_changes(m._OWNER_MESSAGES.notify, m._BACKOFF.active), 1
+            )
+            self.assertEqual(
+                m._SETTINGS.retire_changes(m._OWNER_MESSAGES.notify, m._BACKOFF.active), 0
+            )
         self.assertEqual(len(m.api.dm_posts()), 1)  # the owner is told
         self.assertEqual(m.settings().get("style.length", MS.Scope.everywhere()), "normal")
 
@@ -683,7 +693,7 @@ class Cards(MonitorBase):
         msg = gmsg(OTHER_BOT, "more?", mention=True, bot=True, channel=CH_G2, guild=G2)
         ok, item = self.enqueue(msg, guild=G2)
         self.assertFalse(ok)
-        self.assertEqual(m._ledger_load()["entries"][msg["id"]]["status"], "skipped")
+        self.assertEqual(m._LEDGER.load()["entries"][msg["id"]]["status"], "skipped")
         # No limit (the default) in the other server.
         self.st["history"][CH] = self.st["history"][CH_G2]
         ok, item = self.enqueue(gmsg(OTHER_BOT, "x", mention=True, bot=True))
@@ -708,7 +718,7 @@ class NeverShare(MonitorBase):
             "member": {"user": {"id": uid}},
             "message": {"content": "Held a reply"},
         }
-        resp = self.m.dispatch_interaction(ix, recs.append)
+        resp = self.m._INTERACTION_WORKER.router.dispatch(ix, recs.append)
         return resp, recs
 
     def test_hold_buttons_send_anyway(self):
@@ -722,20 +732,20 @@ class NeverShare(MonitorBase):
         ids = [c["custom_id"] for c in dm["components"][0]["components"]]
         self.assertEqual(ids, [f"mdhold:send:{hid}", f"mdhold:discard:{hid}"])
         # Settled: out of the queue (no worker gets it again) and ledgered.
-        self.assertEqual(m.load_queue(), [])
-        self.assertEqual(m._ledger_load()["entries"][item["message_id"]]["status"], "skipped")
+        self.assertEqual(m._queue_files().load(), [])
+        self.assertEqual(m._LEDGER.load()["entries"][item["message_id"]]["status"], "skipped")
         resp, recs = self.click(hid, "send", uid=U1)  # not an owner
         self.assertEqual(recs, [])
         self.assertEqual(m.api.channel_posts(CH), [])
         resp, recs = self.click(hid, "send")
         self.assertEqual(resp["type"], 7)
         with quiet():
-            m.apply_record(self.st, recs[0])
-            m.process_outbox(self.st)
+            m._gateway_ingress(self.st, m._DIRECTORY.channels).metadata({"_record": recs[0]})
+            m._OUTBOX.process(self.st)
         posted = m.api.channel_posts(CH)
         self.assertEqual(len(posted), 1)
         self.assertIn("Project Falcon", posted[0]["content"])
-        self.assertEqual(m._ledger_load()["entries"][item["message_id"]]["status"], "replied")
+        self.assertEqual(m._LEDGER.load()["entries"][item["message_id"]]["status"], "replied")
         resp, recs = self.click(hid, "send")
         self.assertEqual(recs, [])  # sent once only
 
@@ -745,16 +755,16 @@ class NeverShare(MonitorBase):
         hid = next(iter(holds))
         _resp, recs = self.click(hid, "discard")
         with quiet():
-            m.apply_record(self.st, recs[0])
+            m._gateway_ingress(self.st, m._DIRECTORY.channels).metadata({"_record": recs[0]})
         self.assertEqual(self.st["holds"], {})
         _item, _out, holds = self.hold("the cat is out")
         hid = next(iter(holds))
         holds[hid]["at"] -= 25 * 3600
-        m._holds_live[hid] -= 25 * 3600
+        m._REVIEW.live[hid] -= 25 * 3600
         _resp, recs = self.click(hid, "send")
         self.assertEqual(recs, [])
         with quiet():
-            m.expire_holds(self.st)
+            m._REVIEW.expire(self.st)
         self.assertEqual(self.st["holds"], {})
         self.assertEqual(m.api.channel_posts(CH), [])
 
@@ -788,11 +798,18 @@ class Who(MonitorBase):
 '''
         )
         m = self.m
-        self.assertEqual(m.trigger_kind(gmsg(U1, "hello"), G1, self.st), "follow_up")
-        self.assertIsNone(m.trigger_kind(gmsg(U1, "hello", channel=CH2), G1, self.st))
-        self.assertIsNone(m.trigger_kind(gmsg(OTHER_BOT, "beep", bot=True), G1, self.st))
         self.assertEqual(
-            m.trigger_kind(gmsg(OTHER_BOT, mention=True, bot=True), G1, self.st), "mention"
+            m._admission().trigger_verdict(gmsg(U1, "hello"), G1, self.st)[0], "follow_up"
+        )
+        self.assertIsNone(
+            m._admission().trigger_verdict(gmsg(U1, "hello", channel=CH2), G1, self.st)[0]
+        )
+        self.assertIsNone(
+            m._admission().trigger_verdict(gmsg(OTHER_BOT, "beep", bot=True), G1, self.st)[0]
+        )
+        self.assertEqual(
+            m._admission().trigger_verdict(gmsg(OTHER_BOT, mention=True, bot=True), G1, self.st)[0],
+            "mention",
         )
 
     def test_dms_from(self):
@@ -802,7 +819,7 @@ class Who(MonitorBase):
             inbox = queue.Queue()
             inbox.put(msg)
             with quiet():
-                return m.drain_gateway(self.st, inbox, m.CHANNELS)[1]
+                return m._gateway_ingress(self.st, m._DIRECTORY.channels).drain(inbox)[1]
 
         stranger = dmsg(U1, "hi bot")
         self.assertEqual(drain(stranger), [])
@@ -836,7 +853,10 @@ class Who(MonitorBase):
             f'      allow: ["role:{ROLE}", "{U2}"]\n'
             f'      ignore: ["{OTHER_BOT}"]\n'
         )
-        k = m.trigger_kind
+
+        def k(msg, guild_id=None, state=None):
+            return m._admission().trigger_verdict(msg, guild_id, state)[0]
+
         self.assertEqual(k(gmsg(U1, mention=True, roles=[ROLE]), G1), "mention")
         self.assertIsNone(k(gmsg(U1, mention=True, roles=["1"]), G1))
         self.assertEqual(k(gmsg(U2, mention=True, roles=[]), G1), "mention")
@@ -884,7 +904,7 @@ servers:
         ok, _item = self.enqueue(msg)
         self.assertFalse(ok)
         self.assertFalse(os.path.exists(m.QUARANTINE_FILE))
-        self.assertEqual(m._ledger_load()["entries"][msg["id"]]["status"], "skipped")
+        self.assertEqual(m._LEDGER.load()["entries"][msg["id"]]["status"], "skipped")
 
 
 class Caps(MonitorBase):
@@ -1002,11 +1022,11 @@ class FollowUps(MonitorBase):
         self.answered()
         first = gmsg(U1, "one more thing")
         with quiet():
-            kind = m.classify_message(self.st, first, "#c", G1)
-            m.stage_found(self.st, first, "#c", G1, kind)
-            self.assertIsNone(m.classify_message(self.st, gmsg(U1, "and another"), "#c", G1))
+            kind = m._receiver(self.st).classify(first, "#c", G1)
+            m._receiver(self.st).stage(first, "#c", G1, kind)
+            self.assertIsNone(m._receiver(self.st).classify(gmsg(U1, "and another"), "#c", G1))
             q = []
-            m.flush_pending(self.st, q, force=True)
+            m._bursts(self.st).flush(q, force=True)
         self.assertEqual(len(q), 1)
         self.assertTrue(q[0]["follow_up"])
         self.assertTrue(q[0]["burst"])
@@ -1015,13 +1035,13 @@ class FollowUps(MonitorBase):
         self.answered()
         first = gmsg(U1, "wait")
         with quiet():
-            kind = m.classify_message(self.st, first, "#c", G1)
-            m.stage_found(self.st, first, "#c", G1, kind)
-            m.classify_message(self.st, gmsg(U1, "@muse hm", mention=True), "#c", G1)
+            kind = m._receiver(self.st).classify(first, "#c", G1)
+            m._receiver(self.st).stage(first, "#c", G1, kind)
+            m._receiver(self.st).classify(gmsg(U1, "@muse hm", mention=True), "#c", G1)
             q = []
-            m.flush_pending(self.st, q, force=True)
+            m._bursts(self.st).flush(q, force=True)
         self.assertFalse(q[0]["follow_up"])
-        self.assertEqual(m._ledger_load()["entries"][first["id"]]["status"], "queued")
+        self.assertEqual(m._LEDGER.load()["entries"][first["id"]]["status"], "queued")
 
     def test_sweep_never_requeues_follow_ups(self):
         m = self.m
@@ -1031,12 +1051,12 @@ class FollowUps(MonitorBase):
         m.api.history[CH] = [old]
         q = []
         with quiet():
-            m.sweep_mentions(self.st, q, {CH: m.CHANNELS[CH]}, dms=False)
+            m.sweep_mentions(self.st, q, {CH: m._DIRECTORY.channels[CH]}, dms=False)
         self.assertEqual(q, [])
         mention = gmsg(U2, "@muse lost", mention=True, age=600)
         m.api.history[CH] = [old, mention]
         with quiet():
-            m.sweep_mentions(self.st, q, {CH: m.CHANNELS[CH]}, dms=False)
+            m.sweep_mentions(self.st, q, {CH: m._DIRECTORY.channels[CH]}, dms=False)
         self.assertEqual([i["message_id"] for i in q], [mention["id"]])
 
 
@@ -1077,7 +1097,7 @@ servers:
             gmsg(U2, "draw", mention=True, roles=[ROLE], channel=CH_G2, guild=G2), guild=G2
         )
         self.assertTrue(item["may_generate"])
-        m.note_media_sent(self.st, m.scope_for(G2, CH_G2))
+        m._response_policy().note_media_sent(self.st, m._DIRECTORY.scopes.for_message(G2, CH_G2))
         _ok, item = self.enqueue(
             gmsg(U2, "again", mention=True, roles=[ROLE], channel=CH_G2, guild=G2), guild=G2
         )

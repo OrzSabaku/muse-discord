@@ -15,8 +15,15 @@ import sys
 import time
 import unittest
 
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
+
+import common  # noqa: F401 (select the source tree under test)
+
+from muse_discord.rest_scheduler import GeneratorJob, RestClock
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 
 # scenario -> seconds of main() at most (each stops once it has seen
 # enough, see run_fast.py)
@@ -142,7 +149,7 @@ class SlicedJobs(unittest.TestCase):
                 },
             }
         )
-        mod.CHANNELS = {"C1": H.chan(), "OLD": H.chan("old")}
+        mod._DIRECTORY.adopt({"C1": H.chan(), "OLD": H.chan("old")}, mod._DIRECTORY.guilds)
         self.st = {
             "last_seen": {"C1": "5", "OLD": "5"},
             "replied_to": [],
@@ -165,26 +172,34 @@ class SlicedJobs(unittest.TestCase):
 
     def test_discovery_job_sliced_and_keeps_gateway_channels(self):
         mod, H = self.mod, self.H
-        job = mod.GenJob("Channel refresh", mod.discovery_iter(self.st))
+        job = GeneratorJob(
+            "Channel refresh",
+            mod._directory_refresh().channels(self.st),
+            RestClock(time.time, mod._BACKOFF.active),
+        )
 
         def gateway_registers():
-            mod.CHANNELS["GW"] = H.chan("gw")
+            mod._DIRECTORY.channels["GW"] = H.chan("gw")
 
         steps = self._run(job, gateway_registers)
         self.assertGreaterEqual(steps, 6)
-        self.assertEqual(set(mod.CHANNELS), {"C1", "C2", "T1", "GW"})
+        self.assertEqual(set(mod._DIRECTORY.channels), {"C1", "C2", "T1", "GW"})
         self.assertIn("C2", self.st["last_seen"])  # seeded
         self.assertEqual(self.st["last_seen"]["C1"], "5")  # untouched
 
     def test_thread_refresh_job_and_backoff(self):
         mod = self.mod
-        job = mod.GenJob("Thread refresh", mod.thread_refresh_iter(self.st))
-        mod._rl_until = time.time() + 60  # REST back-off: the job waits
+        job = GeneratorJob(
+            "Thread refresh",
+            mod._directory_refresh().threads(self.st),
+            RestClock(time.time, mod._BACKOFF.active),
+        )
+        mod._BACKOFF.until = time.time() + 60  # REST back-off: the job waits
         self.assertEqual(job.run_slice(self.st, time.time() + 1, True), 0)
         self.assertFalse(job.done())
-        mod._rl_until = 0
+        mod._BACKOFF.until = 0
         self.assertGreaterEqual(self._run(job), 3)
-        self.assertIn("T1", mod.CHANNELS)
+        self.assertIn("T1", mod._DIRECTORY.channels)
         self.assertIn("T1", self.st["last_seen"])
 
 

@@ -8,9 +8,13 @@ import unittest
 from unittest.mock import AsyncMock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import discord
 import harness as H
+from discord import ui
 
 from muse_discord import settings_ui as UI
+from muse_discord.settings_views.labels import CATEGORIES
+from muse_discord.settings_views.model import available
 
 MS = H.MS
 
@@ -36,6 +40,7 @@ def interaction(ctx, user=H.OWNER, gid=H.G1, manage=False, data=None):
         data=data or {},
         response=response,
         client=types.SimpleNamespace(
+            settings_redraw=UI.redraw,
             settings_context=factory,
             settings_guard=lambda *a: None,
             settings_log=ctx.log,
@@ -51,7 +56,7 @@ def components(view, kind):
 
 
 def panel_text(view):
-    return "\n".join(c.content for c in components(view, UI.ui.TextDisplay))
+    return "\n".join(c.content for c in components(view, ui.TextDisplay))
 
 
 class NativeUI(unittest.IsolatedAsyncioTestCase):
@@ -74,7 +79,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         await UI.open_settings(ix, self.ctx)
         ix.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
         view = ix.edit_original_response.call_args.kwargs["view"]
-        self.assertIsInstance(view, UI.ui.LayoutView)
+        self.assertIsInstance(view, ui.LayoutView)
         self.assertIn("継承する値", panel_text(view))
         self.assertLessEqual(len(list(view.walk_children())), 40)
         self.assertLessEqual(view.content_length(), 4000)
@@ -91,9 +96,9 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         self.screen.key = "style.length"
         for val in ["brief", "detailed"]:
             item = UI.Action(
-                UI.ui.Select(
+                ui.Select(
                     custom_id=f"mset:{self.screen.token}:set",
-                    options=[UI.discord.SelectOption(label=val, value=json.dumps(val))],
+                    options=[discord.SelectOption(label=val, value=json.dumps(val))],
                 )
             )
             ix = interaction(self.ctx, data={"values": [json.dumps(val)]})
@@ -160,7 +165,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
         self.assertIn("warnings", self.screen.pending)
         self.assertTrue(self.screen.pending["warnings"])
         self.assertEqual(self.ctx.value("privacy.memory", MS.Place.server(H.G1)), "public-only")
-        self.assertIn("確認して適用", [c.label for c in components(self.panel(), UI.ui.Button)])
+        self.assertIn("確認して適用", [c.label for c in components(self.panel(), ui.Button)])
         self.act("confirm")
         self.assertEqual(self.ctx.value("privacy.memory", MS.Place.server(H.G1)), "everything")
         with self.assertRaises(MS.SettingsError):
@@ -235,7 +240,7 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
             self.screen.authorize(interaction(self.ctx), self.ctx)
 
     async def test_expired_and_wrong_user_dynamic_buttons_write_nothing(self):
-        item = UI.Action(UI.ui.Button(label="保存", custom_id=f"mset:{self.screen.token}:save"))
+        item = UI.Action(ui.Button(label="保存", custom_id=f"mset:{self.screen.token}:save"))
         for user in [H.OWNER, H.OWNER2]:
             ix = interaction(self.ctx, user)
             await item.callback(ix)
@@ -257,8 +262,8 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
             f"channel:{H.G1}:{H.MUSECHAT}",
         ]:
             screen = UI.Screen(H.OWNER, place)
-            keys = UI.available(self.ctx, screen.place(self.ctx), "owner")
-            for category, (_, candidates) in UI.CATEGORIES.items():
+            keys = available(self.ctx, screen.place(self.ctx), "owner")
+            for category, (_, candidates) in CATEGORIES.items():
                 for key in set(candidates) & set(keys):
                     screen.category, screen.key = category, key
                     view = UI.Panel(screen, self.ctx, "owner", interaction_gid=H.G1)
@@ -281,10 +286,10 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
             seen = set()
             for _ in range(10):
                 view = self.panel()
-                for sel in components(view, UI.ui.Select):
+                for sel in components(view, ui.Select):
                     seen.update(o.value for o in sel.options)
                     self.assertLessEqual(len(sel.options), 25)
-                next_ = next(b for b in components(view, UI.ui.Button) if b.label == "次へ")
+                next_ = next(b for b in components(view, ui.Button) if b.label == "次へ")
                 if next_.disabled:
                     break
                 self.act("next")
@@ -336,14 +341,14 @@ class NativeUI(unittest.IsolatedAsyncioTestCase):
     async def test_many_warnings_cannot_be_confirmed_without_being_shown(self):
         self.screen.pending = {"warnings": [f"warning {n}" for n in range(6)]}
         view = self.panel()
-        confirm = next(b for b in components(view, UI.ui.Button) if b.label == "確認して適用")
+        confirm = next(b for b in components(view, ui.Button) if b.label == "確認して適用")
         self.assertTrue(confirm.disabled)
         with self.assertRaises(MS.SettingsError):
             self.act("confirm")
 
     async def test_long_untrusted_names_fit_discord_limits_without_mentions(self):
         self.ctx.names = lambda _: "@everyone **name** " + "x" * 4000
-        for category in UI.CATEGORIES:
+        for category in CATEGORIES:
             self.screen.category = category
             view = self.panel()
             self.assertLessEqual(view.content_length(), 4000)

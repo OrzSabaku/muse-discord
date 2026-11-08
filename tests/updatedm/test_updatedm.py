@@ -29,6 +29,8 @@ from common import (  # noqa: E402 (local import path bootstrap)
     HOOK_RUNTIME as RUNTIME,
 )
 
+from muse_discord.owner.updates import UPDATE_DM_TRIES  # noqa: E402 (local import path bootstrap)
+
 V0 = "v1.0.0"
 V1 = "v1.1.0"
 V2 = "v1.2.0"
@@ -88,11 +90,11 @@ def ix(custom_id, user=H.OWNER, guild=False, content="notice text"):
 class Announce(unittest.TestCase):
     def test_dm_each_owner_once_with_buttons(self):
         mod = load()
-        mod.OWNER_USER_IDS = {H.OWNER, OTHER}
+        mod._SETTINGS.owners = {H.OWNER, OTHER}
         ents = [f"v1.{i}.0 (2026-11-0{i}): Entry {i}" for i in range(7, 0, -1)]
         write_check(mod, "v1.7.0", ents, action=True, installed=V0)
         state = {}
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         posts = dm_posts(mod)
         self.assertEqual(len(posts), 2)
         opened = [d["recipient_id"] for p, d in mod.api.posts if p == "/users/@me/channels"]
@@ -108,19 +110,19 @@ class Announce(unittest.TestCase):
         self.assertEqual([b["type"] for b in btns], [2, 2])
         self.assertEqual([b["custom_id"] for b in btns], ["mdupd:now:v1.7.0", "mdupd:later:v1.7.0"])
         self.assertEqual(state["update_notice"]["version"], "v1.7.0")
-        self.assertEqual(mod._update_announced["version"], "v1.7.0")
+        self.assertEqual(mod._UPDATE_NOTICES.announced["version"], "v1.7.0")
         # Same version again (and after a state round trip): no new DM.
         n = len(mod.api.posts)
-        mod.announce_update(state)
-        mod.announce_update(json.loads(json.dumps(state)))
+        mod._UPDATE_NOTICES.announce(state)
+        mod._UPDATE_NOTICES.announce(json.loads(json.dumps(state)))
         self.assertEqual(len(mod.api.posts), n)
         # An older version (a retracted tag) is not offered.
         write_check(mod, V2, ["v1.2.0 (2026-11-01): Old"])
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(mod.api.posts), n)
         # A newer version asks again; semver order, not string order.
         write_check(mod, "v1.10.0", ["v1.10.0 (2026-12-01): Newer"], installed="v1.7.0")
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 4)
         last = dm_posts(mod)[-1][1]
         self.assertIn("mdupd:now:v1.10.0", json.dumps(last["components"]))
@@ -129,37 +131,37 @@ class Announce(unittest.TestCase):
         mod = load()
         write_check(mod, "", [])
         state = {}
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(mod.api.posts, [])
         os.unlink(mod.UPDATE_CHECK_FILE)
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(mod.api.posts, [])
         # Not releases: ignored.
         for bad in ("v1.3.0-rc.1", "v2", "1.3.0", "v01.3.0", "a" * 40):
             write_check(mod, bad, ["x"])
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(mod.api.posts, [])
         write_check(mod, V1, [])  # a release, no entries
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
 
     def test_check_off_no_dm(self):
         mod = load("updates:\n  notify: false\n")
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
-        mod.announce_update({})
+        mod._UPDATE_NOTICES.announce({})
         self.assertEqual(mod.api.posts, [])
         # Turned off while running.
         mod = load()
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
         state = {}
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
         cfg = os.environ["MUSE_DISCORD_CONFIG"]
         with open(cfg, "a") as f:
             f.write("updates:\n  notify: false\n")
         os.utime(cfg, (time.time() + 5, time.time() + 5))
         write_check(mod, V2, ["v1.2.0 (2026-11-01): Y"])
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
 
     def test_failed_dm_retried_then_given_up(self):
@@ -168,10 +170,10 @@ class Announce(unittest.TestCase):
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
         state = {}
         with contextlib.redirect_stdout(io.StringIO()):
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
             self.assertEqual(state["update_notice"]["owed"], [H.OWNER])
             del mod.api.errors["/channels/DM1/messages"]
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(state["update_notice"]["owed"], [])
         self.assertEqual(len(dm_posts(mod)), 2)
         mod2 = load()
@@ -180,8 +182,8 @@ class Announce(unittest.TestCase):
         st = {}
         with contextlib.redirect_stdout(io.StringIO()):
             for _ in range(15):
-                mod2.announce_update(st)
-        self.assertEqual(len(dm_posts(mod2)), mod2.UPDATE_DM_TRIES)
+                mod2._UPDATE_NOTICES.announce(st)
+        self.assertEqual(len(dm_posts(mod2)), UPDATE_DM_TRIES)
 
     def test_already_installed_version_not_announced(self):
         mod = load()
@@ -189,7 +191,7 @@ class Announce(unittest.TestCase):
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
         state = {}
         with contextlib.redirect_stdout(io.StringIO()):
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(mod.api.posts, [])
         self.assertEqual(state["update_notice"]["version"], V1)
 
@@ -215,11 +217,11 @@ class Announce(unittest.TestCase):
 class Interactions(unittest.TestCase):
     def setUp(self):
         self.mod = load()
-        self.mod._update_announced["version"] = V2
+        self.mod._UPDATE_NOTICES.announced["version"] = V2
         self.recs = []
 
     def dispatch(self, i):
-        return self.mod.dispatch_interaction(i, self.recs.append)
+        return self.mod._INTERACTION_WORKER.router.dispatch(i, self.recs.append)
 
     def test_owner_update_now(self):
         r = self.dispatch(ix(f"mdupd:now:{V2}"))
@@ -237,7 +239,7 @@ class Interactions(unittest.TestCase):
         self.assertEqual(self.recs[0]["version"], V2)
         # A second click (another owner, guild-style payload) keeps the
         # first request.
-        self.mod.OWNER_USER_IDS = {H.OWNER, OTHER}
+        self.mod._SETTINGS.owners = {H.OWNER, OTHER}
         r2 = self.dispatch(ix(f"mdupd:now:{V2}", user=OTHER, guild=True))
         self.assertEqual(r2["type"], 7)
         with open(self.mod.UPDATE_REQUEST_FILE) as f:
@@ -286,7 +288,7 @@ class Interactions(unittest.TestCase):
         mod = self.mod
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
         state = {}
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
         r = self.dispatch(ix(f"mdupd:later:{V1}"))
         self.assertEqual(r["type"], 7)
@@ -299,14 +301,14 @@ class Interactions(unittest.TestCase):
         for rec in self.recs:
             q.put({"_record": rec})
         with contextlib.redirect_stdout(io.StringIO()):
-            mod.drain_gateway(state, q, {})
+            mod._gateway_ingress(state, {}).drain(q)
         self.assertEqual(state["update_notice"]["choice"]["action"], "later")
         self.assertEqual(state["update_notice"]["choice"]["by"], H.OWNER)
         for _ in range(3):
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
         write_check(mod, V2, ["v1.2.0 (2026-11-01): Y"])
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 2)
         self.assertNotIn("choice", state["update_notice"])
         # The old prompt's buttons are now stale; the new ones work.
@@ -324,12 +326,12 @@ class Interactions(unittest.TestCase):
         def request(method, path, data=None, **kwargs):
             seen.update(method=method, path=path, data=data, **kwargs)
 
-        orig = mod.discord_request
-        mod.discord_request = request
+        orig = mod._DISCORD.request
+        mod._DISCORD.request = request
         try:
-            mod.interaction_callback(ix("x"), {"type": 7, "data": {}})
+            mod._INTERACTION_WORKER.responder.send(ix("x"), {"type": 7, "data": {}})
         finally:
-            mod.discord_request = orig
+            mod._DISCORD.request = orig
         self.assertEqual(seen["path"], "/interactions/9001/tok-en_1/callback")
         self.assertEqual(seen["method"], "POST")
         self.assertEqual(seen["data"], {"type": 7, "data": {}})

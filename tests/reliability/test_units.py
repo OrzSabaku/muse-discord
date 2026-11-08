@@ -27,9 +27,11 @@ from monitor_harness import (
     sf,
 )
 
+from muse_discord.message_models import MessagePlace, Settlement
+
 
 def ledger(mod):
-    return mod._ledger_load()["entries"]
+    return mod._LEDGER.load()["entries"]
 
 
 def new_state(mod):
@@ -38,25 +40,27 @@ def new_state(mod):
     return st
 
 
+from muse_discord.message_models import DeliveryOptions  # noqa: E402
+from muse_discord.messaging.parts import send_nonce  # noqa: E402
+
+
 class F2BurstLedger(unittest.TestCase):
     def _burst(self, mod, st, contents):
         msgs = [msg("C1", "U1", c, mention=True) for c in contents]
         for m in msgs:
-            mod.record_history(st, "C1", [m])
-        mod.stage_trigger(
-            st, msgs[0], "Srv #general", "mention", place=mod.MessagePlace(guild_id=G1)
-        )
+            mod._conversation().record_history(st, "C1", [m])
+        mod._bursts(st).stage(msgs[0], "Srv #general", "mention", place=MessagePlace(guild_id=G1))
         for m in msgs[1:]:
-            mod.classify_message(st, m, "Srv #general", G1)
+            mod._receiver(st).classify(m, "Srv #general", G1)
         q = []
-        mod.flush_pending(st, q, force=True)
+        mod._bursts(st).flush(q, force=True)
         return msgs, q
 
     def _sweep(self, mod, st, msgs):
         mod.api.msgs["C1"] = msgs
-        mod.CHANNELS = {"C1": chan()}
+        mod._DIRECTORY.adopt({"C1": chan()}, mod._DIRECTORY.guilds)
         q = []
-        mod.sweep_mentions(st, q, mod.CHANNELS)
+        mod.sweep_mentions(st, q, mod._DIRECTORY.channels)
         return [i["message_id"] for i in q]
 
     def test_mid_burst_mention_not_answered_twice(self):
@@ -67,10 +71,10 @@ class F2BurstLedger(unittest.TestCase):
         self.assertEqual(
             ledger(mod).get(q2["id"], {}).get("status"), "queued", "fragment ledgered at enqueue"
         )
-        mod._settle(
+        mod._REPLIES.settle(
             st,
             {"reply_to": q3["id"], "channel_id": "C1"},
-            outcome=mod.Settlement(status="replied", replied=True),
+            outcome=Settlement(status="replied", replied=True),
         )
         for m in (q1, q2, q3):
             self.assertEqual(ledger(mod)[m["id"]]["status"], "replied")
@@ -80,12 +84,10 @@ class F2BurstLedger(unittest.TestCase):
         mod = H.load_monitor()
         st = new_state(mod)
         (q1, q2, q3), _q = self._burst(mod, st, ["a", "b", "c"])
-        mod._settle(
+        mod._REPLIES.settle(
             st,
             {"reply_to": q2["id"], "channel_id": "C1"},
-            outcome=mod.Settlement(
-                status="skipped", reason="no reply (worker's call)", replied=True
-            ),
+            outcome=Settlement(status="skipped", reason="no reply (worker's call)", replied=True),
         )
         self.assertEqual(ledger(mod)[q3["id"]]["status"], "skipped")
         self.assertEqual(self._sweep(mod, st, [q1, q2, q3]), [])
@@ -103,13 +105,14 @@ class F2BurstLedger(unittest.TestCase):
 class F4GuildAllowlist(unittest.TestCase):
     def test_gateway_message_from_other_guild_ignored(self):
         mod = H.load_monitor()
-        mod.GUILD_ALLOWLIST = {G1}
+        mod.GUILD_ALLOWLIST.clear()
+        mod.GUILD_ALLOWLIST.add(G1)
         st = new_state(mod)
         st["guild_joined"]["G2"] = 0
         mod.api.routes["/channels/C9"] = {"id": "C9", "guild_id": "G2", "name": "x", "type": 0}
         inbox = pyqueue.Queue()
         inbox.put(msg("C9", "U1", "hi", mention=True, gid="G2", age=0))
-        mentions, _dms = mod.drain_gateway(st, inbox, {})
+        mentions, _dms = mod._gateway_ingress(st, {}).drain(inbox)
         self.assertEqual(mentions, [])
         self.assertFalse(st.get("pending"))
         self.assertNotIn("/channels/C9", mod.api.calls)
@@ -140,7 +143,7 @@ class F6Watermarks(unittest.TestCase):
         self.st = new_state(self.mod)
         self.m0 = msg("C1", "U2", "old", age=100)
         self.st["last_seen"]["C1"] = self.m0["id"]
-        self.mod.CHANNELS = {"C1": chan()}
+        self.mod._DIRECTORY.adopt({"C1": chan()}, self.mod._DIRECTORY.guilds)
 
     def poll(self):
         tr = self.mod.check_channel("C1", "Srv #general", self.st, G1)
@@ -150,7 +153,7 @@ class F6Watermarks(unittest.TestCase):
         inbox = pyqueue.Queue()
         for m in msgs:
             inbox.put(m)
-        men, _ = self.mod.drain_gateway(self.st, inbox, self.mod.CHANNELS)
+        men, _ = self.mod._gateway_ingress(self.st, self.mod._DIRECTORY.channels).drain(inbox)
         return [m["id"] for m, *_ in men]
 
     def test_gateway_gap_is_repaired_by_poll(self):
@@ -161,12 +164,12 @@ class F6Watermarks(unittest.TestCase):
         self.assertEqual(self.poll(), [m2["id"]])
         # An owner DM the poll missed is swept up.
         mod = self.mod
-        mod.CHANNELS = {}
-        mod.DM_CHANNELS = {"DM1": "owner"}
+        mod._DIRECTORY.adopt({}, mod._DIRECTORY.guilds)
+        mod._DIRECT_MESSAGES.names = {"DM1": "owner"}
         d1 = msg("DM1", OWNER, "are you there?", gid=None, age=600)
         mod.api.msgs["DM1"] = [d1]
         q = []
-        mod.sweep_mentions(self.st, q, mod.CHANNELS)
+        mod.sweep_mentions(self.st, q, mod._DIRECTORY.channels)
         self.assertEqual([(i["message_id"], i["kind"]) for i in q], [(d1["id"], "dm")])
 
     def test_gateway_and_poll_process_once(self):
@@ -225,7 +228,7 @@ class F7Discovery(unittest.TestCase):
     def test_unseeded_history_is_not_new_and_reseed_keeps_watermark(self):
         mod = H.load_monitor()
         st = new_state(mod)
-        mod.CHANNELS = {"C1": chan()}
+        mod._DIRECTORY.adopt({"C1": chan()}, mod._DIRECTORY.guilds)
         old = [msg("C1", "U1", f"@bot {i}", mention=True) for i in range(5)]
         mod.api.msgs["C1"] = list(old)
         tr = mod.check_channel("C1", "Srv #general", st, G1)
@@ -290,23 +293,23 @@ class SendDeletedReplyTarget(unittest.TestCase):
             seen.append(data)
             return {"id": "1"}
 
-        with mock.patch.object(mod, "discord_request", send):
-            mod.send_reply_with_files(
+        with mock.patch.object(mod._DISCORD, "request", send):
+            mod._SENDER.files(
                 "123456789012345678",
                 "hi",
                 [(path, "a.png")],
                 reply_to,
-                delivery=mod.DeliveryOptions(nonce="n2"),
+                delivery=DeliveryOptions(nonce="n2"),
             )
         return seen[-1]
 
     def test_reply_reference_tolerates_missing_target(self):
         mod = H.load_monitor()
-        mod.send_reply(
+        mod._SENDER.reply(
             "123456789012345678",
             "hi",
             "223456789012345678",
-            delivery=mod.DeliveryOptions(nonce="n1"),
+            delivery=DeliveryOptions(nonce="n1"),
         )
         data = mod.api.posts[-1][1]
         self.assertEqual(
@@ -314,7 +317,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
             {"message_id": "223456789012345678", "fail_if_not_exists": False},
         )
         self.assertEqual((data["nonce"], data["enforce_nonce"]), ("n1", True))
-        mod.send_reply("123456789012345678", "plain")
+        mod._SENDER.reply("123456789012345678", "plain")
         self.assertNotIn("message_reference", mod.api.posts[-1][1])
         payload = self._multipart_payload(mod, "223456789012345678")
         self.assertEqual(
@@ -326,7 +329,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
         self.assertNotIn("message_reference", payload)
         # The send nonce is pinned: a changed derivation would post
         # retried in-flight sends twice across an upgrade.
-        self.assertEqual(mod.send_nonce("1", "2", ["a", "b"], 1), "85edf89677130208a9da87885")
+        self.assertEqual(send_nonce("1", "2", ["a", "b"], 1), "85edf89677130208a9da87885")
 
     def test_reaction_404_on_deleted_target_settles_once(self):
         mod = H.load_monitor()
@@ -335,10 +338,10 @@ class SendDeletedReplyTarget(unittest.TestCase):
         cid, rid = sf(), sf(5)
         # A server channel the bot reads (the owner-DM gate looks up any
         # channel it cannot place).
-        mod.CHANNELS[cid] = {"name": "general", "guild_id": sf()}
+        mod._DIRECTORY.channels[cid] = {"name": "general", "guild_id": sf()}
         # The monitor queued rid there (an outbox item answers an open
         # item, with its reply_nonce).
-        mod.queue_edit(add=[{"message_id": rid, "channel_id": cid}])
+        mod._queue_files().edit(add=[{"message_id": rid, "channel_id": cid}])
         with open(mod.OUTBOX_FILE, "w") as f:
             json.dump(
                 [
@@ -365,9 +368,9 @@ class SendDeletedReplyTarget(unittest.TestCase):
             raise HTTPErr(404)
 
         out = io.StringIO()
-        with mock.patch.object(mod, "discord_request", gone), contextlib.redirect_stdout(out):
+        with mock.patch.object(mod._DISCORD, "request", gone), contextlib.redirect_stdout(out):
             for _ in range(3):
-                mod.process_outbox(st)
+                mod._OUTBOX.process(st)
         texts = [d for p, d in mod.api.posts if p.endswith("/messages")]
         self.assertEqual(len(texts), 1, out.getvalue())
         self.assertEqual(texts[0]["message_reference"]["message_id"], rid)

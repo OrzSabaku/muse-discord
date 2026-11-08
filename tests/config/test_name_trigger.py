@@ -3,7 +3,7 @@
 (classify_message and trigger_kind), an @mention still does, and
 load_state drops a leftover name_drop burst. Each case imports
 monitor.py in a fresh subprocess with its own config.yaml (settings
-resolve at import), no network. MUT_DIR = the package tree under test
+resolve during explicit initialization), no network. MUT_DIR = the package tree under test
 (default: this checkout)."""
 
 import json
@@ -27,7 +27,8 @@ with contextlib.redirect_stdout(io.StringIO()):
     spec = importlib.util.spec_from_file_location("monitor", sys.argv_repo)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
-m.BOT_ID = m.BOT_USER_ID = "999"
+    m.initialize(token_override="dummy-token")
+m._IDENTITY.user_id = "999"
 m.api_get = lambda path: (_ for _ in ()).throw(AssertionError(path))
 st = {"last_seen": {}, "replied_to": [], "history": {},
       "rate": {"day": "", "day_count": 0, "users": {}},
@@ -40,8 +41,8 @@ def msg(mid, content, mention):
 bare = msg("1300000000000000001", "Pip, look at this", False)
 direct = msg("1300000000000000002", "hey look at this", True)
 with contextlib.redirect_stdout(io.StringIO()):
-    bare_kind = m.classify_message(st, bare, "S #a", "G")
-    direct_kind = m.classify_message(st, direct, "S #a", "G")
+    bare_kind = m._receiver(st).classify(bare, "S #a", "G")
+    direct_kind = m._receiver(st).classify(direct, "S #a", "G")
 # load_state drops a burst left behind by the old name trigger.
 m.STATE_FILE = os.path.join(os.environ["TMPD"], "state.json")
 with open(m.STATE_FILE, "w") as f:
@@ -49,7 +50,7 @@ with open(m.STATE_FILE, "w") as f:
         "101:U1": {"kind": "name_drop", "channel_id": "101"},
         "101:U2": {"kind": "mention", "channel_id": "101"}}}, f)
 pending = sorted(m.load_state()["pending"])
-print(json.dumps({"bare": bare_kind, "trigger_kind": m.trigger_kind(bare),
+print(json.dumps({"bare": bare_kind, "trigger_kind": m._admission().trigger_verdict(bare)[0],
                   "direct": direct_kind, "pending": pending}))
 """
 

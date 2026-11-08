@@ -26,6 +26,8 @@ token_from: ~/.config/muse-discord/bot_token
                           # where the bot's token is kept: a file, or
                           # env:NAME for an environment variable. Never
                           # put the token itself in this file.
+                          # Relative file paths start at the project directory.
+                          # A list tries sources in order, skipping empty/missing values.
 
 # --- The bot itself -----------------------------------------------
 presence:

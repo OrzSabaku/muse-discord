@@ -4,6 +4,8 @@ These checks need no token, live state or network. Request binding, nonce
 verification and permission checks still belong to each caller.
 """
 
+import hashlib
+import json
 import re
 from typing import TypedDict, cast
 
@@ -98,3 +100,10 @@ def _id_problems(item: dict[object, object]) -> list[str]:
         if not is_snowflake(value):
             errors.append(f"{field} is not a Discord id")
     return errors
+
+
+def item_key(item: object) -> str | None:
+    try:
+        return hashlib.sha256(json.dumps(item, sort_keys=True, default=str).encode()).hexdigest()
+    except Exception:
+        return None

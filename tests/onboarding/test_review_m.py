@@ -34,11 +34,13 @@ class FirstRun(unittest.TestCase):
         mod.api.members[(G1, OWNER)] = []
         with quiet():
             st = mod.load_state()  # no state.json
-            mod.sync_guilds(st, {}, {})  # boot discovery failed
+            mod._GUILD_LIFECYCLE.sync(st, {}, {})  # boot discovery failed
             for gid in (G1, G2):  # READY's GUILD_CREATEs
-                mod.on_guild_event(st, {"op": "create", "id": gid})
+                mod._gateway_ingress(st, mod._DIRECTORY.channels).metadata(
+                    {"_guild_event": {"op": "create", "id": gid}}
+                )
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
-        self.assertIsNone(mod.trigger_kind(stranger, G2))
+        self.assertIsNone(mod._admission().trigger_verdict(stranger, G2)[0])
 
     def test_first_run_checks_stop_at_a_rate_limit(self):
         """The first run checks every server at once (every=True); after a
@@ -52,14 +54,14 @@ class FirstRun(unittest.TestCase):
             if "/members/" in path:
                 asked.append(path)
                 e = HTTPErr(429)
-                mod._note_rate_limit(e)
+                mod._BACKOFF.note(e)
                 raise e
             raise HTTPErr(404)
 
         mod.api_get = get
         with quiet():
             st = mod.load_state()
-            mod.sync_guilds(st, guilds, {})
+            mod._GUILD_LIFECYCLE.sync(st, guilds, {})
         self.assertLessEqual(len(asked), 1, f"{len(asked)} member GETs after a 429")
 
 

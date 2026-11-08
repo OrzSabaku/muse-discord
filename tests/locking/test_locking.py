@@ -32,6 +32,10 @@ from harness import (
     write,
 )
 
+from muse_discord.message_models import MessagePlace
+from muse_discord.messaging import parts as reply_parts
+from muse_discord.messaging.typing import TYPING_EVERY_SECS, TYPING_MAX_SECS
+
 m = monitor
 
 
@@ -63,7 +67,7 @@ def qitem(mid, cid="101", **kw):
 def test_worker_append_during_slow_send_not_lost():
     pkg = fresh_pkg()
     st = new_state()
-    orig_post, orig_uniform = m.api_post, m.random.uniform
+    orig_post, orig_uniform = m.api_post, reply_parts.random.uniform
     a, b = snowflake(), snowflake()
 
     def post(path, data):
@@ -76,7 +80,7 @@ def test_worker_append_during_slow_send_not_lost():
         return orig_post(path, data)
 
     m.api_post = post
-    m.random.uniform = lambda lo, hi: 0  # no typing beat between parts
+    reply_parts.random.uniform = lambda lo, hi: 0  # no typing beat between parts
     try:
         write(m.QUEUE_FILE, [qitem(a), qitem(b)])
         write(
@@ -94,18 +98,18 @@ def test_worker_append_during_slow_send_not_lost():
             ],
         )
         with capture():
-            m.process_outbox(st)
+            m._OUTBOX.process(st)
         assert sent_texts() == ["one", "two", "three"], sent_texts()
         out = read(m.OUTBOX_FILE)
         assert [i["item"] for i in out] == [b], out  # NOT lost
         assert not os.path.exists(m.OUTBOX_PROCESSING_FILE)
         assert [q["message_id"] for q in read(m.QUEUE_FILE)] == [b]
         with capture():
-            m.process_outbox(st)
+            m._OUTBOX.process(st)
         assert sent_texts()[-1] == "for b"
         assert read(m.QUEUE_FILE) == [] and read(m.OUTBOX_FILE) == []
     finally:
-        m.api_post, m.random.uniform = orig_post, orig_uniform
+        m.api_post, reply_parts.random.uniform = orig_post, orig_uniform
 
 
 def test_concurrent_appends_stress_each_sent_once():
@@ -128,7 +132,7 @@ def test_concurrent_appends_stress_each_sent_once():
 
         def loop():
             while not stop.is_set():
-                m.process_outbox(st)
+                m._OUTBOX.process(st)
                 time.sleep(0.01)
 
         t = threading.Thread(target=loop)
@@ -172,21 +176,21 @@ def test_queue_write_no_resurrect_no_drop():
     x, y, w = snowflake(), snowflake(), snowflake()
     write(m.QUEUE_FILE, [qitem(x), qitem(y)])
     trig = msg()
-    m.stage_trigger(st, trig, "S #c", "mention", place=m.MessagePlace(guild_id="G"))
+    m._bursts(st).stage(trig, "S #c", "mention", place=MessagePlace(guild_id="G"))
     st["pending"][next(iter(st["pending"]))]["first_seen"] -= 10
 
     def slow_media(_msg):
         # Another writer removes x and appends w mid-flush.
-        m.queue_edit(add=[qitem(w)], drop=lambda q: q["message_id"] == x)
+        m._queue_files().edit(add=[qitem(w)], drop=lambda q: q["message_id"] == x)
         return [], [], []
 
     m.collect_media = slow_media
     # Main-loop pattern (main(): snapshot, flush, delta write).
-    queue = m.load_queue()
+    queue = m._queue_files().load()
     n_before = len(queue)
     with capture():
-        assert m.flush_pending(st, queue)
-    m.queue_edit(add=queue[n_before:])
+        assert m._bursts(st).flush(queue)
+    m._queue_files().edit(add=queue[n_before:])
     m.collect_media = lambda _m: ([], [], [])
     ids = [q["message_id"] for q in read(m.QUEUE_FILE)]
     assert ids == [y, w, trig["id"]], ids
@@ -203,16 +207,16 @@ def test_queue_stress_threads():
 
     def adder():
         for i in ids:
-            m.queue_edit(add=[{"message_id": i}])
+            m._queue_files().edit(add=[{"message_id": i}])
         done.set()
 
     def remover():
         while True:
             fin = done.is_set()
-            seen = {q["message_id"] for q in m.load_queue()}
+            seen = {q["message_id"] for q in m._queue_files().load()}
             take = {i for i in seen if int(i) % 2 == 0}
             if take:
-                m.queue_edit(drop=lambda q, take=take: q["message_id"] in take)
+                m._queue_files().edit(drop=lambda q, take=take: q["message_id"] in take)
                 removed.update(take)
             if fin and not take:
                 break
@@ -269,7 +273,7 @@ def test_monitor_removes_answered_items():
     st["reply_aliases"] = {frag1: trig, frag2: trig}
     # gone was queued here (the monitor's record of it), and its queue
     # item is already gone; never was never queued at all.
-    m.note_item_meta(st, gone, channel_id="101", kind="mention")
+    m._REPLIES.note_item(st, gone, channel_id="101", kind="mention")
     write(
         m.QUEUE_FILE,
         [
@@ -301,7 +305,7 @@ def test_monitor_removes_answered_items():
         ],
     )
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert [q["message_id"] for q in read(m.QUEUE_FILE)] == [unnamed], read(m.QUEUE_FILE)
     assert sent_texts() == ["hello", "a post", "burst reply"], sent_texts()
     assert len(read(m.OUTBOX_REJECTED_FILE)) == 3
@@ -311,7 +315,7 @@ def test_monitor_removes_answered_items():
     # a second worker drafts the same item: suppressed
     write(m.OUTBOX_FILE, [S(st, {"item": plain, "channel_id": "101", "text": "a post again"})])
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert len(sent_texts()) == 3
 
 
@@ -339,7 +343,7 @@ def test_malformed_items_rejected_without_blocking():
         ],
     )
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert sent_texts() == ["the good one"], sent_texts()
     rej = read(m.OUTBOX_REJECTED_FILE)
     assert len(rej) == 7, [r["reason"] for r in rej]
@@ -347,7 +351,7 @@ def test_malformed_items_rejected_without_blocking():
     # the empty item was NOT settled: its mention stays open
     assert [q["message_id"] for q in read(m.QUEUE_FILE)] == [empty]
     assert empty not in st["replied_to"]
-    assert m.ledger_record and m._ledger_load()["entries"].get(empty, {}).get("status") != "skipped"
+    assert m._LEDGER.load()["entries"].get(empty, {}).get("status") != "skipped"
 
 
 def test_corrupt_outbox_file():
@@ -356,13 +360,13 @@ def test_corrupt_outbox_file():
     with open(m.OUTBOX_FILE, "w") as f:
         f.write('[{"channel_id": "101", "te')  # mid-write
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     with open(m.OUTBOX_FILE) as f:
         assert f.read().startswith('[{"channel_id"'), "young unparseable file must be left alone"
     old = time.time() - 60
     os.utime(m.OUTBOX_FILE, (old, old))
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert read(m.OUTBOX_FILE) == []
     assert len(read(m.OUTBOX_REJECTED_FILE)) == 1  # kept, set aside
 
@@ -386,7 +390,7 @@ def test_retry_merges_with_appends():
     m.api_post = failing
     try:
         with capture():
-            m.process_outbox(st)
+            m._OUTBOX.process(st)
     finally:
         m.api_post = orig
     out = read(m.OUTBOX_FILE)
@@ -398,7 +402,7 @@ def test_retry_merges_with_appends():
     out[0]["_retry"]["next"] = 0
     write(m.OUTBOX_FILE, out)
     with capture():
-        m.process_outbox(st)
+        m._OUTBOX.process(st)
     assert sent_texts() == ["leftover", "flaky", "b"], sent_texts()
     assert read(m.QUEUE_FILE) == []
 
@@ -441,7 +445,7 @@ def test_typing_thread_lifecycle():
     st = new_state()
     clock = _SteppedClock()
     m.time = clock
-    clock.thread = threading.Thread(target=m._typing_thread_main, daemon=True)
+    clock.thread = threading.Thread(target=m._TYPING.run, daemon=True)
     clock.thread.start()
 
     def pings(cid=None):
@@ -449,16 +453,16 @@ def test_typing_thread_lifecycle():
 
     try:
         # 1. pending burst types; a burst in enqueue back-off does not
-        m.stage_trigger(
-            st, msg(cid="101", author="U1"), "S #a", "mention", place=m.MessagePlace(guild_id="G")
+        m._bursts(st).stage(
+            msg(cid="101", author="U1"), "S #a", "mention", place=MessagePlace(guild_id="G")
         )
-        m.stage_trigger(
-            st, msg(cid="103", author="U3"), "S #c", "mention", place=m.MessagePlace(guild_id="G")
+        m._bursts(st).stage(
+            msg(cid="103", author="U3"), "S #c", "mention", place=MessagePlace(guild_id="G")
         )
         st["pending"]["103:U3"]["next_try"] = clock.now + 300
         write(m.QUEUE_FILE, [])
         with capture():
-            m.typing_refresh(st)
+            m._TYPING.refresh(st)
         clock.step()
         chans = {c[2].split("/")[2] for c in typing_calls()}
         assert chans == {"101"}, chans
@@ -467,43 +471,43 @@ def test_typing_thread_lifecycle():
         del st["pending"]
         a = snowflake()
         write(m.QUEUE_FILE, [qitem(a, cid="101", queued_at=clock.now)])
-        m.typing_refresh(st)
+        m._TYPING.refresh(st)
         n0 = pings("101")
-        clock.step(2 * m.TYPING_EVERY_SECS)
+        clock.step(2 * TYPING_EVERY_SECS)
         assert pings("101") - n0 >= 2, typing_calls()
         # 3. the reply goes out: typing stops for good
         write(
             m.OUTBOX_FILE, [S(st, {"item": a, "channel_id": "101", "reply_to": a, "text": "done"})]
         )
         with capture():
-            m.process_outbox(st)
-        m.typing_refresh(st)
+            m._OUTBOX.process(st)
+        m._TYPING.refresh(st)
         n0 = pings()
-        clock.step(3 * m.TYPING_EVERY_SECS)
+        clock.step(3 * TYPING_EVERY_SECS)
         assert pings() == n0, typing_calls()[n0:]
         # 4. an item nobody answers stops after TYPING_MAX_SECS: queued
         # a ping interval short of it, it types once more, then stops
         b = snowflake()
-        it = qitem(b, cid="105", queued_at=clock.now - m.TYPING_MAX_SECS + m.TYPING_EVERY_SECS)
+        it = qitem(b, cid="105", queued_at=clock.now - TYPING_MAX_SECS + TYPING_EVERY_SECS)
         write(m.QUEUE_FILE, [it])
-        m.typing_refresh(st)
+        m._TYPING.refresh(st)
         clock.step()
         assert pings("105") == 1, typing_calls()
-        clock.step(3 * m.TYPING_EVERY_SECS)
+        clock.step(3 * TYPING_EVERY_SECS)
         assert pings("105") == 1, typing_calls()
         # 5. REST back-off: no typing at all
         it["queued_at"] = clock.now
         write(m.QUEUE_FILE, [it])
-        m.typing_refresh(st)
-        m._rl_until = clock.now + 100
+        m._TYPING.refresh(st)
+        m._BACKOFF.until = clock.now + 100
         n0 = pings()
-        clock.step(2 * m.TYPING_EVERY_SECS)
-        m.send_typing("109")
+        clock.step(2 * TYPING_EVERY_SECS)
+        m._TYPING.send("109")
         assert pings() == n0, typing_calls()[n0:]
     finally:
         m.time = time
-        m._rl_until = 0.0
-        m._typing_sources.clear()
+        m._BACKOFF.until = 0.0
+        m._TYPING.sources.clear()
 
 
 def _drain(st, inbox_items):
@@ -514,9 +518,9 @@ def _drain(st, inbox_items):
         q.put(it)
     chans = {"101": {"name": "c", "guild_id": "G", "guild_name": "S"}}
     with capture():
-        mentions, _dms = m.drain_gateway(st, q, chans)
+        mentions, _dms = m._gateway_ingress(st, chans).drain(q)
         for mm, cname, gid, kind in mentions:
-            m.stage_trigger(st, mm, cname, kind, place=m.MessagePlace(guild_id=gid))
+            m._bursts(st).stage(mm, cname, kind, place=MessagePlace(guild_id=gid))
     return mentions
 
 
@@ -528,10 +532,10 @@ def _early_flush_on_typing_stop():
     _drain(st, [{"_typing": {"channel_id": "101", "user_id": "U1"}}, t])
     q = []
     with capture():
-        assert not m.flush_pending(st, q)  # too soon (< 1.5s)
-    m._activity["101:U1"]["msg_at"] -= 1.6
+        assert not m._bursts(st).flush(q)  # too soon (< 1.5s)
+    m._ACTIVITY.entries["101:U1"]["msg_at"] -= 1.6
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
     assert q[0]["message_id"] == t["id"]
 
 
@@ -540,31 +544,31 @@ def _typing_after_message_holds_then_max_wait():
     st = new_state()
     t = msg(author="U1")
     _drain(st, [t, {"_typing": {"channel_id": "101", "user_id": "U1"}}])
-    m._activity["101:U1"]["msg_at"] -= 3
+    m._ACTIVITY.entries["101:U1"]["msg_at"] -= 3
     q = []
     with capture():
-        assert not m.flush_pending(st, q)  # still typing
+        assert not m._bursts(st).flush(q)  # still typing
     # a follow-up fragment arrives, then they stop typing
     f = msg(author="U1", content="and also", mention=False)
     _drain(st, [f])
     entry = st["pending"]["101:U1"]
     assert [x["id"] for x in entry["fragments"]] == [f["id"]]
     with capture():
-        assert not m.flush_pending(st, q)
-    m._activity["101:U1"]["msg_at"] -= 1.6
+        assert not m._bursts(st).flush(q)
+    m._ACTIVITY.entries["101:U1"]["msg_at"] -= 1.6
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
     assert q[0]["burst_fragments"][0]["message_id"] == f["id"]
     # typing never stops: the window is the maximum wait
     t2 = msg(author="U2")
     _drain(st, [t2, {"_typing": {"channel_id": "101", "user_id": "U2"}}])
-    m._activity["101:U2"]["msg_at"] -= 4.9
+    m._ACTIVITY.entries["101:U2"]["msg_at"] -= 4.9
     st["pending"]["101:U2"]["first_seen"] -= 4.9
     with capture():
-        assert not m.flush_pending(st, q)
+        assert not m._bursts(st).flush(q)
     st["pending"]["101:U2"]["first_seen"] -= 0.2
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
 
 
 def _no_gateway_waits_full_window():
@@ -574,16 +578,16 @@ def _no_gateway_waits_full_window():
     st = new_state()
     t = msg(author="U1")
     with capture():
-        kind = m.classify_message(st, t, "S #c", "G")
-        m.stage_trigger(st, t, "S #c", kind, place=m.MessagePlace(guild_id="G"))
+        kind = m._receiver(st).classify(t, "S #c", "G")
+        m._bursts(st).stage(t, "S #c", kind, place=MessagePlace(guild_id="G"))
     entry = st["pending"]["101:U1"]
     entry["first_seen"] -= 4.0
     q = []
     with capture():
-        assert not m.flush_pending(st, q)
+        assert not m._bursts(st).flush(q)
     entry["first_seen"] -= 1.1
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
 
 
 def _bot_author_longer_quiet():
@@ -591,14 +595,14 @@ def _bot_author_longer_quiet():
     st = new_state()
     t = msg(author="B1", bot=True)
     _drain(st, [t])
-    assert st["pending"]["101:B1"]["window"] == m.BOT_COALESCE_SECS
-    m._activity["101:B1"]["msg_at"] -= 2
+    assert st["pending"]["101:B1"]["window"] == m._SETTINGS.engine.bot_coalesce_seconds
+    m._ACTIVITY.entries["101:B1"]["msg_at"] -= 2
     q = []
     with capture():
-        assert not m.flush_pending(st, q)
-    m._activity["101:B1"]["msg_at"] -= 3.1
+        assert not m._bursts(st).flush(q)
+    m._ACTIVITY.entries["101:B1"]["msg_at"] -= 3.1
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
 
 
 def test_burst_windows():

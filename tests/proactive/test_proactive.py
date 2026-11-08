@@ -50,6 +50,9 @@ from settings_harness import (
     state,
 )
 
+from muse_discord.settings_presets import preset_changes
+from muse_discord.storage import SharedLockTimeout
+
 DM_U1 = "400000000000000079"
 DM_U2 = "400000000000000080"
 OWNER_DM = "4" + OWNER[1:]  # what the fake API opens for OWNER
@@ -94,7 +97,7 @@ class Base(unittest.TestCase):
         m = self.m
         self.now = time.time()
         m.PRO.clock = lambda: self.now
-        m.DM_CHANNELS[DM_U1] = "u1"
+        m._DIRECT_MESSAGES.names[DM_U1] = "u1"
         self.st = state(m)
         # Quiet channels: the last message an hour ago, from a person.
         for cid in (CH, CH2, CH_G2):
@@ -113,7 +116,7 @@ class Base(unittest.TestCase):
     def dmed(self, uid, cid, age=2 * HOUR):
         """uid DMed the bot (a queued DM, as enqueue_message records)."""
         mid = sf(age)
-        self.m.note_item_meta(
+        self.m._REPLIES.note_item(
             self.st,
             mid,
             author_id=uid,
@@ -129,24 +132,24 @@ class Base(unittest.TestCase):
         """Make the heartbeat due and tick: the slot item, or None. side:
         "private" or "public", the side this slot should take first."""
         pro = self.m.PRO
-        d = pro.data()
+        d = pro.store.data()
         if side:
             d["side"] = "public" if side == "private" else "private"
         d["heartbeats"] = {
-            key: {"freq": pro.st().get("proactive.frequency", scope), "next": self.now - 1}
-            for key, scope in pro.heartbeat_scopes().items()
+            key: {"freq": pro.policy.st().get("proactive.frequency", scope), "next": self.now - 1}
+            for key, scope in pro.policy.heartbeat_scopes().items()
         }
         pro._next_tick = 0
         with quiet() as buf:
             pro.tick(self.st, self.now)
         self.out += buf.getvalue()
-        slots = [q for q in self.m.load_queue() if q.get("kind") == "proactive"]
+        slots = [q for q in self.m._queue_files().load() if q.get("kind") == "proactive"]
         return slots[-1] if slots else None
 
     def next_slot(self, side=None, hours=1):
         """Drop the slot (unanswered), let time pass, heartbeat again."""
-        self.m.PRO.data()["slot"] = None
-        self.m.queue_edit(drop=lambda q: q["kind"] == "proactive")
+        self.m.PRO.store.data()["slot"] = None
+        self.m._queue_files().edit(drop=lambda q: q["kind"] == "proactive")
         self.now += hours * HOUR
         return self.heartbeat(side)
 
@@ -158,7 +161,7 @@ class Base(unittest.TestCase):
                     msg, "x", self.st, q, context=self.m.QueueContext(dm=dm, guild_id=guild)
                 )
             )
-        self.m.queue_edit(add=q)
+        self.m._queue_files().edit(add=q)
         return msg
 
     def rn(self, mid):
@@ -183,7 +186,7 @@ class Base(unittest.TestCase):
         return {t["channel_id"] for t in slot["proactive"]["targets"]}
 
     def nonce(self):
-        return self.m.PRO.data()["slot"]["nonce"]
+        return self.m.PRO.store.data()["slot"]["nonce"]
 
     def post(self, slot, cid, text="hey, how did the exam go?", **kw):
         it = {
@@ -200,7 +203,7 @@ class Base(unittest.TestCase):
         with open(self.m.OUTBOX_FILE, "w") as f:
             json.dump(list(items), f)
         with quiet() as buf:
-            self.m.process_outbox(self.st)
+            self.m._OUTBOX.process(self.st)
         self.out += buf.getvalue()
 
     def rejected(self):
@@ -251,9 +254,11 @@ class Base(unittest.TestCase):
             "message": {"content": "question"},
         }
         with quiet() as buf:
-            r = self.m.dispatch_interaction(ix, recs.append)
+            r = self.m._INTERACTION_WORKER.router.dispatch(ix, recs.append)
             for rec in recs:
-                self.m.apply_record(self.st, rec)
+                self.m._gateway_ingress(self.st, self.m._DIRECTORY.channels).metadata(
+                    {"_record": rec}
+                )
         self.out += buf.getvalue()
         return r
 
@@ -266,22 +271,24 @@ class OffByDefault(Base):
         for _ in range(50):
             self.now += 6 * HOUR
             self.assertIsNone(self.heartbeat(), self.out)
-        self.assertEqual(self.m.load_queue(), [])
+        self.assertEqual(self.m._queue_files().load(), [])
         self.assertEqual(self.sends(), [])
 
     def test_friends_preset_turns_it_on(self):
         self.assertIsNone(self.heartbeat())
         st = MS.load(self.m.cfg_path)
         place = MS.Place.server(G1)
-        self.apply(MS.preset_changes(st, "friends", place))
+        self.apply(preset_changes(st, "friends", place))
         self.now += HOUR
         slot = self.heartbeat()
         self.assertIsNotNone(slot, self.out)
         # That server's channels only: not the other server, not DMs.
         self.assertEqual(self.targets(slot), {CH, CH2})
         # Work turns it off again.
-        self.apply(MS.preset_changes(MS.load(self.m.cfg_path), "work", place))
-        self.assertFalse(self.m.settings().get("proactive.enabled", self.m.scope_for(G1, CH)))
+        self.apply(preset_changes(MS.load(self.m.cfg_path), "work", place))
+        self.assertFalse(
+            self.m.settings().get("proactive.enabled", self.m._DIRECTORY.scopes.for_message(G1, CH))
+        )
 
 
 class Schedule(Base):
@@ -312,21 +319,21 @@ servers:
       frequency: often
 ''')
         pro = m.PRO
-        self.assertEqual(pro.total_cap(), 17)
-        self.assertEqual(pro.due_heartbeats(self.now), set())
-        clocks = pro.data()["heartbeats"]
+        self.assertEqual(pro.policy.total_cap(), 17)
+        self.assertEqual(pro.heartbeat.due_heartbeats(self.now), set())
+        clocks = pro.store.data()["heartbeats"]
         self.assertEqual(set(clocks), {G1, G2, "dms"})
         self.assertTrue(12 * HOUR <= clocks[G1]["next"] - self.now <= 24 * HOUR)
         self.assertTrue(45 * 60 <= clocks[G2]["next"] - self.now <= 75 * 60)
         self.assertTrue(4 * HOUR <= clocks["dms"]["next"] - self.now <= 6 * HOUR)
         slow_next = clocks[G1]["next"]
-        self.assertEqual(pro.due_heartbeats(self.now + 2 * HOUR), {G2})
+        self.assertEqual(pro.heartbeat.due_heartbeats(self.now + 2 * HOUR), {G2})
         self.assertEqual(clocks[G1]["next"], slow_next)
         # A due fast server cannot expose a slow server or DM to a wake.
         with (
             quiet(),
             mock.patch.object(
-                pro,
+                pro.policy,
                 "eligible",
                 return_value=[
                     {"type": "channel", "channel_id": CH, "user_id": None},
@@ -336,22 +343,22 @@ servers:
             ),
         ):
             pro.tick(state(m), self.now + 2 * HOUR)
-        slot = pro.data()["slot"]
+        slot = pro.store.data()["slot"]
         self.assertIsNotNone(slot)
         self.assertEqual(set(slot["targets"]), {CH_G2})
         # Persisted deadlines survive reload; invalid clock state resets.
-        pro.save()
-        pro._data = None
-        self.assertEqual(pro.data()["heartbeats"][G1]["next"], slow_next)
-        pro.data()["heartbeats"][G1] = None
-        pro.due_heartbeats(self.now)
-        self.assertEqual(pro.data()["heartbeats"][G1]["freq"], "rarely")
+        pro.store.save()
+        pro.store._data = None
+        self.assertEqual(pro.store.data()["heartbeats"][G1]["next"], slow_next)
+        pro.store.data()["heartbeats"][G1] = None
+        pro.heartbeat.due_heartbeats(self.now)
+        self.assertEqual(pro.store.data()["heartbeats"][G1]["freq"], "rarely")
 
     def test_busy_slot_keeps_the_due_server_pending_after_restart(self):
         pro = self.m.PRO
         # Open a private slot while only the public server's clock is due.
         self.assertIsNotNone(self.heartbeat("private"))
-        clocks = pro.data()["heartbeats"]
+        clocks = pro.store.data()["heartbeats"]
         clocks[G1]["next"] = self.now - 1
         clocks["dms"]["next"] = self.now + HOUR
         deadline = clocks[G1]["next"]
@@ -359,28 +366,28 @@ servers:
         with quiet():
             pro.tick(self.st, self.now)
         self.assertEqual(clocks[G1]["next"], deadline)
-        pro.save()
-        pro._data = None
-        self.assertEqual(pro.data()["heartbeats"][G1]["next"], deadline)
+        pro.store.save()
+        pro.store._data = None
+        self.assertEqual(pro.store.data()["heartbeats"][G1]["next"], deadline)
         # As soon as the private slot finishes, the server gets its turn.
         with quiet():
             pro.end_slot(self.st, "test complete")
             pro._next_tick = 0
             pro.tick(self.st, self.now + 31)
-        self.assertEqual(set(pro.data()["slot"]["targets"]), {CH, CH2})
-        self.assertGreater(pro.data()["heartbeats"][G1]["next"], self.now + 31)
+        self.assertEqual(set(pro.store.data()["slot"]["targets"]), {CH, CH2})
+        self.assertGreater(pro.store.data()["heartbeats"][G1]["next"], self.now + 31)
 
     def test_public_turn_survives_a_simultaneous_private_turn(self):
         pro = self.m.PRO
         self.assertIsNotNone(self.heartbeat("private"))
         # Only the selected DM clock advances; the public clock stays due.
-        self.assertLess(pro.data()["heartbeats"][G1]["next"], self.now)
-        self.assertGreater(pro.data()["heartbeats"]["dms"]["next"], self.now)
+        self.assertLess(pro.store.data()["heartbeats"][G1]["next"], self.now)
+        self.assertGreater(pro.store.data()["heartbeats"]["dms"]["next"], self.now)
         with quiet():
             pro.end_slot(self.st, "test complete")
             pro._next_tick = 0
             pro.tick(self.st, self.now + 31)
-        self.assertEqual(set(pro.data()["slot"]["targets"]), {CH, CH2})
+        self.assertEqual(set(pro.store.data()["slot"]["targets"]), {CH, CH2})
 
     def test_frequency_and_jitter_bounds(self):
         pro = self.m.PRO
@@ -389,35 +396,35 @@ servers:
             ("sometimes", (4 * HOUR, 6 * HOUR)),
             ("often", (45 * 60, 75 * 60)),
         ):
-            gaps = [pro.schedule(self.now, freq) - self.now for _ in range(300)]
+            gaps = [pro.heartbeat.schedule(self.now, freq) - self.now for _ in range(300)]
             self.assertTrue(all(lo <= g <= hi for g in gaps), freq)
             self.assertGreater(max(gaps) - min(gaps), (hi - lo) / 2, freq)
 
     def test_never_scheduled_in_quiet_hours(self):
         pro = self.m.PRO
-        pro.every = lambda key, _e=pro.every: (
+        pro.policy.every = lambda key, _e=pro.policy.every: (
             "22:00-09:00" if key == "proactive.quiet_hours" else _e(key)
         )
         for k in range(300):
-            t = pro.schedule(self.now + k * 1234.5, "often")
+            t = pro.heartbeat.schedule(self.now + k * 1234.5, "often")
             hour = time.gmtime(t).tm_hour
             self.assertFalse(hour >= 22 or hour < 9, time.ctime(t))
 
     def test_one_heartbeat_per_gap(self):
         """Ticking every minute for two days at "rarely" (12-24 h apart)
         wakes 2 to 8 times across the two independent clocks, never with two slots open."""
-        self.m.PRO.data()["heartbeats"] = {}
+        self.m.PRO.store.data()["heartbeats"] = {}
         wakes, t0 = 0, self.now
         while self.now < t0 + 48 * HOUR:
             self.m.PRO._next_tick = 0
             with quiet():
                 self.m.PRO.tick(self.st, self.now)
-            q = [x for x in self.m.load_queue() if x["kind"] == "proactive"]
+            q = [x for x in self.m._queue_files().load() if x["kind"] == "proactive"]
             self.assertLessEqual(len(q), 1)
             if q:
                 wakes += 1
-                self.m.queue_edit(drop=lambda x: x["kind"] == "proactive")
-                self.m.PRO.data()["slot"] = None
+                self.m._queue_files().edit(drop=lambda x: x["kind"] == "proactive")
+                self.m.PRO.store.data()["slot"] = None
             self.now += 60
         self.assertTrue(2 <= wakes <= 8, wakes)
 
@@ -444,11 +451,15 @@ class Posting(Base):
         sent = self.sends(DM_U1)
         self.assertEqual([s["content"] for s in sent], ["hey, how did the exam go?"], self.out)
         self.assertEqual(sent[0]["allowed_mentions"], {"parse": [], "users": [U1]})
-        self.assertNotIn(self.slot["message_id"], [q["message_id"] for q in self.m.load_queue()])
+        self.assertNotIn(
+            self.slot["message_id"], [q["message_id"] for q in self.m._queue_files().load()]
+        )
 
     def test_channel_post_pings_nobody(self):
         slot = self.next_slot("public")
-        self.m.MAX_REPLY_CHARS = 2000  # rewrites then lengthen it
+        self.m._SETTINGS.engine = self.m._SETTINGS.engine.model_copy(
+            update={"max_reply_chars": 2000}
+        )  # rewrites then lengthen it
         self.outbox(
             self.post(slot, CH, "<@222000000000000002> anyone up for a game? " + "@everyone " * 200)
         )
@@ -484,7 +495,7 @@ class Posting(Base):
             self.assert_refused()
         # Even a place that is eligible now, when the slot does not list
         # it (a channel, for a private slot).
-        self.m.PRO.data()["slot"]["spent"] = False
+        self.m.PRO.store.data()["slot"]["spent"] = False
         self.outbox(self.post(self.slot, CH2))
         self.assert_refused()
 
@@ -529,7 +540,7 @@ class Posting(Base):
         # was made: the post is refused at send time.
         pro = self.m.PRO
         for k in range(2):
-            pro.data()["sent"].append(
+            pro.store.data()["sent"].append(
                 {"at": self.now - (k + 2) * 86400, "channel_id": DM_U1, "user_id": U1, "type": "dm"}
             )
         self.outbox(self.post(self.slot, DM_U1))
@@ -537,9 +548,9 @@ class Posting(Base):
 
     def test_total_cap(self):
         pro = self.m.PRO
-        pro.data()["sent"] += [
+        pro.store.data()["sent"] += [
             {"at": self.now - 60, "channel_id": "1", "user_id": None, "type": "channel"}
-        ] * pro.total_cap()
+        ] * pro.policy.total_cap()
         self.outbox(self.post(self.slot, DM_U1))
         self.assert_refused()
         self.now += HOUR
@@ -553,7 +564,7 @@ class Posting(Base):
         self.assertNotIn(DM_U1, self.targets(slot))
         later = -(self.now - time.time()) + 2 * HOUR
         # A message of theirs elsewhere (a server) is no answer...
-        self.m.note_item_meta(
+        self.m._REPLIES.note_item(
             self.st,
             sf(later),
             author_id=U1,
@@ -572,13 +583,13 @@ class Posting(Base):
     def test_quiet_hours(self):
         h = time.gmtime(self.now).tm_hour
         hours = f"{h:02d}:00-{(h + 2) % 24:02d}:00"
-        self.m.PRO.every = lambda key, _e=self.m.PRO.every: (
+        self.m.PRO.policy.every = lambda key, _e=self.m.PRO.policy.every: (
             hours if key == "proactive.quiet_hours" else _e(key)
         )
         self.outbox(self.post(self.slot, DM_U1))
         self.assert_refused()
         self.now += HOUR
-        self.m.PRO.data()["slot"] = None
+        self.m.PRO.store.data()["slot"] = None
         self.assertIsNone(self.heartbeat())
 
     def test_quiet_hours_in_a_persons_own_time_zone(self):
@@ -589,7 +600,7 @@ class Posting(Base):
         nothing by itself (review K)."""
         h = time.gmtime(self.now).tm_hour
         hours = f"{(h + 6) % 24:02d}:00-{(h + 8) % 24:02d}:00"
-        self.m.PRO.every = lambda key, _e=self.m.PRO.every: (
+        self.m.PRO.policy.every = lambda key, _e=self.m.PRO.policy.every: (
             hours if key == "proactive.quiet_hours" else _e(key)
         )
         m1 = self.queue_msg(dmsg(U1, "my time zone is UTC+6", channel=DM_U1), dm=True)
@@ -597,7 +608,7 @@ class Posting(Base):
             self.reply(m1, schedule={"v": 1, "changes": [{"op": "tz", "tz": "Etc/GMT-6"}]})
         )  # UTC+6: night for U1
         self.assertEqual(
-            self.m.watch_store().read()["tz"].get(U1), "Etc/GMT-6", self.out
+            self.m._WATCHES.store.read()["tz"].get(U1), "Etc/GMT-6", self.out
         )  # reminders use it now
         self.now += HOUR
         self.assertIn(DM_U1, self.targets(self.next_slot("private", 0)))
@@ -610,7 +621,7 @@ class Posting(Base):
         listed for a reply_nonce, so the hook never waits for one or
         re-wakes it after a post."""
         with quiet():
-            self.m.owner_dm_upkeep(self.st, force=True)
+            self.m._CAPABILITIES.upkeep(self.st, force=True)
         self.assertNotIn(self.slot["message_id"], self.st.get("reply_nonces") or {})
 
     def test_secret_in_a_post_spends_the_slot(self):
@@ -620,8 +631,10 @@ class Posting(Base):
         self.assertEqual(self.sends(DM_U1), [], self.out)
         with open(self.m.OUTBOX_FILE) as f:
             self.assertEqual(json.load(f), [])
-        self.assertEqual(self.m.PRO.data()["sent"], [])
-        self.assertNotIn(self.slot["message_id"], [q["message_id"] for q in self.m.load_queue()])
+        self.assertEqual(self.m.PRO.store.data()["sent"], [])
+        self.assertNotIn(
+            self.slot["message_id"], [q["message_id"] for q in self.m._queue_files().load()]
+        )
 
     def test_slot_cannot_touch_anything_else(self):
         """The slot's item may not reply under, react to, or act on a
@@ -641,7 +654,7 @@ class Eligibility(Base):
     def test_never_dm_someone_who_did_not_dm_first(self):
         # U2 talked to the bot in a server only; U1 DMed it.
         mid = sf(2 * HOUR)
-        self.m.note_item_meta(
+        self.m._REPLIES.note_item(
             self.st,
             mid,
             author_id=U2,
@@ -653,7 +666,7 @@ class Eligibility(Base):
         )
         self.dmed(U1, DM_U1)
         # A bot that DMed counts for nothing either.
-        self.m.note_item_meta(
+        self.m._REPLIES.note_item(
             self.st,
             sf(2 * HOUR),
             author_id="333",
@@ -677,12 +690,12 @@ class Eligibility(Base):
         self.assertNotIn(DM_U1, self.targets(slot))
 
     def test_never_in_ownerless_or_paused_places(self):
-        self.m.OWNER_IN_GUILD[G1] = False  # no owner in G1
+        self.m._OWNER_PRESENCE.membership[G1] = False  # no owner in G1
         slot = self.heartbeat("public")
         self.assertFalse({CH, CH2} & self.targets(slot), self.out)
-        self.m.OWNER_IN_GUILD.pop(G1)
-        self.m.PRO.data()["slot"] = None
-        self.m.queue_edit(drop=lambda q: True)
+        self.m._OWNER_PRESENCE.membership.pop(G1)
+        self.m.PRO.store.data()["slot"] = None
+        self.m._queue_files().edit(drop=lambda q: True)
         self.apply(MS.pause_changes(MS.Place.server(G1)) + MS.pause_changes(MS.Place.dms()))
         self.assertIsNone(self.heartbeat(), self.out)
 
@@ -698,7 +711,7 @@ class Eligibility(Base):
         "they DMed us first"."""
         slot = self.heartbeat()
         self.assertIn(OWNER_DM, self.targets(slot), self.out)
-        self.m.OWNER_USER_IDS = {"111000000000000009"}  # owners changed
+        self.m._SETTINGS.owners = {"111000000000000009"}  # owners changed
         slot = self.next_slot("private", 48)
         self.assertNotIn(OWNER_DM, self.targets(slot or {"proactive": {"targets": []}}))
 
@@ -710,7 +723,7 @@ class OptOut(Base):
         # the worker writes.
         m2 = self.queue_msg(gmsg(U2, "<@bot> stop messaging me", mention=True), dm=False, guild=G1)
         self.outbox(self.reply(m2, proactive="opt-out", user_id=U1, author_id=U1))
-        self.assertEqual(set(self.m.PRO.data()["opted_out"]), {U2}, self.out)
+        self.assertEqual(set(self.m.PRO.store.data()["opted_out"]), {U2}, self.out)
         self.assertEqual(len(self.sends(CH)), 1)  # the reply went out
         slot = self.heartbeat()
         self.assertIn(DM_U1, self.targets(slot))
@@ -719,7 +732,7 @@ class OptOut(Base):
         m1["id"] = sf(2 * HOUR)  # not a conversation going on
         self.queue_msg(m1, dm=True)
         self.outbox(self.reply(m1, proactive="opt-out"))
-        self.assertIn(U1, self.m.PRO.data()["opted_out"])
+        self.assertIn(U1, self.m.PRO.store.data()["opted_out"])
         self.outbox(self.post(slot, DM_U1))
         self.assertEqual(self.sends(DM_U1)[1:], [], self.out)
         self.now += 3 * 86400
@@ -729,9 +742,9 @@ class OptOut(Base):
         # ...until they opt back in, with their own button (Asks).
         m1 = self.queue_msg(dmsg(U1, "ok you can message me again", channel=DM_U1), dm=True)
         self.outbox(self.reply(m1, proactive="opt-in"))
-        self.assertIn(U1, self.m.PRO.data()["opted_out"])
+        self.assertIn(U1, self.m.PRO.store.data()["opted_out"])
         self.click(self.buttons(DM_U1)[-1], U1)
-        self.assertNotIn(U1, self.m.PRO.data()["opted_out"], self.out)
+        self.assertNotIn(U1, self.m.PRO.store.data()["opted_out"], self.out)
 
     def test_opt_out_needs_a_persons_own_message(self):
         # Not on a message the monitor never queued, not on another
@@ -741,7 +754,7 @@ class OptOut(Base):
         m2 = self.queue_msg(gmsg(U2, "<@bot> stop", mention=True), dm=False, guild=G1)
         self.outbox(self.reply(m2, channel_id=CH2, proactive="opt-out"))
         self.assert_refused()
-        self.assertEqual(self.m.PRO.data()["opted_out"], {})
+        self.assertEqual(self.m.PRO.store.data()["opted_out"], {})
 
     def test_no_one_flips_an_opt_out_back(self):
         """Another run cannot opt U1 back in: not on U1's answered
@@ -751,7 +764,7 @@ class OptOut(Base):
         m1["id"] = sf(3 * HOUR)
         self.queue_msg(m1, dm=True)
         self.outbox(self.reply(m1, proactive="opt-out"))
-        self.assertIn(U1, self.m.PRO.data()["opted_out"], self.out)
+        self.assertIn(U1, self.m.PRO.store.data()["opted_out"], self.out)
         self.st["replied_to"] = [sf() for _ in range(200)]  # rolled out
         m = self.queue_msg(dmsg(U1, "what's the capital of Peru?", channel=DM_U1), dm=True)
         g = self.queue_msg(gmsg(U1, "<@bot> hi", mention=True), dm=False, guild=G1)
@@ -763,7 +776,7 @@ class OptOut(Base):
             self.reply(g, proactive="opt-in"),
         ):
             self.outbox(it)
-            self.assertIn(U1, self.m.PRO.data()["opted_out"], it)
+            self.assertIn(U1, self.m.PRO.store.data()["opted_out"], it)
 
 
 @unittest.skipUnless(shutil.which("jq"), "jq not installed")
@@ -778,7 +791,7 @@ class K1BatchedOptIn(Base):
         m1["id"] = sf(3 * HOUR)
         self.queue_msg(m1, dm=True)
         self.outbox(self.reply(m1, proactive="opt-out"))
-        self.assertIn(U1, self.m.PRO.data()["opted_out"], self.out)
+        self.assertIn(U1, self.m.PRO.store.data()["opted_out"], self.out)
         a = self.queue_msg(dmsg(U1, "what's the capital of Peru?", channel=DM_U1), dm=True)
         self.queue_msg(
             gmsg(
@@ -789,7 +802,7 @@ class K1BatchedOptIn(Base):
             dm=False,
             guild=G1,
         )
-        self.m.reply_nonces_write(self.st)
+        self.m._CAPABILITIES.write_replies(self.st)
         d = scratch("muse-k1-")
         env = dict(
             os.environ,
@@ -811,7 +824,7 @@ class K1BatchedOptIn(Base):
                 a, text="sure!", proactive="opt-in", reply_nonce=items[a["id"]]["reply_nonce"]
             )
         )
-        self.assertIn(U1, self.m.PRO.data()["opted_out"], self.out)
+        self.assertIn(U1, self.m.PRO.store.data()["opted_out"], self.out)
 
 
 class Asks(Base):
@@ -820,23 +833,23 @@ class Asks(Base):
         does nothing, theirs works once, and an old one not at all."""
         pro = self.m.PRO
         for k in range(2):
-            pro.data()["opted_out"][U1] = self.now
+            pro.store.data()["opted_out"][U1] = self.now
             m1 = self.queue_msg(dmsg(U1, "you can message me again", channel=DM_U1), dm=True)
             self.outbox(self.reply(m1, proactive="opt-in"))
             yes = self.buttons(DM_U1)[-1]
             if k:  # the second one is left for a day
                 self.now += 86400
                 self.click(yes, U1)
-                self.assertIn(U1, pro.data()["opted_out"], self.out)
+                self.assertIn(U1, pro.store.data()["opted_out"], self.out)
                 break
             for uid in (U2, OWNER):
                 self.click(yes, uid)
-                self.assertIn(U1, pro.data()["opted_out"], self.out)
+                self.assertIn(U1, pro.store.data()["opted_out"], self.out)
             self.click(yes, U1)
-            self.assertNotIn(U1, pro.data()["opted_out"], self.out)
-            pro.data()["opted_out"][U1] = self.now
+            self.assertNotIn(U1, pro.store.data()["opted_out"], self.out)
+            pro.store.data()["opted_out"][U1] = self.now
             self.click(yes, U1)  # used: nothing happens again
-            self.assertIn(U1, pro.data()["opted_out"], self.out)
+            self.assertIn(U1, pro.store.data()["opted_out"], self.out)
 
     def test_buttons_a_day_are_bounded(self):
         """However often a run asks, a person gets at most a few
@@ -877,7 +890,9 @@ class K2PartialSendCounts(Base):
         with mock.patch.object(self.m.time, "sleep", lambda s: None):
             self.outbox(it)
         self.assertEqual(len(self.sends(DM_U1)), 1, self.out)  # it landed
-        self.assertTrue([e for e in self.m.PRO.data()["sent"] if e.get("user_id") == U1], self.out)
+        self.assertTrue(
+            [e for e in self.m.PRO.store.data()["sent"] if e.get("user_id") == U1], self.out
+        )
 
 
 class K3DamagedStoreBlocksOutbox(Base):
@@ -889,9 +904,9 @@ class K3DamagedStoreBlocksOutbox(Base):
         not stop ordinary replies, even with the feature off (review
         K)."""
         pro = self.m.PRO
-        with open(pro.path(), "w") as f:
+        with open(pro.store.path(), "w") as f:
             f.write("[" * 300000 + "]" * 300000)
-        pro._data = None
+        pro.store._data = None
         m = self.queue_msg(gmsg(U2, "<@bot> hi", mention=True), dm=False, guild=G1)
         try:
             self.outbox(self.reply(m, text="hey"))
@@ -899,7 +914,7 @@ class K3DamagedStoreBlocksOutbox(Base):
             self.fail(f"process_outbox raised {type(e).__name__}")
         self.assertEqual(len(self.sends(CH)), 1, self.out)
         # Set aside, failing closed (its opt-outs are never lost).
-        self.assertTrue(pro.blocked(), self.out)
+        self.assertTrue(pro.store.blocked(), self.out)
 
     def test_a_store_that_raises_blocks_no_reply_and_no_slot_slips(self):
         """Whatever proactive.py raises: an ordinary reply still goes
@@ -909,7 +924,7 @@ class K3DamagedStoreBlocksOutbox(Base):
         def broken():
             raise RecursionError("damaged")
 
-        self.m.PRO.data = broken
+        self.m.PRO.store.data = broken
         self.outbox(self.reply(m, text="hey"))
         self.assertEqual(len(self.sends(CH)), 1, self.out)
         self.outbox({"item": sf(), "channel_id": DM_U1, "text": "hey", "owner_dm_nonce": "a" * 32})
@@ -928,7 +943,7 @@ class OwnerDmGate(Base):
         dm["id"] = sf(2 * HOUR)  # not a conversation going on
         with quiet():
             self.m.enqueue_message(dm, "DM", self.st, q, context=self.m.QueueContext(dm=True))
-        self.m.queue_edit(add=q)
+        self.m._queue_files().edit(add=q)
         for it in (
             # An ordinary item posting into the owner's DM, with the
             # slot's nonce, naming no slot, or naming the owner's DM.
@@ -946,7 +961,7 @@ class OwnerDmGate(Base):
         ):
             self.outbox(it)
             self.assert_refused()
-        self.assertIn(dm["id"], [x["message_id"] for x in self.m.load_queue()])
+        self.assertIn(dm["id"], [x["message_id"] for x in self.m._queue_files().load()])
         # A slot post to an owner who is a target is fine.
         self.outbox(self.post(slot, OWNER_DM))
         self.assertEqual(len(self.sends(OWNER_DM)), 1, self.out)
@@ -958,13 +973,13 @@ class Robustness(Base):
         never lost) and no heartbeat runs while it is there."""
         self.dmed(U1, DM_U1)
         pro = self.m.PRO
-        pro.data()["opted_out"][U1] = self.now
-        pro.save()
-        with open(pro.path()) as f:
+        pro.store.data()["opted_out"][U1] = self.now
+        pro.store.save()
+        with open(pro.store.path()) as f:
             text = f.read()
-        with open(pro.path(), "w") as f:
+        with open(pro.store.path(), "w") as f:
             f.write(text[:-5])
-        pro._data = None
+        pro.store._data = None
         self.assertIsNone(self.heartbeat(), self.out)
         bad = [n for n in os.listdir(self.m.tmp) if n.startswith("proactive.json.bad-")]
         self.assertEqual(len(bad), 1)
@@ -974,20 +989,22 @@ class Robustness(Base):
         self.assertIsNone(self.heartbeat(), self.out)
 
     def test_bad_slot_record_does_not_block_replies(self):
-        self.m.PRO.data()["slot"] = {"nonce": "x" * 32}
+        self.m.PRO.store.data()["slot"] = {"nonce": "x" * 32}
         m = self.queue_msg(gmsg(U2, "<@bot> hi", mention=True), dm=False, guild=G1)
         self.outbox(self.reply(m, text="hey"))
         self.assertEqual(len(self.sends(CH)), 1, self.out)
 
     def test_orphan_slot_item_leaves_the_queue(self):
         slot = self.heartbeat()
-        self.m.PRO._data = None
-        os.remove(self.m.PRO.path())
+        self.m.PRO.store._data = None
+        os.remove(self.m.PRO.store.path())
         self.now += 60
         self.m.PRO._next_tick = 0
         with quiet():
             self.m.PRO.tick(self.st, self.now)
-        self.assertNotIn(slot["message_id"], [q["message_id"] for q in self.m.load_queue()])
+        self.assertNotIn(
+            slot["message_id"], [q["message_id"] for q in self.m._queue_files().load()]
+        )
 
 
 @unittest.skipUnless(shutil.which("jq"), "jq not installed")
@@ -1091,36 +1108,36 @@ class PublicationRecovery(Base):
         m, pro = self.m, self.m.PRO
         with open(m.LOCK_FILE, "a") as holder, mock.patch.object(m, "LOCK_WAIT_SECS", 0):
             fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with quiet(), self.assertRaises(m.SharedLockTimeout):
+            with quiet(), self.assertRaises(SharedLockTimeout):
                 self.heartbeat("private")
-        saved = pro.data()["slot"]
-        sid, nonce, deadlines = saved["id"], saved["nonce"], dict(pro.data()["heartbeats"])
+        saved = pro.store.data()["slot"]
+        sid, nonce, deadlines = saved["id"], saved["nonce"], dict(pro.store.data()["heartbeats"])
         self.assertEqual(saved["pending_item"]["message_id"], sid)
-        self.assertEqual(m.load_queue(), [])
-        pro._data = None  # recreate from the durable slot, as after a restart
+        self.assertEqual(m._queue_files().load(), [])
+        pro.store._data = None  # recreate from the durable slot, as after a restart
         pro._next_tick = 0
         with quiet():
             pro.tick(self.st, self.now + 31)
             pro.tick(self.st, self.now + 62)
-        self.assertEqual([q["message_id"] for q in m.load_queue()], [sid])
-        self.assertEqual(pro.data()["slot"]["nonce"], nonce)
-        self.assertEqual(pro.data()["heartbeats"], deadlines)
-        self.assertNotIn("pending_item", pro.data()["slot"])
-        pro._data = None
-        self.assertNotIn("pending_item", pro.data()["slot"])
+        self.assertEqual([q["message_id"] for q in m._queue_files().load()], [sid])
+        self.assertEqual(pro.store.data()["slot"]["nonce"], nonce)
+        self.assertEqual(pro.store.data()["heartbeats"], deadlines)
+        self.assertNotIn("pending_item", pro.store.data()["slot"])
+        pro.store._data = None
+        self.assertNotIn("pending_item", pro.store.data()["slot"])
 
     def test_expired_pending_slot_is_not_published(self):
         m, pro = self.m, self.m.PRO
         with open(m.LOCK_FILE, "a") as holder, mock.patch.object(m, "LOCK_WAIT_SECS", 0):
             fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with quiet(), self.assertRaises(m.SharedLockTimeout):
+            with quiet(), self.assertRaises(SharedLockTimeout):
                 self.heartbeat("private")
-        slot = pro.data()["slot"]
-        pro._data = None
+        slot = pro.store.data()["slot"]
+        pro.store._data = None
         pro._next_tick = 0
         with quiet():
             pro.tick(self.st, slot["expires"] + 1)
-        self.assertNotIn(slot["id"], [q["message_id"] for q in m.load_queue()])
+        self.assertNotIn(slot["id"], [q["message_id"] for q in m._queue_files().load()])
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ def dmc(i):
 class Audit(tp.Base):
     def people(self, n, age):
         for i in range(n):
-            self.m.DM_CHANNELS[dmc(i)] = f"p{int(i)}"
+            self.m._DIRECT_MESSAGES.names[dmc(i)] = f"p{int(i)}"
             self.dmed(uid(i), dmc(i), age=age)
 
     def test_blocked_person_is_not_dmed_again(self):
@@ -54,7 +54,7 @@ class Audit(tp.Base):
     def test_reaction_lookups_are_few(self):
         self.people(20, 3 * 24 * HOUR)
         for i in range(20):  # unanswered, 3 parts each
-            self.m.PRO.data()["sent"].append(
+            self.m.PRO.store.data()["sent"].append(
                 {
                     "at": self.now - 2 * 24 * HOUR,
                     "slot": "x",
@@ -73,7 +73,7 @@ class Audit(tp.Base):
 
     def test_everyone_gets_a_turn_past_targets_max(self):
         self.people(40, 3 * HOUR)
-        self.m.PRO.rng = random.Random(1)  # no flakes
+        self.m.PRO.heartbeat.rng = random.Random(1)  # no flakes
         seen = set()
         for k in range(10):
             slot = (

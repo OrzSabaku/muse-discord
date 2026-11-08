@@ -19,7 +19,7 @@ from common import scratch  # noqa: E402
 tmp = scratch("muse-plumb-main-")
 mod = H.load_monitor(tmp)
 mod.api.routes["/users/@me"] = {"id": H.BOT, "username": "musebot"}
-mod.BOT_ID = mod.BOT_USER_ID = None
+mod._IDENTITY.user_id = None
 mod.discover_channels = lambda previous=None: (
     {"C1": H.chan()},
     {H.G1: {"name": "Srv", "system_channel_id": None, "joined_at": None}},
@@ -42,7 +42,7 @@ def slow_outbox(state):
     raise Stop()
 
 
-mod.process_outbox = slow_outbox
+mod._OUTBOX.process = slow_outbox
 res = {"acks": [], "handled_on": []}
 
 
@@ -59,8 +59,8 @@ def handle(ix, ctx):
 
 
 for key in ("/test-settings", "test-settings"):
-    mod.register_interaction(
-        key, lambda ix, rest, uid, record: handle(ix, mod.SettingsCtx()), owner_only=False
+    mod._INTERACTION_WORKER.router.register(
+        key, lambda ix, rest, uid, record: handle(ix, mod.settings_context()), owner_only=False
     )
 
 
@@ -70,11 +70,12 @@ def cb(i, resp):
         acked.set()
 
 
-mod.interaction_callback = cb
+mod._INTERACTION_WORKER.responder.send = cb
 res["put_at"] = {}
 
 
-def fake_gw(token, inbox, status):
+def fake_gw():
+    status = mod._GATEWAY.status
     in_outbox.wait(5)
     for n, (t, data) in enumerate(
         [
@@ -91,7 +92,7 @@ def fake_gw(token, inbox, status):
         time.sleep(0.05)
 
 
-mod._gateway_thread_main = fake_gw
+mod._GATEWAY.run = fake_gw
 
 
 def on_alarm(*_):

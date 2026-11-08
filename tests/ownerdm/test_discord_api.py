@@ -9,7 +9,6 @@ message id. The API is stubbed.
 
 Usage: [MUT_DIR=<tree>] python3 tests/ownerdm/test_discord_api.py"""
 
-import importlib.util
 import io
 import json
 import os
@@ -21,6 +20,8 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
 from common import MUT_DIR, scratch
+
+from muse_discord.discord_tools.cli import create_cli
 
 OWNER = "100000000000000001"
 STRANGER = "100000000000000002"
@@ -45,11 +46,8 @@ with open(CFG, "w") as f:
     f.write(f'version: 1\nowners: ["{OWNER}"]\ntoken_from: env:MUSE_TEST_TOKEN\n')
 os.environ["MUSE_DISCORD_CONFIG"] = CFG
 os.environ["MUSE_TEST_TOKEN"] = "dummy-token"
-spec = importlib.util.spec_from_file_location(
-    "discord_api_odm", os.path.join(MUT_DIR, "bin", "discord-api.py")
-)
-D = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(D)
+
+D = create_cli(MUT_DIR)
 
 CHANNELS = {
     OWNER_DM: {"id": OWNER_DM, "type": 1, "recipients": [{"id": OWNER}]},
@@ -86,16 +84,16 @@ def fake_api(method, path, data=None):
     return {"id": "500000000000000001", "name": "t"}
 
 
-D.api = fake_api
-D.OWNER_DM_NONCES_FILE = os.path.join(WORK, "owner_dm_nonces.json")
-D.OWNER_ITEMS_FILE = os.path.join(WORK, "owner_items.json")
+D.session.api = fake_api
+D.session.owner_dm_nonces_file = os.path.join(WORK, "owner_dm_nonces.json")
+D.session.owner_items_file = os.path.join(WORK, "owner_items.json")
 SERVER = ("--for", SRV_ITEM, "--nonce", SRV_NONCE)
 
 
 def entry(nonce, cid, dm=False, channels=(), post_channels=()):
     """An owner_items.json record, as the monitor writes it: the places
     the owner's own words name, resolved to ids when it was queued
-    (monitor.owner_targets)."""
+    (monitor._CAPABILITIES.targets.resolve)."""
     return {
         "nonce": nonce,
         "channel_id": cid,
@@ -114,7 +112,7 @@ ITEMS = {
 
 
 def write_owner_items(data):
-    with open(D.OWNER_ITEMS_FILE, "w") as f:
+    with open(D.session.owner_items_file, "w") as f:
         json.dump(data, f)
 
 
@@ -125,7 +123,7 @@ def writes():
 
 class _Tool(unittest.TestCase):
     def setUp(self):
-        with open(D.OWNER_DM_NONCES_FILE, "w") as f:
+        with open(D.session.owner_dm_nonces_file, "w") as f:
             json.dump({ITEM: NONCE}, f)
         write_owner_items(ITEMS)
 
@@ -170,17 +168,17 @@ class OwnerDmChannel(_Tool):
             self.assertNotEqual(rc, 0, prefix)
             self.assertEqual(writes(), [], prefix)
         # Spent (the monitor dropped it from the file once answered).
-        with open(D.OWNER_DM_NONCES_FILE, "w") as f:
+        with open(D.session.owner_dm_nonces_file, "w") as f:
             json.dump({}, f)
         rc = self.run_tool("--for", ITEM, "--nonce", NONCE, "post", OWNER_DM, "hi")
         self.assertNotEqual(rc, 0)
         self.assertEqual(writes(), [])
-        os.remove(D.OWNER_DM_NONCES_FILE)
+        os.remove(D.session.owner_dm_nonces_file)
         rc = self.run_tool("--for", ITEM, "--nonce", NONCE, "post", OWNER_DM, "hi")
         self.assertEqual(writes(), [])
 
     def test_the_item_must_be_in_that_channel(self):
-        with open(D.OWNER_DM_NONCES_FILE, "w") as f:
+        with open(D.session.owner_dm_nonces_file, "w") as f:
             json.dump({ITEM: NONCE, "300000000000000003": "d" * 32}, f)
         write_owner_items({ITEM: NONCE, "300000000000000003": "d" * 32})
         rc = self.run_tool(
@@ -226,16 +224,16 @@ class OwnerDmChannel(_Tool):
         self.assertNotEqual(rc, 0)
         self.assertEqual(writes(), [])
         # Unreadable owners: every DM is treated as an owner's.
-        real = D._owners
-        D._owners = lambda: None
+        real = D.session.owners
+        D.session.owners = lambda: None
         try:
             rc = self.run_tool(*SERVER, "post", OTHER_DM, "hi")
             self.assertNotEqual(rc, 0)
             self.assertEqual(writes(), [])
             self.assertEqual(self.run_tool(*SERVER, "post", GEN_CH, "hi"), 0)
         finally:
-            D._owners = real
-        self.assertEqual(D._owners(), {OWNER})
+            D.session.owners = real
+        self.assertEqual(D.session.owners(), {OWNER})
 
     def test_non_canonical_ids_refused(self):
         for cid in ("0" + GEN_CH, GEN_CH.replace("2", "\u0662")):
@@ -268,7 +266,7 @@ class OwnerCommandsOnly(_Tool):
         # Answered (the monitor dropped it), or no file at all.
         write_owner_items({ITEM: ITEMS[ITEM]})
         self.assertNotEqual(self.run_tool(*SERVER, "post", GEN_CH, "x"), 0)
-        os.remove(D.OWNER_ITEMS_FILE)
+        os.remove(D.session.owner_items_file)
         self.assertNotEqual(self.run_tool(*SERVER, "read", GEN_CH), 0)
         self.assertEqual(CALLS, [])
 
@@ -291,7 +289,7 @@ class OwnerCommandsOnly(_Tool):
             {"id": GEN_CH, "name": "general", "type": 0},
             {"id": "2", "name": "layoffs-private", "type": 0},
         ]
-        real = D.api
+        real = D.session.api
 
         def api(method, path, data=None):
             CALLS.append((method, path, data))
@@ -299,7 +297,7 @@ class OwnerCommandsOnly(_Tool):
                 return listing
             return {"threads": [{"id": "1", "parent_id": GEN_CH, "name": "hr-thread"}]}
 
-        D.api = api
+        D.session.api = api
         CALLS.clear()
         err, out = io.StringIO(), io.StringIO()
         old = sys.stderr, sys.stdout
@@ -317,7 +315,7 @@ class OwnerCommandsOnly(_Tool):
                     rcs.append(str(e))
                     err.write(str(e))
         finally:
-            D.api = real
+            D.session.api = real
             sys.stderr, sys.stdout = old
         return rcs, out.getvalue() + err.getvalue()
 

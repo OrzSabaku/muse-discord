@@ -21,6 +21,7 @@ import sys
 import time
 import unittest
 from unittest import mock
+from urllib.parse import unquote
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
@@ -58,14 +59,19 @@ class Base(unittest.TestCase):
         self.mod = load_monitor(CFG)
         m = self.mod
         # No 2-4 s typing beat between the parts of a multi-part reply.
-        beat = mock.patch.object(m.random, "uniform", lambda a, b: 0.0)
+        beat = mock.patch("muse_discord.messaging.parts.random.uniform", lambda a, b: 0.0)
         beat.start()
         self.addCleanup(beat.stop)
         for cid, uid in ((DM, OWNER), (DM2, OWNER2), (DM_U1, U1)):
-            m.DM_CHANNELS[cid] = "dm"
-            m.DM_CHANNEL_USER[cid] = uid
+            m._DIRECT_MESSAGES.names[cid] = "dm"
+            m._DIRECT_MESSAGES.users[cid] = uid
         self.reactions = []
-        m.add_reaction = lambda cid, mid, e: self.reactions.append((cid, mid, e)) or True
+
+        def put_reaction(path):
+            _, _, cid, _, mid, _, emoji, _ = path.split("/")
+            self.reactions.append((cid, mid, unquote(emoji)))
+
+        m._DISCORD.put = put_reaction
         self.st = state(m)
         self.out = ""
 
@@ -83,7 +89,7 @@ class Base(unittest.TestCase):
                 context=self.mod.QueueContext(dm=dm, fragments=fragments, guild_id=guild),
             )
         self.assertTrue(ok)
-        self.mod.queue_edit(add=q)
+        self.mod._queue_files().edit(add=q)
         return msg
 
     def owner_dm(self, text="hey, how's it going?", uid=OWNER, channel=DM, **kw):
@@ -120,7 +126,7 @@ class Base(unittest.TestCase):
 
     def process(self):
         with quiet() as buf:
-            self.mod.process_outbox(self.st)
+            self.mod._OUTBOX.process(self.st)
         self.out += buf.getvalue()
         return buf.getvalue()
 
@@ -132,7 +138,7 @@ class Base(unittest.TestCase):
         ]
 
     def queued(self):
-        return [q["message_id"] for q in self.mod.load_queue()]
+        return [q["message_id"] for q in self.mod._queue_files().load()]
 
     def rejected(self):
         try:
@@ -481,7 +487,7 @@ class LegitPathAndCompat(Base):
         # owner; another item cannot post there.
         u = self.queue(dmsg(U1, "hello", channel=DM_U1))
         s = self.stranger_mention()
-        self.mod.OWNER_USER_IDS = {OWNER, OWNER2, U1}
+        self.mod._SETTINGS.owners = {OWNER, OWNER2, U1}
         self.outbox({"item": s["id"], "channel_id": DM_U1, "standalone": True, "text": "psst"})
         self.assert_refused("names no owner DM")
         self.outbox(self.reply(u, "hi u1"))
@@ -495,8 +501,8 @@ class LegitPathAndCompat(Base):
         self.assert_real_reply_goes_out(b)
         # An owner removed after queueing: still bound.
         m = self.owner_dm()
-        self.mod.OWNER_USER_IDS = {OWNER2}
-        self.mod.DM_CHANNEL_USER.pop(DM)
+        self.mod._SETTINGS.owners = {OWNER2}
+        self.mod._DIRECT_MESSAGES.users.pop(DM)
         self.outbox(self.reply(m, "x"))
         self.assert_refused("bad nonce")
         self.assertIn(m["id"], self.queued())
@@ -513,14 +519,14 @@ class NonceLifetime(Base):
         n = self.nonce(m["id"])
         self.st["nl_nonces"][m["id"]]["at"] -= 2 * 86400
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertEqual(self.nonce(m["id"]), n)
         with open(self.mod.OWNER_DM_NONCES_FILE) as f:
             self.assertEqual(json.load(f), {m["id"]: n})
         # A spent one (not queued any more) is pruned after a day.
         self.st["nl_nonces"]["123"] = {"nonce": "b" * 32, "at": time.time() - 2 * 86400}
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertNotIn("123", self.st["nl_nonces"])
 
     def test_state_lost_mints_a_new_nonce(self):
@@ -535,9 +541,9 @@ class NonceLifetime(Base):
         self.assert_refused("none live")
         self.assertEqual(self.sends(DM), [])
         # The main loop's upkeep mints a new one, for owner DMs only.
-        self.mod._OWNER_DM_UPKEEP["next"] = 0
+        self.mod._CAPABILITIES.upkeep_clock["next"] = 0
         with quiet():
-            self.mod.owner_dm_upkeep(self.st)
+            self.mod._CAPABILITIES.upkeep(self.st)
         self.assertEqual(list(self.st["nl_nonces"]), [m["id"]])
         self.assertIn(s["id"], self.queued())
         self.assertIn(u["id"], self.queued())
@@ -553,7 +559,7 @@ class NonceLifetime(Base):
     def test_evicted_item_meta_still_bound(self):
         m = self.owner_dm()
         del self.st["item_meta"][m["id"]]
-        self.mod.DM_CHANNEL_USER.clear()
+        self.mod._DIRECT_MESSAGES.users.clear()
         self.outbox(self.reply(m, "forged"))
         self.assert_refused("bad nonce")
         self.assert_open(m)

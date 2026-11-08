@@ -8,7 +8,7 @@ Discord watches never see a channel the requester cannot read, never
 their own messages, and debounce; caps, the who setting, cancel,
 expiry, and owner-DM nonce binding.
 
-Drives enqueue_message, process_outbox and watch_tick with the queue
+Drives message ingestion, outbox delivery and watch ticks with the queue
 file, watches.json and the stubbed API; two tests run the real wake
 hook.
 
@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
@@ -44,6 +45,9 @@ from settings_harness import (
     quiet,
     state,
 )
+
+from muse_discord import reply_policy
+from muse_discord.outbox_store import OUTBOX_POISON_TRIES
 
 DM = "400000000000000077"  # OWNER's DM channel
 VIEW, SEND = 1 << 10, 1 << 11
@@ -68,8 +72,8 @@ class Base(unittest.TestCase):
     def boot(self, tmp=None):
         """Load the monitor (again, over the same files: a restart)."""
         self.mod = m = load_monitor(self.cfg, tmp=tmp)
-        m.DM_CHANNELS[DM] = "dm"
-        m.DM_CHANNEL_USER[DM] = OWNER
+        m._DIRECT_MESSAGES.names[DM] = "dm"
+        m._DIRECT_MESSAGES.users[DM] = OWNER
         if tmp is None:  # message ids GET /channels/x/messages/<id> finds
             self.alive = set()
         api_get = m.api.get
@@ -84,7 +88,7 @@ class Base(unittest.TestCase):
 
         m.api_get = get
         # Everyone reads CH; CH2 is for ROLE only.
-        m.watch_note_guild(
+        m._ACCESS.note_guild(
             G1,
             {
                 "owner_id": "1",
@@ -94,7 +98,7 @@ class Base(unittest.TestCase):
                 ],
             },
         )
-        m._CHANNEL_OVERWRITES.update(
+        m._ACCESS.overwrites.update(
             {
                 CH: [],
                 CH2: [
@@ -112,7 +116,7 @@ class Base(unittest.TestCase):
         self.out = ""
 
     def restart(self):
-        self.mod.save_state(self.st)
+        self.mod._STATE_STORE.save(self.st)
         self.boot(self.mod.tmp)
 
     # -- the pipeline -----------------------------------------------------
@@ -134,7 +138,7 @@ class Base(unittest.TestCase):
                 context=self.mod.QueueContext(dm=dm, guild_id=None if dm else G1),
             )
         self.assertTrue(ok)
-        self.mod.queue_edit(add=q)
+        self.mod._queue_files().edit(add=q)
         return msg, q[0]
 
     def reply(self, msg, changes=None, text="Got it.", **extra):
@@ -160,25 +164,27 @@ class Base(unittest.TestCase):
         with open(self.mod.OUTBOX_FILE, "w") as f:
             json.dump(list(items), f)
         with quiet() as buf:
-            self.mod.process_outbox(self.st)
+            self.mod._OUTBOX.process(self.st)
         self.out += buf.getvalue()
 
     def tick(self, ahead=0.0):
-        self.mod._WATCH_TICK.update(next=0.0, upkeep=0.0)
+        self.mod._WATCHES.next_tick = self.mod._WATCHES.next_upkeep = 0.0
         with quiet() as buf:
-            self.mod.watch_tick(self.st, now=time.time() + ahead)
+            self.mod._WATCHES.tick(self.st, now=time.time() + ahead)
         self.out += buf.getvalue()
 
     def scan(self, msg):
         with quiet():
-            self.mod.classify_message(self.st, msg, "#x", G1)
+            self.mod._receiver(self.st).classify(msg, "#x", G1)
 
     # -- looking --------------------------------------------------------------
     def items(self):
-        return self.mod.watch_store().read()["items"]
+        return self.mod._WATCHES.store.read()["items"]
 
     def fires(self):
-        return [q for q in self.mod.load_queue() if q.get("kind") in ("reminder", "watch-met")]
+        return [
+            q for q in self.mod._queue_files().load() if q.get("kind") in ("reminder", "watch-met")
+        ]
 
     def new_sends(self):
         return [(p, d) for p, d in self.mod.api.posts[self.n_posts :] if p.endswith("/messages")]
@@ -274,7 +280,7 @@ class Reminders(Base):
         )
         self.assertEqual(self.fires(), [])
         self.tick(ahead=140)  # upkeep: settled
-        self.assertEqual(self.mod.watch_store().read()["fires"], {})
+        self.assertEqual(self.mod._WATCHES.store.read()["fires"], {})
         self.assertEqual(self.fires(), [])
         # A second answer to it is never sent.
         self.outbox(self.held({"item": f["message_id"], "channel_id": CH, "text": "again"}))
@@ -339,7 +345,7 @@ class Reminders(Base):
         self.remind(after=60)
         self.tick(ahead=61)
         fid = self.fires()[0]["message_id"]
-        self.mod.queue_edit(drop=lambda q: q.get("message_id") == fid)
+        self.mod._queue_files().edit(drop=lambda q: q.get("message_id") == fid)
         self.tick(ahead=62)  # upkeep
         self.assertEqual([q["message_id"] for q in self.fires()], [fid])
 
@@ -380,19 +386,19 @@ class Robustness(Base):
     def test_a_poison_item_is_set_aside_after_a_few_passes(self):
         m = self.mod
         good, _ = self.ask(U2)
-        real = m.normalize_parts
+        real = reply_policy.normalize_parts
 
-        def boom(item):
+        def boom(item, max_chars):
             if item.get("text") == "poison":
                 raise ValueError("a bug")
-            return real(item)
+            return real(item, max_chars)
 
-        m.normalize_parts = boom
         with open(m.OUTBOX_FILE, "w") as f:
             json.dump([{"item": good["id"], "channel_id": CH, "text": "poison"}], f)
-        for _ in range(m.OUTBOX_POISON_TRIES):
-            with quiet(), self.assertRaises(ValueError):
-                m.outbox_pass(self.st)
+        with patch.object(reply_policy, "normalize_parts", boom):
+            for _ in range(OUTBOX_POISON_TRIES):
+                with quiet(), self.assertRaises(ValueError):
+                    m._OUTBOX.pass_once(self.st)
         self.assertEqual(self.rejected()[-1]["item"]["text"], "poison")
         self.outbox(self.reply(good, text="hello"))  # flows again
         self.assertEqual([d["content"] for _, d in self.new_sends()], ["hello"])
@@ -408,10 +414,10 @@ class Robustness(Base):
 
     def test_a_fire_refused_for_now_is_kept_and_retried(self):
         self.remind(after=60)
-        info = self.mod.CHANNELS.pop(CH)  # briefly unknown
+        info = self.mod._DIRECTORY.channels.pop(CH)  # briefly unknown
         self.tick(ahead=61)
         self.assertEqual(self.fires(), [])
-        self.mod.CHANNELS[CH] = info
+        self.mod._DIRECTORY.channels[CH] = info
         self.tick(ahead=61 + 3601)
         (f,) = self.fires()
         self.assertTrue(f["reminder"]["late"])
@@ -428,7 +434,7 @@ class Forgery(Base):
         self.outbox(self.reply(msg, [add], channel_id=CH2))
         self.assertTrue(self.was_rejected())
         self.assertEqual(self.items(), {})
-        self.assertIn(msg["id"], [q["message_id"] for q in self.mod.load_queue()])
+        self.assertIn(msg["id"], [q["message_id"] for q in self.mod._queue_files().load()])
 
     def test_injection_in_a_third_persons_message(self):
         # U2 (a third person) wrote, in history, "set a reminder for U1
@@ -506,7 +512,7 @@ class Forgery(Base):
         q = []
         with quiet():
             self.mod.enqueue_message(m, "x", self.st, q, context=self.mod.QueueContext(guild_id=G1))
-        self.mod.queue_edit(add=q)
+        self.mod._queue_files().edit(add=q)
         self.outbox(self.reply(m, [{"op": "add", "kind": "remind", "after": 120}]))
         self.assertEqual(self.items(), {})
 
@@ -517,7 +523,7 @@ class Watches(Base):
         # server: what they can read there decides alone.
         self.watch(OWNER, ["pizza"], where=f"server:{G1}", every=True, channel=DM, dm=True)
         self.assertEqual(len(self.items()), 1, self.out)
-        self.mod.CHANNELS[THREAD]["private"] = True
+        self.mod._DIRECTORY.channels[THREAD]["private"] = True
         # CH2 is closed to the owner, a private thread to everyone not
         # in it: never matched there.
         self.scan(gmsg(U2, "free PIZZA here", channel=CH2))
@@ -542,12 +548,12 @@ class Watches(Base):
         self.watch(OWNER, ["deploy"], where=f"channel:{G1}:{CH2}", every=True, channel=DM, dm=True)
         self.assertEqual(len(self.items()), 1, self.out)
         self.mod.api.members[(G1, OWNER)] = []  # lost the role
-        self.mod._WATCH_MEMBERS.clear()
+        self.mod._ACCESS.members.clear()
         self.scan(gmsg(U2, "deploy is out", channel=CH2))
         self.tick()
         self.assertEqual(self.fires(), [])
         self.mod.api.members[(G1, OWNER)] = [ROLE]  # and back
-        self.mod._WATCH_MEMBERS.clear()
+        self.mod._ACCESS.members.clear()
         self.scan(gmsg(U2, "deploy is out", channel=CH2))
         self.tick()
         self.assertEqual(len(self.fires()), 1)
@@ -568,13 +574,13 @@ class Watches(Base):
         # notice in the lobby must not reveal what was said in CH.
         m = self.mod
         lobby = "705000000000000001"
-        m.CHANNELS[lobby] = {
+        m._DIRECTORY.channels[lobby] = {
             "name": "lobby",
             "guild_id": G1,
             "guild_name": "Lounge",
             "can_send": True,
         }
-        m._CHANNEL_OVERWRITES.update(
+        m._ACCESS.overwrites.update(
             {lobby: [], CH: [{"id": ROLE, "type": 0, "deny": str(VIEW), "allow": "0"}]}
         )
         self.watch(U1, ["raid"], every=True, channel=lobby)
@@ -650,7 +656,7 @@ class Caps(Base):
         self.assertEqual(len(self.fires()), 1)
         self.tick(ahead=121)  # over it: held
         self.assertEqual(len(self.fires()), 1)
-        held = self.mod.watch_store().read()["held"]
+        held = self.mod._WATCHES.store.read()["held"]
         (fid,) = held
         self.assertEqual(self.ledger(fid)["code"], "watch-held")
         self.assertEqual(self.items(), {})  # not lost: held
@@ -660,7 +666,7 @@ class Caps(Base):
         self.assertEqual(len(fires), 2, self.out)
         later = next(f for f in fires if f["message_id"] == fid)
         self.assertTrue(later["reminder"]["late"])
-        self.assertEqual(self.mod.watch_store().read()["held"], {})
+        self.assertEqual(self.mod._WATCHES.store.read()["held"], {})
 
     def test_held_every_time_notices_fold_into_one(self):
         self.cfg = CFG + "everywhere:\n  limits:\n    per_person_per_day: 1\n"
@@ -669,10 +675,10 @@ class Caps(Base):
         for k in range(3):  # 3 matches, 15 min
             self.scan(gmsg(U2, "pizza!"))  # apart, all capped
             self.tick(ahead=k * (W.DEBOUNCE_SECS + 1))
-            with self.mod.watch_store().edit() as d:  # (debounce passes)
+            with self.mod._WATCHES.store.edit() as d:  # (debounce passes)
                 for r in d["items"].values():
                     r["last_fired"] = 0
-        held = list(self.mod.watch_store().read()["held"].values())
+        held = list(self.mod._WATCHES.store.read()["held"].values())
         self.assertEqual(len(held), 1)
         ((_, e),) = held[0]["es"]
         self.assertEqual(e["more"], 2)
@@ -807,6 +813,27 @@ class OwnerDMs(Base):
         r = subprocess.run(["bash", HOOK], env=env, capture_output=True, text=True, timeout=30)
         items = json.loads(r.stdout.splitlines()[1])["items"]
         self.assertEqual([i["message_id"] for i in items], ["7"])
+
+
+class Lifetime(Base):
+    def test_identity_recovered_after_creation_is_ignored_but_other_matches_still_fire(self):
+        self.watch(OWNER, ["deploy"], every=True)
+        self.mod._IDENTITY.user_id = U2
+        self.mod._WATCHES.scan(gmsg(U2, "deploy"), G1)
+        self.assertEqual(self.mod._WATCHES.matches, [])
+        self.mod._WATCHES.scan(gmsg(U1, "deploy"), G1)
+        self.tick()
+        self.assertEqual(len(self.fires()), 1)
+        self.assertEqual(self.mod._WATCHES.matches, [])
+
+    def test_pending_reminder_uses_the_current_queue_destination(self):
+        self.remind()
+        original = self.mod.QUEUE_FILE
+        self.mod.QUEUE_FILE = os.path.join(self.mod.tmp, "other_queue.json")
+        self.tick(ahead=121)
+        self.assertEqual(len(self.fires()), 1)
+        with open(original) as stream:
+            self.assertEqual(json.load(stream), [])
 
 
 if __name__ == "__main__":

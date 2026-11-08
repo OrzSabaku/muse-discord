@@ -11,6 +11,7 @@ import re
 import shutil
 import sys
 import time
+from urllib.parse import unquote
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
@@ -34,6 +35,7 @@ spec = importlib.util.spec_from_file_location(
 )
 monitor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(monitor)
+monitor.initialize(token_override="dummy-token")
 redirect_files(monitor, SCRATCH)
 
 CALLS = []  # (time, kind, path, data)
@@ -57,9 +59,14 @@ def fake_get(path):
 
 monitor.api_post = fake_post
 monitor.api_get = fake_get
-monitor.add_reaction = lambda cid, mid, emoji: (
-    CALLS.append((time.time(), "react", mid, emoji)) or True
-)
+
+
+def fake_put(path):
+    _, _, _cid, _, mid, _, emoji, _ = path.split("/")
+    CALLS.append((time.time(), "react", mid, unquote(emoji)))
+
+
+monitor._DISCORD.put = fake_put
 monitor.collect_media = lambda msg: ([], [], [])
 
 
@@ -86,12 +93,12 @@ def fresh_pkg():
     monitor.MEDIA_DIR = os.path.join(d, "media")
     monitor.GENERATED_DIR = os.path.join(d, "generated")
     CALLS.clear()
-    getattr(monitor, "_typing_sources", {}).clear()
-    getattr(monitor, "_typing_last", {}).clear()
-    getattr(monitor, "_activity", {}).clear()
-    monitor._rl_until = 0.0
-    monitor.BOT_ID = monitor.BOT_USER_ID = "999"
-    monitor.BOT_NAME = "pip"
+    monitor._TYPING.sources.clear()
+    monitor._TYPING.last.clear()
+    monitor._ACTIVITY.clear()
+    monitor._BACKOFF.until = 0.0
+    monitor._IDENTITY.user_id = "999"
+    monitor._IDENTITY.name = "pip"
     return d
 
 

@@ -18,6 +18,7 @@ sys.dont_write_bytecode = True
 from common import redirect_files  # noqa: E402
 
 from muse_discord import muse_settings as MS  # noqa: E402
+from muse_discord.settings import overlay as settings_overlay  # noqa: E402 (source path bootstrap)
 
 OWNER = "11100000000000000001"
 OWNER2 = "11100000000000000002"
@@ -85,7 +86,7 @@ def load(cfg):
 
 
 def doc(cfg):
-    return MS._read_overlay_doc(MS.overlay_path_for(cfg))
+    return settings_overlay._read_overlay_doc(MS.overlay_path_for(cfg))
 
 
 class FakeAPI:
@@ -139,6 +140,7 @@ def load_monitor(test, text):
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             spec.loader.exec_module(mod)
+            mod.initialize(token_override="dummy-token")
     finally:
         sys.argv = argv
     d = os.path.dirname(cfg)
@@ -162,9 +164,9 @@ def load_monitor(test, text):
     mod.api = api
     mod.api_get = api.get
     mod.api_post = api.post
-    mod.send_typing = lambda cid: None
+    mod._TYPING.send = lambda cid: None
     mod.collect_media = lambda m: ([], [], [])
-    mod.BOT_ID = mod.BOT_USER_ID = BOT
-    mod.GUILDS = {G1: {"name": "Lounge"}}
+    mod._IDENTITY.user_id = BOT
+    mod._DIRECTORY.adopt(mod._DIRECTORY.channels, {G1: {"name": "Lounge"}})
     mod.cfg_path = cfg
     return mod

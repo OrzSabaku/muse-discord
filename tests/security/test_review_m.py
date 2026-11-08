@@ -14,6 +14,8 @@ sys.path.insert(0, HERE)
 import test_secrets as ts  # noqa: E402
 from test_secrets import CH, TOKEN, quiet, token_like  # noqa: E402
 
+from muse_discord.message_models import SecretBlocked  # noqa: E402 (source path bootstrap)
+
 FOREIGN = token_like()  # another bot's token, read by the worker
 
 
@@ -21,10 +23,10 @@ class Tool(unittest.TestCase):
     def thread(self, *args):
         import test_discord_api as td
 
-        td.D.TOKEN = TOKEN
+        td.D.session.token = TOKEN
         td.write_owner_items(td.ITEMS)
-        td.D.GENERATED_DIR = os.path.dirname(td.D.OWNER_ITEMS_FILE)
-        td.D.api_multipart = lambda path, payload, f: (
+        td.D.session.generated_dir = os.path.dirname(td.D.session.owner_items_file)
+        td.D.session.api_multipart = lambda path, payload, f: (
             td.CALLS.append(("POST", path, payload)) or {"id": "1"}
         )
         td.CALLS.clear()
@@ -40,7 +42,7 @@ class Tool(unittest.TestCase):
     def test_thread_secret_split_between_text_and_upload(self):
         import test_discord_api as td
 
-        upload = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE), "half.txt")
+        upload = os.path.join(os.path.dirname(td.D.session.owner_items_file), "half.txt")
         with open(upload, "w") as f:
             f.write(TOKEN[30:])
         try:
@@ -63,11 +65,11 @@ class Upload(ts.tb.Base):
             raise OSError("sent")
 
         with (
-            mock.patch.object(m, "discord_request", urlopen),
+            mock.patch.object(m._DISCORD, "request", urlopen),
             quiet(),
-            contextlib.suppress(m.SecretBlocked, OSError),
+            contextlib.suppress(SecretBlocked, OSError),
         ):
-            m.send_reply_with_files(CH, "see " + TOKEN[:30], [(half, "half.txt")])
+            m._SENDER.files(CH, "see " + TOKEN[:30], [(half, "half.txt")])
         self.assertEqual(opened, [], "the upload was sent")
 
 

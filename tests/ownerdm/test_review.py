@@ -24,12 +24,14 @@ from settings_harness import (  # noqa: E402 (local import path bootstrap)
 )
 from test_binding import DM, DM_U1, Base  # noqa: E402
 
+from muse_discord.bursts import alias_fragments  # noqa: E402 (source path bootstrap)
 
-def churn_aliases(mod, st, n=501):
+
+def churn_aliases(st, n=501):
     """Other people's bursts: alias_fragments keeps only the newest 500
     fragment -> trigger aliases (state["reply_aliases"])."""
     for i in range(n):
-        mod.alias_fragments(st, f"7{i:017d}", [{"id": f"8{i:017d}"}])
+        alias_fragments(st, f"7{i:017d}", [{"id": f"8{i:017d}"}])
 
 
 class BurstFragments(Base):
@@ -61,7 +63,7 @@ class BurstFragments(Base):
     def test_fragment_after_alias_eviction(self):
         trig, frag = self.burst()
         self.assertEqual(self.st["nl_nonces"][trig["id"]]["fragments"], [frag["id"]])
-        churn_aliases(self.mod, self.st)
+        churn_aliases(self.st)
         self.assertNotIn(frag["id"], self.st["reply_aliases"])
         # A stranger's wake silencing it under the fragment: refused.
         for cid in (CH, DM):
@@ -78,7 +80,7 @@ class BurstFragments(Base):
         self.outbox({"channel_id": CH, "reply_to": frag["id"], "silent": True})
         self.assertIn(trig["id"], self.queued(), self.out)
         with quiet():
-            self.mod.owner_dm_upkeep(self.st, force=True)
+            self.mod._CAPABILITIES.upkeep(self.st, force=True)
         self.assertEqual(self.st["nl_nonces"][trig["id"]]["fragments"], [frag["id"]])
         self.outbox({"channel_id": CH, "reply_to": frag["id"], "silent": True})
         self.assertIn(trig["id"], self.queued(), self.out)
@@ -135,9 +137,11 @@ class ForgottenChannels(Base):
     a channel it cannot place is looked up, failing closed."""
 
     def forget(self):
-        self.mod.DM_CHANNEL_USER.clear()
+        self.mod._DIRECT_MESSAGES.users.clear()
         for i in range(301):
-            self.mod.note_item_meta(self.st, f"6{i:017d}", channel_id=CH, dm=False, owner_dm=False)
+            self.mod._REPLIES.note_item(
+                self.st, f"6{i:017d}", channel_id=CH, dm=False, owner_dm=False
+            )
 
     def test_owner_dm_channel_forgotten(self):
         m = self.owner_dm()
@@ -149,7 +153,7 @@ class ForgottenChannels(Base):
         self.assert_refused("could not be looked up")
         # The API says it is a DM with an owner (or with nobody listed).
         for recips in ([{"id": OWNER}], []):
-            self.mod._CHANNEL_LOOKUP.clear()
+            self.mod._OWNER_AUTH.lookup.clear()
             self.mod.api_get = lambda path, r=recips: {"id": DM, "type": 1, "recipients": r}
             self.outbox({"channel_id": DM, "standalone": True, "text": "unsolicited"})
             self.assertEqual(len(self.sends(DM)), 1, self.out)
@@ -159,7 +163,7 @@ class ForgottenChannels(Base):
         s = self.stranger_mention()
         u = self.queue(dmsg(U1, "hello", channel=DM_U1))
         self.forget()
-        self.mod.DM_CHANNEL_USER.clear()
+        self.mod._DIRECT_MESSAGES.users.clear()
         self.st["item_meta"].pop(u["id"], None)
         lookups = []
 
@@ -209,9 +213,9 @@ class UpkeepFirst(Base):
     def test_owner_dm_upkeep_refreshes_missing_nonce(self):
         m = self.owner_dm()
         self.st["nl_nonces"].clear()
-        self.mod._OWNER_DM_UPKEEP["next"] = 0
+        self.mod._CAPABILITIES.upkeep_clock["next"] = 0
         with quiet():
-            self.mod.owner_dm_upkeep(self.st)
+            self.mod._CAPABILITIES.upkeep(self.st)
         self.assertIn(m["id"], self.st["nl_nonces"])
 
 

@@ -51,7 +51,7 @@ def rel(t):
 
 
 # --- instrumentation -------------------------------------------------------
-_orig_drain = mod.drain_gateway
+_orig_drain = mod.GatewayIngress.drain
 
 
 def drain(*a, **kw):
@@ -59,7 +59,7 @@ def drain(*a, **kw):
     return _orig_drain(*a, **kw)
 
 
-mod.drain_gateway = drain
+mod.GatewayIngress.drain = drain
 _orig_load_state = mod.load_state
 LIVE = {}  # the main loop's state, for signing outbox items
 
@@ -70,15 +70,22 @@ def load_state_live():
 
 
 mod.load_state = load_state_live
-_orig_stage = mod.stage_trigger
+_orig_bursts = mod._bursts
 
 
-def stage(state, msg, *a, **kw):
-    rec["staged"].append([msg["id"], rel(time.time())])
-    return _orig_stage(state, msg, *a, **kw)
+def observed_bursts(state):
+    bursts = _orig_bursts(state)
+    original = bursts.stage
+
+    def stage(msg, *args, **kwargs):
+        rec["staged"].append([msg["id"], rel(time.time())])
+        return original(msg, *args, **kwargs)
+
+    bursts.stage = stage
+    return bursts
 
 
-mod.stage_trigger = stage
+mod._bursts = observed_bursts
 _orig_enq = mod.enqueue_message
 
 
@@ -129,7 +136,8 @@ def probe(inbox, status):
         status["wake"].set()
 
 
-def fake_gw(token, inbox, status):
+def fake_gw():
+    inbox, status = mod._GATEWAY.inbox, mod._GATEWAY.status
     if PROBE["on"]:
         threading.Thread(target=probe, args=(inbox, status), daemon=True).start()
     for at, item in gw_script:
@@ -143,7 +151,7 @@ def fake_gw(token, inbox, status):
             status["wake"].set()
 
 
-mod._gateway_thread_main = fake_gw
+mod._GATEWAY.run = fake_gw
 GUILDS = {G1: {"name": "Srv", "system_channel_id": None, "joined_at": None}}
 
 
@@ -206,7 +214,7 @@ if scenario == "slow":
     chans = {f"C{i:02d}": chan(f"c{i}") for i in range(15)}
     setup(chans)
     SLOW["secs"] = 0.15
-    mod.POLL_INTERVAL = 3
+    mod._SETTINGS.engine = mod._SETTINGS.engine.model_copy(update={"rest_poll_seconds": 3})
     PROBE["on"] = True
     gw_script += [
         (1.2, lazy(dm)),
@@ -224,9 +232,11 @@ elif scenario == "sweep":
     setup(chans, {**{c: "1" for c in chans}, "C19": H.sf(0)})
     rec["lost"] = lost["id"]
     SLOW["secs"] = 0.1
-    mod.POLL_INTERVAL = 3
+    mod._SETTINGS.engine = mod._SETTINGS.engine.model_copy(update={"rest_poll_seconds": 3})
     PROBE["on"] = True
-    mod.SWEEP_EVERY_CYCLES = 1
+    mod._SETTINGS.engine = mod._SETTINGS.engine.model_copy(
+        update={"sweep": mod._SETTINGS.engine.sweep.model_copy(update={"every_cycles": 1})}
+    )
     gw_script += [
         (2.5, lazy(lambda: mention("C07"))),
         (3.5, lazy(lambda: mention("C08"))),
@@ -251,7 +261,7 @@ elif scenario == "outbox":
     def write_outbox(inbox, status):
         # A message the monitor queued there (an outbox item answers one).
         mid = H.sf(0)
-        mod.queue_edit(add=[{"message_id": mid, "channel_id": "500"}])
+        mod._queue_files().edit(add=[{"message_id": mid, "channel_id": "500"}])
         tmp = mod.OUTBOX_FILE + ".w"
         with open(tmp, "w") as f:
             json.dump(
@@ -311,20 +321,11 @@ elif scenario == "hung":
 
     srv = Server(("127.0.0.1", 0), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    mod.API = f"http://127.0.0.1:{srv.server_address[1]}"
-    # The module's own api_get/api_post (load_monitor stubs them), rebound
-    # to its globals, so they use its API base, _api_call, and timeout.
-    import importlib.util
-    import types
-
-    spec = importlib.util.spec_from_file_location(
-        "real_monitor", os.path.join(H.MUT_DIR, "src/muse_discord/monitor.py")
-    )
-    real = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(real)
-    mod.api_get = types.FunctionType(real.api_get.__code__, mod.__dict__)
-    mod.api_post = types.FunctionType(real.api_post.__code__, mod.__dict__)
-    mod.READ_TIMEOUT_SECS = 1  # 8 in production; shorter for speed
+    mod._DISCORD.endpoint = f"http://127.0.0.1:{srv.server_address[1]}"
+    # Exercise the actual request policy against the local server.
+    mod.api_get = mod._DISCORD.get
+    mod.api_post = mod._DISCORD.post
+    mod._DISCORD.read_timeout = 1  # 8 in production; shorter for speed
     setup({"C0": chan(), "C1": chan(), "CH": chan("hung")})
     gw_script += [(0.4, lazy(lambda: mention("C0")))]
     until = all_staged

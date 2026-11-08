@@ -24,6 +24,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "_lib"))
 from common import MUT_DIR, scratch  # noqa: E402
 
+from muse_discord.message_ledger import ledger_code  # noqa: E402 (source path bootstrap)
+
 BOT_ID = "1300000000000000001"
 OWNER_ID = "1100000000000000001"
 APP_ID = BOT_ID
@@ -340,7 +342,7 @@ def monitor_owners(cfg):
 
     with open(cfg) as f:
         mod = load_monitor(f.read())
-    return set(mod.OWNER_USER_IDS)
+    return set(mod._SETTINGS.owners)
 
 
 class RenderWorkerPrompt(unittest.TestCase):
@@ -408,28 +410,30 @@ class OwnerlessServer(unittest.TestCase):
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
         # Quiet from the gateway's join event on, before discovery.
         with quiet():
-            mod.on_guild_event(st, {"op": "create", "id": G2})
-        self.assertIsNone(mod.trigger_kind(stranger, G2))
+            mod._gateway_ingress(st, mod._DIRECTORY.channels).metadata(
+                {"_guild_event": {"op": "create", "id": G2}}
+            )
+        self.assertIsNone(mod._admission().trigger_verdict(stranger, G2)[0])
         with quiet():
-            mod.sync_guilds(st, mod.GUILDS, mod.CHANNELS)
-        kind, why = mod.trigger_verdict(stranger, G2)
+            mod._GUILD_LIFECYCLE.sync(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)
+        kind, why = mod._admission().trigger_verdict(stranger, G2)
         self.assertIsNone(kind)
-        self.assertEqual(mod.ledger_code("skipped", f"settings: {why}"), "ownerless")
+        self.assertEqual(ledger_code("skipped", f"settings: {why}"), "ownerless")
         # Not a shared server for DMs (who.dms_from: shared-servers).
         mod.api.members[(G2, U1)] = []
-        mod._SHARED_SERVER.clear()
-        self.assertFalse(mod.shares_server(U1))
+        mod._SHARED_MEMBERSHIP.clear()
+        self.assertFalse(mod._SHARED_MEMBERSHIP.contains(U1))
         # A restart whose boot discovery fails keeps the gate.
         with quiet():
-            mod.save_state(st)
+            mod._STATE_STORE.save(st)
         again = load_monitor(base, tmp=mod.tmp)
         with quiet():
             st_again = again.load_state()
-            again.sync_guilds(st_again, {}, {})
-        self.assertIsNone(again.trigger_kind(stranger, G2))
+            again._GUILD_LIFECYCLE.sync(st_again, {}, {})
+        self.assertIsNone(again._admission().trigger_verdict(stranger, G2)[0])
         # The owners are told of the join; answering in G1 is untouched.
         self.assertTrue(mod.api.dm_posts())
-        self.assertEqual(mod.trigger_kind(gmsg(U1, mention=True), G1), "mention")
+        self.assertEqual(mod._admission().trigger_verdict(gmsg(U1, mention=True), G1)[0], "mention")
         # An owner chose When it answers for that server: it answers.
         mod2 = load_monitor(
             base + f'servers:\n  "{G2}":\n    who:\n      replies: when-addressed\n'
@@ -437,16 +441,16 @@ class OwnerlessServer(unittest.TestCase):
         st2 = state(mod2)
         st2["known_guilds"] = {G1: "Lounge"}
         with quiet():
-            mod2.sync_guilds(st2, mod2.GUILDS, mod2.CHANNELS)
-        self.assertEqual(mod2.trigger_kind(stranger, G2), "mention")
+            mod2._GUILD_LIFECYCLE.sync(st2, mod2._DIRECTORY.guilds, mod2._DIRECTORY.channels)
+        self.assertEqual(mod2._admission().trigger_verdict(stranger, G2)[0], "mention")
         # An owner is a member there: it answers as everywhere else.
         mod3 = load_monitor(base)
         mod3.api.members[(G2, OWNER)] = []
         st3 = state(mod3)
         st3["known_guilds"] = {G1: "Lounge"}
         with quiet():
-            mod3.sync_guilds(st3, mod3.GUILDS, mod3.CHANNELS)
-        self.assertEqual(mod3.trigger_kind(stranger, G2), "mention")
+            mod3._GUILD_LIFECYCLE.sync(st3, mod3._DIRECTORY.guilds, mod3._DIRECTORY.channels)
+        self.assertEqual(mod3._admission().trigger_verdict(stranger, G2)[0], "mention")
 
     def test_lost_state_keeps_the_gate(self):
         """With state.json gone, every server is checked again: one no
@@ -457,10 +461,10 @@ class OwnerlessServer(unittest.TestCase):
         mod.api.members[(G1, OWNER)] = []
         st = mod.load_state()
         with quiet():
-            mod.sync_guilds(st, mod.GUILDS, mod.CHANNELS)
+            mod._GUILD_LIFECYCLE.sync(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
-        self.assertIsNone(mod.trigger_kind(stranger, G2))
-        self.assertEqual(mod.trigger_kind(gmsg(U1, mention=True), G1), "mention")
+        self.assertIsNone(mod._admission().trigger_verdict(stranger, G2)[0])
+        self.assertEqual(mod._admission().trigger_verdict(gmsg(U1, mention=True), G1)[0], "mention")
 
 
 class OwnerChecks(unittest.TestCase):
@@ -485,12 +489,12 @@ class OwnerChecks(unittest.TestCase):
         mod.api.members[(good, OWNER)] = []
         with quiet():
             for g in bad:
-                mod.note_guild_join_for_owners(st, g)
-            mod.check_owner_presence(st, guilds)  # the 5 bad ones
-            mod.note_guild_join_for_owners(st, good)
-            mod.check_owner_presence(st, guilds)
-        self.assertIs(mod.OWNER_IN_GUILD[good], True)
-        self.assertTrue(all(mod.OWNER_IN_GUILD[g] is None for g in bad))
+                mod._OWNER_PRESENCE.joined(st, g)
+            mod._OWNER_PRESENCE.check(st, guilds)  # the 5 bad ones
+            mod._OWNER_PRESENCE.joined(st, good)
+            mod._OWNER_PRESENCE.check(st, guilds)
+        self.assertIs(mod._OWNER_PRESENCE.membership[good], True)
+        self.assertTrue(all(mod._OWNER_PRESENCE.membership[g] is None for g in bad))
 
 
 class WatchdogHook(unittest.TestCase):

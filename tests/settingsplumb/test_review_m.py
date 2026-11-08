@@ -16,7 +16,7 @@ class SettingsWrite(Base):
     def test_write_by_a_non_owner_is_not_an_owners_change(self):
         """A non-owner is an admin, refused outside a server (admins only
         make me quieter there)."""
-        ctx = self.m.SettingsCtx()
+        ctx = self.m.settings_context()
         with self.assertRaises(self.m.MS.SettingsError):
             ctx.write("all_servers.who.replies", "conversational", U1)
 

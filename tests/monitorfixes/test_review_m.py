@@ -1,4 +1,4 @@
-"""Review M (lean/core): flush_pending's burst isolation.
+"""Review M (lean/core): PendingBursts.flush isolates bursts.
 
 Usage: [MUT_DIR=<tree>] python3 tests/monitorfixes/test_review_m.py"""
 
@@ -14,15 +14,15 @@ from test_monitorfixes import CH, U1, Base, gmsg, quiet  # noqa: E402
 class PoisonAfterAppend(Base):
     def tick(self):
         """The main loop's staging phase: flush, then write what was
-        appended (only when flush_pending says it queued something)."""
+        appended (only when PendingBursts.flush says it queued something)."""
         for entry in self.st.get("pending", {}).values():
             entry["first_seen"] = 0
         with quiet():
-            queue = self.m.load_queue()
+            queue = self.m._queue_files().load()
             n_before = len(queue)
             try:
-                if self.m.flush_pending(self.st, queue):
-                    self.m.queue_edit(add=queue[n_before:])
+                if self.m._bursts(self.st).flush(queue):
+                    self.m._queue_files().edit(add=queue[n_before:])
             except Exception:
                 pass  # the main loop logs it and goes on
 
@@ -32,7 +32,7 @@ class PoisonAfterAppend(Base):
         reply_queue.json, or stay pending to be tried again."""
         msg = gmsg(U1, "@muse hello", mention=True)
         self.stage(msg)
-        real = self.m.ledger_record_many
+        real = self.m._LEDGER.record_many
         failed = []
 
         def flaky(mids, status, *a, **k):
@@ -41,10 +41,10 @@ class PoisonAfterAppend(Base):
                 raise OSError("No space left on device")
             return real(mids, status, *a, **k)
 
-        self.m.ledger_record_many = flaky
+        self.m._LEDGER.record_many = flaky
         self.tick()
         self.tick()  # a retry, if it was kept
-        queued = [q["message_id"] for q in self.m.load_queue()]
+        queued = [q["message_id"] for q in self.m._queue_files().load()]
         pending = f"{CH}:{U1}" in self.st.get("pending", {})
         self.assertTrue(msg["id"] in queued or pending, "the burst is neither queued nor pending")
 

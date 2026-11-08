@@ -43,6 +43,10 @@ from fake import (
     load_monitor,
 )
 
+from muse_discord.settings import overlay as settings_overlay
+from muse_discord.settings_assessment import assess
+from muse_discord.settings_presets import matching_preset, preset_changes
+
 P = MS.Place
 C = MS.Change
 DEF, DMS = P.defaults(), P.dms()
@@ -178,17 +182,17 @@ class Risk(unittest.TestCase):
                 cfg = config(self, text)
                 if first:
                     apply(cfg, first)
-                self.assertIs(MS.assess(load(cfg), changes, info, NAMES).risky, risky)
+                self.assertIs(assess(load(cfg), changes, info, NAMES).risky, risky)
         # An Undo is judged by its outcome too.
         cfg = config(self, BIG_DEFAULT)
         apply(cfg, [C(S3, "style.length", "brief")])
         st = load(cfg)
-        self.assertFalse(MS.assess(st, MS.undo_plan(st, S3), INFO).risky)
+        self.assertFalse(assess(st, MS.undo_plan(st, S3), INFO).risky)
         # an undo that reopens Chatty in a big server is risky
         apply(cfg, [C(S2, "who.replies", "conversational")], OWNER)
         apply(cfg, [C(S2, "who.replies", "off")], OWNER)
         st = load(cfg)
-        self.assertTrue(MS.assess(st, MS.undo_plan(st, S2), INFO).risky)
+        self.assertTrue(assess(st, MS.undo_plan(st, S2), INFO).risky)
 
 
 # ---------------------------------------------------------------------------
@@ -562,7 +566,7 @@ class Admin(unittest.TestCase):
         self.refused([C(S1, "who.replies", "off", path=("servers", G2))])
         # a preset is an owner's tool
         st = load(self.cfg)
-        self.refused(MS.preset_changes(st, "work", S1, INFO))
+        self.refused(preset_changes(st, "work", S1, INFO))
         # a mixed batch is refused whole
         self.refused([C(S1, "media.enabled", False), C(S1, "who.replies", "conversational")])
 
@@ -646,24 +650,24 @@ class DmsFrom(unittest.TestCase):
         sam = {"id": SAM, "username": "sam"}
         ann = {"id": ANN, "username": "ann"}
         owner = {"id": OWNER, "username": "zach"}
-        self.assertTrue(m.dm_sender_allowed(sam))
-        self.assertTrue(m.dm_sender_allowed(owner))
-        self.assertFalse(m.dm_sender_allowed(ann))
+        self.assertTrue(m._admission().dm_sender_allowed(sam))
+        self.assertTrue(m._admission().dm_sender_allowed(owner))
+        self.assertFalse(m._admission().dm_sender_allowed(ann))
         # dms.who.allow / ignore still apply on top of the list
         m = load_monitor(
             self, BASE + f'dms:\n  who:\n    dms_from: ["{SAM}", "{ANN}"]\n    ignore: ["{ANN}"]\n'
         )
-        self.assertTrue(m.dm_sender_allowed(sam))
-        self.assertFalse(m.dm_sender_allowed(ann))
+        self.assertTrue(m._admission().dm_sender_allowed(sam))
+        self.assertFalse(m._admission().dm_sender_allowed(ann))
         m = load_monitor(self, BASE + f'dms:\n  who:\n    dms_from: anyone\n    allow: ["{SAM}"]\n')
-        self.assertTrue(m.dm_sender_allowed(sam))
-        self.assertFalse(m.dm_sender_allowed(ann))
+        self.assertTrue(m._admission().dm_sender_allowed(sam))
+        self.assertFalse(m._admission().dm_sender_allowed(ann))
         # Nobody: DMs off, owners included.
         m = load_monitor(
             self, BASE + f"dms:\n  who:\n    dms_from: [\"{SAM}\"]\n    replies: 'off'\n"
         )
-        self.assertFalse(m.dm_sender_allowed(sam))
-        self.assertFalse(m.dm_sender_allowed(owner))
+        self.assertFalse(m._admission().dm_sender_allowed(sam))
+        self.assertFalse(m._admission().dm_sender_allowed(owner))
 
 
 # ---------------------------------------------------------------------------
@@ -673,30 +677,30 @@ class Presets(unittest.TestCase):
     def test_presets(self):
         st = load(config(self))
         with self.assertRaises(MS.SettingsError):  # 1,240 members
-            MS.preset_changes(st, "friends", S1, INFO)
-        ch = MS.preset_changes(st, "friends", S3, INFO)
+            preset_changes(st, "friends", S1, INFO)
+        ch = preset_changes(st, "friends", S3, INFO)
         self.assertIn(C(S3, "privacy.memory", "everything"), ch)
-        self.assertTrue(MS.assess(st, ch, INFO).risky)  # confirm first
+        self.assertTrue(assess(st, ch, INFO).risky)  # confirm first
         for pl in (DEF, DMS, GEN):
             with self.assertRaises(MS.SettingsError):
-                MS.preset_changes(st, "work", pl)
+                preset_changes(st, "work", pl)
         with self.assertRaises(MS.SettingsError):
-            MS.preset_changes(st, "party", S1)
+            preset_changes(st, "party", S1)
         # A preset is one group: one Undo reverts it.
         cfg = config(self)
         st = load(cfg)
-        self.assertIsNone(MS.matching_preset(st, S1))
-        r = apply(cfg, MS.preset_changes(st, "community", S1, INFO))
-        self.assertEqual(MS.matching_preset(load(cfg), S1), "Community")
-        self.assertEqual(MS.preset_changes(load(cfg), "community", S1), [])
+        self.assertIsNone(matching_preset(st, S1))
+        r = apply(cfg, preset_changes(st, "community", S1, INFO))
+        self.assertEqual(matching_preset(load(cfg), S1), "Community")
+        self.assertEqual(preset_changes(load(cfg), "community", S1), [])
         self.assertEqual(len({h["group"] for h in doc(cfg)["history"]}), 1)
         MS.undo(cfg, S1, actor=MS.WriteActor(by=OWNER))
-        self.assertIsNone(MS.matching_preset(load(cfg), S1))
+        self.assertIsNone(matching_preset(load(cfg), S1))
         self.assertFalse(MS.group_current(load(cfg), r.group))
-        apply(cfg, MS.preset_changes(load(cfg), "work", S1))
-        self.assertEqual(MS.matching_preset(load(cfg), S1), "Work")
-        apply(cfg, MS.preset_changes(load(cfg), "friends", S3, INFO))
-        self.assertEqual(MS.matching_preset(load(cfg), S3), "Friends")
+        apply(cfg, preset_changes(load(cfg), "work", S1))
+        self.assertEqual(matching_preset(load(cfg), S1), "Work")
+        apply(cfg, preset_changes(load(cfg), "friends", S3, INFO))
+        self.assertEqual(matching_preset(load(cfg), S3), "Friends")
 
 
 # ---------------------------------------------------------------------------
@@ -973,19 +977,19 @@ class ReviewMedium(unittest.TestCase):
         )
         m = load_monitor(self, text + f'dms:\n  who:\n    dms_from: ["{SAM}"]\n')
         self.assertIn(SAM, m.dm_poll_user_ids())
-        self.assertTrue(m.dm_swept_author(SAM))
-        self.assertFalse(m.dm_swept_author(ANN))
+        self.assertTrue(m._admission().dm_swept_author(SAM))
+        self.assertFalse(m._admission().dm_swept_author(ANN))
         chans = dict(m.list_dm_channels())
         sam_dm = "4" + SAM[1:]
         own_dm = "4" + OWNER[1:]
         self.assertIn(sam_dm, chans)
-        self.assertEqual(m.DM_CHANNEL_USER[sam_dm], SAM)
+        self.assertEqual(m._DIRECT_MESSAGES.users[sam_dm], SAM)
         # posts were only channel lookups (nothing sent)
         self.assertTrue(all(p == "/users/@me/channels" for p, _d in m.api.posts))
         # never_share: still private for the owner's DM only
         st = {"hold_released": {}, "item_meta": {}}
-        self.assertFalse(m.never_share_hit(st, {"channel_id": own_dm}, None, ["the secret"]))
-        self.assertTrue(m.never_share_hit(st, {"channel_id": sam_dm}, None, ["the secret"]))
+        self.assertFalse(m._REVIEW.hit(st, {"channel_id": own_dm}, None, ["the secret"]))
+        self.assertTrue(m._REVIEW.hit(st, {"channel_id": sam_dm}, None, ["the secret"]))
         # the sweep recovers a lost DM from Sam, not one from Ann
         import time as _t
 
@@ -1012,8 +1016,8 @@ class ReviewMedium(unittest.TestCase):
             f.write("    replies: 'off'\n")
         os.utime(m.cfg_path, (_t.time() + 5, _t.time() + 5))
         with contextlib.redirect_stdout(io.StringIO()):
-            m.note_dm_refused(dict(sam_msg, id="123456789012345679"))
-        self.assertEqual(m._ledger_load()["entries"]["123456789012345679"]["status"], "skipped")
+            m._receiver({}).note_dm_refused(dict(sam_msg, id="123456789012345679"))
+        self.assertEqual(m._LEDGER.load()["entries"]["123456789012345679"]["status"], "skipped")
 
 
 def _writer(cfg, gid, n):
@@ -1026,7 +1030,7 @@ def _writer(cfg, gid, n):
 
 
 class ReviewLow(unittest.TestCase):
-    @mock.patch.object(MS, "HISTORY_CAP", 9)  # odd: cuts land in a group
+    @mock.patch.object(settings_overlay, "HISTORY_CAP", 9)  # odd: cuts land in a group
     def test_history_trim_keeps_groups_whole_and_resume_value(self):
         cfg = config(self, BASE + "    who:\n      replies: when-addressed\n")
         apply(cfg, MS.pause_changes(S1))

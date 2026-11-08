@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "watches"))
 import test_binding as tb  # noqa: E402
 from settings_harness import CH, OWNER, quiet  # noqa: E402
 
+from muse_discord.message_models import SecretBlocked  # noqa: E402 (source path bootstrap)
+
 
 def token_like(uid="111000000000000009"):
     """A string shaped like a Discord bot token for uid."""
@@ -75,26 +77,26 @@ class Outbox(tb.Base):
         m = self.mod
         n0 = len(m.api.posts)
         with quiet():
-            self.assertFalse(m.dm_owner(OWNER, {"content": TOKEN}))
+            self.assertFalse(m._OWNER_MESSAGES.dm(OWNER, {"content": TOKEN}))
         self.assertEqual([p for p, d in m.api.posts[n0:] if TOKEN in json.dumps(d)], [])
         # The real helpers: nothing reaches the network.
         opened = []
         calls = [
             lambda: m.real_api_post(f"/channels/{CH}/messages", {"content": "x " + TOKEN}),
             lambda: m.api_patch(f"/channels/{CH}/messages/1", {"content": TOKEN}),
-            lambda: m.send_reply_with_files(CH, TOKEN, []),
-            lambda: m.send_reply_with_files(
+            lambda: m._SENDER.files(CH, TOKEN, []),
+            lambda: m._SENDER.files(
                 CH,
                 "ok",  # file name
                 [("/x", TOKEN + ".png")],
             ),
-            lambda: m.interaction_callback(
+            lambda: m._INTERACTION_WORKER.responder.send(
                 {"id": "1", "token": "t"}, {"type": 4, "data": {"content": TOKEN}}
             ),
         ]
-        with mock.patch.object(m, "discord_request", lambda *a, **k: opened.append(a)), quiet():
+        with mock.patch.object(m._DISCORD, "request", lambda *a, **k: opened.append(a)), quiet():
             for call in calls:
-                with self.assertRaises(m.SecretBlocked):
+                with self.assertRaises(SecretBlocked):
                     call()
         self.assertEqual(opened, [])
 
@@ -105,11 +107,11 @@ class Outbox(tb.Base):
             f.write("x " + TOKEN)
         opened = []
         with (
-            mock.patch.object(m, "discord_request", lambda *a, **k: opened.append(a)),
+            mock.patch.object(m._DISCORD, "request", lambda *a, **k: opened.append(a)),
             quiet(),
-            self.assertRaises(m.SecretBlocked),
+            self.assertRaises(SecretBlocked),
         ):
-            m.send_reply_with_files(CH, "ok", [(leak, "cat.png")])
+            m._SENDER.files(CH, "ok", [(leak, "cat.png")])
         self.assertEqual(opened, [])
 
 
@@ -171,8 +173,8 @@ class Tool(unittest.TestCase):
     def test_post_and_edit_refuse_secrets(self):
         import test_discord_api as td
 
-        td.D.TOKEN = TOKEN
-        nonces = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE), "item_nonces.json")
+        td.D.session.token = TOKEN
+        nonces = os.path.join(os.path.dirname(td.D.session.owner_items_file), "item_nonces.json")
         with open(nonces, "w") as f:
             json.dump({"5": "9f" * 16}, f)
         td.write_owner_items(td.ITEMS)
@@ -197,11 +199,13 @@ class Tool(unittest.TestCase):
     def test_thread_refuses_a_secret_inside_its_upload(self):
         import test_discord_api as td
 
-        td.D.TOKEN = TOKEN
+        td.D.session.token = TOKEN
         td.write_owner_items(td.ITEMS)
-        td.D.GENERATED_DIR = os.path.dirname(td.D.OWNER_ITEMS_FILE)
-        td.D.api_multipart = lambda path, payload, f: td.CALLS.append(("POST", path, payload))
-        upload = os.path.join(td.D.GENERATED_DIR, "cat.png")
+        td.D.session.generated_dir = os.path.dirname(td.D.session.owner_items_file)
+        td.D.session.api_multipart = lambda path, payload, f: td.CALLS.append(
+            ("POST", path, payload)
+        )
+        upload = os.path.join(td.D.session.generated_dir, "cat.png")
         with open(upload, "w") as f:
             f.write(f"x {TOKEN}")
         td.CALLS.clear()
@@ -215,9 +219,9 @@ class Tool(unittest.TestCase):
     def test_slot_nonce_and_a_split_thread_are_refused(self):
         import test_discord_api as td
 
-        td.D.TOKEN = TOKEN
+        td.D.session.token = TOKEN
         td.write_owner_items(td.ITEMS)
-        slot = os.path.join(os.path.dirname(td.D.OWNER_ITEMS_FILE), "proactive_nonce.json")
+        slot = os.path.join(os.path.dirname(td.D.session.owner_items_file), "proactive_nonce.json")
         with open(slot, "w") as f:
             json.dump({"7": "7e" * 16}, f)
         try:
