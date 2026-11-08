@@ -39,7 +39,6 @@ config.example.yaml for the schema.
 """
 
 import os
-import queue as pyqueue
 import sys
 import threading
 import time
@@ -78,6 +77,7 @@ from muse_discord.directory.refresh import DirectoryRefresh
 from muse_discord.directory.snapshot import DirectorySnapshot
 from muse_discord.directory.state import DirectoryState
 from muse_discord.durable_state import QueuePublication, StateFile
+from muse_discord.gateway_session import GatewaySession
 from muse_discord.generated_replies import GeneratedReplies
 from muse_discord.http_runtime import DiscordCalls, RestBackoff
 from muse_discord.ingest import IngestJournal, MessageEnqueuer
@@ -1539,6 +1539,7 @@ def watch_scan(msg, guild_id):
 
 
 _PROCESS_LOCK: MonitorLock
+_GATEWAY: GatewaySession
 
 PIDFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor.pid")
 
@@ -1565,26 +1566,6 @@ PIDFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor.pid"
 # GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT, plus
 # GUILD_MESSAGE_TYPING | DIRECT_MESSAGE_TYPING for the early burst flush
 # (burst_quiet). The typing intents are not privileged.
-GATEWAY_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15) | (1 << 11) | (1 << 14)
-
-
-async def _gateway_run(token, inbox, status):
-    from muse_discord.discord_connection import Connection, run
-
-    await run(token, Connection(inbox, status, settings_context, guard_outgoing, GATEWAY_INTENTS))
-
-
-def _gateway_thread_main(token, inbox, status):
-    import asyncio
-
-    try:
-        asyncio.run(_gateway_run(token, inbox, status))
-    except Exception as e:
-        print(
-            f"GATEWAY DISABLED (thread died: {e}): realtime ingest is off; REST polling continues.",
-            flush=True,
-        )
-        status["dead"] = True
 
 
 def drain_gateway(state, inbox, channels):
@@ -1788,18 +1769,8 @@ def _send_outbox(state):
 
 
 def _start_monitor_threads(state):
-    token = TOKEN
-    _gateway_inbox = pyqueue.Queue()
-    _ix_inbox = pyqueue.Queue()  # interactions, see below
-    _gateway_status = {"wake": threading.Event(), "interactions": _ix_inbox}
-    gw_thread = threading.Thread(
-        target=_gateway_thread_main,
-        args=(token, _gateway_inbox, _gateway_status),
-        daemon=True,
-        name="discord-gateway",
-    )
-    gw_thread.start()
-    print("Gateway thread started (realtime ingest).", flush=True)
+    _gateway_inbox, _gateway_status = _GATEWAY.start()
+    _ix_inbox = _GATEWAY.interactions
     # Typing indicator on its own clock (see typing_refresh).
     threading.Thread(target=_typing_thread_main, daemon=True, name="typing").start()
     # Interactions (button clicks) on their own thread, fed straight by
@@ -1895,11 +1866,12 @@ def _start_monitor():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
-    global _PROCESS_LOCK
+    global _PROCESS_LOCK, _GATEWAY
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
     global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTIONS, _INTERACTION_RESPONDER, _INTERACTION_WORKER
     _PROCESS_LOCK = MonitorLock(lambda: PIDFILE)
+    _GATEWAY = GatewaySession(TOKEN, settings_context, guard_outgoing)
     _DIRECTORY = DirectoryState()
     _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _STATE_STORE = StateFile(lambda: STATE_FILE)

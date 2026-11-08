@@ -74,7 +74,8 @@ mod._INTERACTION_RESPONDER.send = cb
 res["put_at"] = {}
 
 
-def fake_gw(token, inbox, status):
+def fake_gw():
+    status = mod._GATEWAY.status
     in_outbox.wait(5)
     for n, (t, data) in enumerate(
         [
@@ -91,7 +92,7 @@ def fake_gw(token, inbox, status):
         time.sleep(0.05)
 
 
-mod._gateway_thread_main = fake_gw
+mod._GATEWAY.run = fake_gw
 
 
 def on_alarm(*_):

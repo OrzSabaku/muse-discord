@@ -136,7 +136,8 @@ def probe(inbox, status):
         status["wake"].set()
 
 
-def fake_gw(token, inbox, status):
+def fake_gw():
+    inbox, status = mod._GATEWAY.inbox, mod._GATEWAY.status
     if PROBE["on"]:
         threading.Thread(target=probe, args=(inbox, status), daemon=True).start()
     for at, item in gw_script:
@@ -150,7 +151,7 @@ def fake_gw(token, inbox, status):
             status["wake"].set()
 
 
-mod._gateway_thread_main = fake_gw
+mod._GATEWAY.run = fake_gw
 GUILDS = {G1: {"name": "Srv", "system_channel_id": None, "joined_at": None}}
 
 

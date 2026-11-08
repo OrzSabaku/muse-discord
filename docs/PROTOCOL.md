@@ -61,6 +61,8 @@
 | メッセージの処理結果から作る返信診断 | `src/muse_discord/message_outcomes.py` |
 | Discordの設定画面 | `src/muse_discord/settings_ui.py` |
 | 返信データの共通検証 | `src/muse_discord/reply_protocol.py` |
+| 単一起動ロック・旧PIDの確認 | `src/muse_discord/monitor_process.py` |
+| Gateway接続スレッド・キュー・終了状態 | `src/muse_discord/gateway_session.py` |
 | プロセス監視 | `bin/watchdog.sh` |
 | 通知の公開API | `src/muse_discord/muse_watches.py` |
 | 通知依頼とWeb確認結果の形式検証 | `src/muse_discord/watches/schema.py` |
@@ -215,3 +217,5 @@ node --test telemetry/worker/test/worker.test.js
 ワーカーへ渡す参照メッセージと設定カードは `WorkerContext` が作る。受信パイプラインは会話・媒体・通知と、台帳・隔離・依頼記録・権限発行の担当サービスを直接使う。モニターの中継クラスや同じ操作を列挙する専用インターフェースを重ねない。通知のキュー登録も依頼記録と権限発行を直接使い、受信パイプラインへ依存させない。
 
 通知のデータ操作は `watches` 内で形式検証・認可・保存・照合・表示・Web確認に分け、Discord I/Oを持つ実行サービスから利用する。`muse_watches` は状態や中継関数を持たない公開窓口とする。保存は共通のatomic writerを600権限で使い、CLIとモニターの更新は同じ `watches.lock` で直列化する。
+
+単一起動のPIDロックは `MonitorLock` が保持し、取得に失敗した経路では記述子を閉じる。`GatewaySession` はイベントと操作のキュー、接続状態、接続スレッドを持ち、SDKを接続時まで読み込まない。接続スレッドが終了したときは接続状態を落としてメインループを起こし、通常のREST処理へ戻す。

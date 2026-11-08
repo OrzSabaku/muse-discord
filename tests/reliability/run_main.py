@@ -33,12 +33,13 @@ calls = {"list_dm_channels": 0, "sweep_media": 0}
 gw_action = {"fn": None}
 
 
-def fake_gw(token, inbox, status):
+def fake_gw():
+    inbox, status = mod._GATEWAY.inbox, mod._GATEWAY.status
     if gw_action["fn"]:
         gw_action["fn"](inbox, status)
 
 
-mod._gateway_thread_main = fake_gw
+mod._GATEWAY.run = fake_gw
 _orig_ldc = mod.list_dm_channels
 
 
