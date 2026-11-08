@@ -110,6 +110,7 @@ def load_monitor(tmp=None, cfg_extra=""):
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    mod.initialize(token_override="dummy-token")
     redirect_files(mod, tmp)
     for attr, fn in [
         ("STATE_FILE", "state.json"),

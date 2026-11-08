@@ -34,6 +34,7 @@ spec = importlib.util.spec_from_file_location(
 )
 monitor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(monitor)
+monitor.initialize(token_override="dummy-token")
 redirect_files(monitor, SCRATCH)
 
 CALLS = []  # (time, kind, path, data)

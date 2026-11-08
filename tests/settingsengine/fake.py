@@ -139,6 +139,7 @@ def load_monitor(test, text):
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             spec.loader.exec_module(mod)
+            mod.initialize(token_override="dummy-token")
     finally:
         sys.argv = argv
     d = os.path.dirname(cfg)

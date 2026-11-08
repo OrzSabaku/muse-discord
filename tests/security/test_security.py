@@ -123,6 +123,7 @@ spec = importlib.util.spec_from_file_location(
 )
 M = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(M)
+M.initialize(token_override="dummy-token")
 redirect_files(M, os.path.join(WORK, "run"))
 spec = importlib.util.spec_from_file_location(
     "discord_api", os.path.join(SRC, "bin", "discord-api.py")

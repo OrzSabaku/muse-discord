@@ -75,6 +75,13 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 - CLIの既読位置はモニターの配信状態から独立する。[CLI・MCP](TOOLS.md) を参照。
 - 外部アプリは `plan`→`execute`。本人DM・現在の権限・5分の期限を確認し、同じ計画を再実行しない。[設定と承認](EXTERNAL_APPS.md) を参照。
 
+## 初期化と処理の境界
+
+`monitor` のimportでは設定やトークンを読み込まず、サービスを生成しない。`main()` が `initialize()` を呼び、テストも設定とトークンを指定して明示的に初期化する。
+自発発言は `ProactiveContext` に宣言した操作と状態の参照だけを受け取る。モニターの名前空間全体を渡さない。
+受信・返信の各段階は、検証済みの入力と処理結果を値として渡す。前のメソッドによる属性の追加を前提にしない。
+`engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
+
 ## 型と静的検査
 
 Pyrightは全体をbasicで検査し、`paths.py`・`secret_scan.py`・`reply_protocol.py` はstrictにする。

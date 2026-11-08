@@ -1,6 +1,6 @@
 """Config resolution, offline: resolved constants for missing keys,
 explicit nulls and zeros, and out-of-range and garbage values. Each case
-runs in a fresh subprocess (monitor resolves its config at import).
+runs in a fresh subprocess and explicitly initializes the monitor.
 MUT_DIR = the package tree under test (default: this checkout)."""
 
 import json
@@ -20,6 +20,7 @@ import sys, json
 sys.argv = ["x", "dummy-token"]
 sys.path.insert(0, %(repo)r + "/src")
 from muse_discord import monitor
+monitor.initialize(token_override="dummy-token")
 out = {k: getattr(monitor, k) for k in (
     "COALESCE_SECS", "BOT_COALESCE_SECS", "MAX_REPLY_CHARS",
     "POLL_INTERVAL", "SWEEP_EVERY_CYCLES", "SWEEP_GRACE_SECS",

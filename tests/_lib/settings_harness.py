@@ -112,6 +112,7 @@ def load_monitor(cfg_text, tmp=None, channels=True):
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         spec.loader.exec_module(mod)
+        mod.initialize(token_override="dummy-token")
     mod.import_out = out.getvalue()
     redirect_files(mod, tmp)
     for attr, fn in [

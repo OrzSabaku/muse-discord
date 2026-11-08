@@ -66,8 +66,15 @@ import random
 import secrets
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
+from typing import Any
+
+from muse_discord import muse_settings as MS
+from muse_discord.message_models import DISCORD_MAX_CHARS, DeliveryOptions, SecretBlocked, Speaker
+from muse_discord.reply_protocol import is_snowflake
 
 VERSION = 1
 KIND = "proactive"
@@ -181,19 +188,44 @@ class Verdict:
         self.reject, self.retry, self.spent = reject, retry, spent
 
 
-class _G:
-    """The monitor's globals, read live (tests stub them on the module)."""
+@dataclass(frozen=True)
+class ProactiveContext:
+    """The live state and operations used by proactive messaging, supplied at boot."""
 
-    def __init__(self, g):
-        self.__dict__["_g"] = g
-
-    def __getattr__(self, name):
-        return self._g[name]
+    path: Callable[[], str]
+    nonce_path: Callable[[], str]
+    bot_ids: Callable[[], tuple[str | None, str | None]]
+    owners: Callable[[], set[str]]
+    channels: Callable[[], dict]
+    dm_channels: Callable[[], dict]
+    dm_users: Callable[[], dict]
+    user_names: Callable[[], dict]
+    write_private: Callable[..., Any]
+    ledger: Callable[[], dict]
+    api_get: Callable[[str], Any]
+    api_post: Callable[[str, dict], Any]
+    channel_display: Callable[[dict], str]
+    dm_refusal: Callable[[dict], str | None]
+    load_queue: Callable[[], list]
+    never_share_hit: Callable[..., Any]
+    normalize_parts: Callable[[dict], list[str]]
+    notify_owners: Callable[..., Any]
+    owner_check_pending: Callable[..., Any]
+    owners_absent: Callable[..., Any]
+    queue_edit: Callable[..., Any]
+    queued_item_meta: Callable[..., Any]
+    rest_backing_off: Callable[[], bool]
+    scope_for: Callable[..., Any]
+    send_fragmented: Callable[..., Any]
+    send_reply: Callable[..., Any]
+    settings: Callable[[], MS.Settings]
+    settings_card: Callable[..., Any]
+    started_item_id: Callable[..., Any]
 
 
 class Proactive:
-    def __init__(self, monitor_globals, clock=time.time, rng=None):
-        self.m = _G(monitor_globals)
+    def __init__(self, context: ProactiveContext, clock=time.time, rng=None):
+        self.m = context
         self.clock = clock
         self.rng = rng or random.Random()
         self._data = None
@@ -211,7 +243,7 @@ class Proactive:
 
     # -- the store ------------------------------------------------------------
     def path(self):
-        return self.m.PROACTIVE_FILE
+        return self.m.path()
 
     def data(self):
         """proactive.json, read once (re-read when the path changes)."""
@@ -281,7 +313,7 @@ class Proactive:
         if self._readonly:
             return
         try:
-            self.m._write_private(self.path(), self.data())
+            self.m.write_private(self.path(), self.data())
             self._dirty = False
             self._flushed = self.clock()
         except OSError as e:
@@ -292,7 +324,7 @@ class Proactive:
         return self.m.settings()
 
     def every(self, key):
-        return self.st().get(key, self.m.MS.Scope.everywhere())
+        return self.st().get(key, MS.Scope.everywhere())
 
     def tz_of(self, uid=None):
         """A person's own time zone when they confirmed it with their
@@ -313,12 +345,12 @@ class Proactive:
         )
 
     def enabled_anywhere(self):
-        st, MS = self.st(), self.m.MS
+        st = self.st()
         if st.get("proactive.enabled", MS.Scope.dm()) or st.get(
             "proactive.enabled", MS.Scope("all_servers")
         ):
             return True
-        for cid, info in self.m.CHANNELS.items():
+        for cid, info in self.m.channels().items():
             if st.get("proactive.enabled", self.m.scope_for(info.get("guild_id"), cid)):
                 return True
         return False
@@ -327,11 +359,11 @@ class Proactive:
         """Independent clocks: one per enabled server, and one for DMs.
         Channel overrides decide whether a server needs a clock.
         """
-        st, MS = self.st(), self.m.MS
+        st = self.st()
         scopes = {}
         if st.get("proactive.enabled", MS.Scope.dm()):
             scopes["dms"] = MS.Scope.dm()
-        for cid, info in self.m.CHANNELS.items():
+        for cid, info in self.m.channels().items():
             gid = info.get("guild_id")
             if gid and st.get("proactive.enabled", self.m.scope_for(gid, cid)):
                 scopes[str(gid)] = MS.Scope.server(gid)
@@ -340,7 +372,7 @@ class Proactive:
     def heartbeat_key(self, target):
         if target["type"] != "channel":
             return "dms"
-        info = self.m.CHANNELS.get(target["channel_id"]) or {}
+        info = self.m.channels().get(target["channel_id"]) or {}
         return str(info.get("guild_id"))
 
     def due_heartbeats(self, now):
@@ -457,7 +489,7 @@ class Proactive:
         if body == self._nonce_written:
             return
         try:
-            self.m._write_private(self.m.PROACTIVE_NONCE_FILE, body)
+            self.m.write_private(self.m.nonce_path(), body)
             self._nonce_written = body
         except OSError as e:
             print(f"Could not write proactive_nonce.json: {e}", flush=True)
@@ -471,7 +503,7 @@ class Proactive:
 
     def is_bot_msg(self, h):
         """This bot's own message."""
-        return str(h.get("author_id")) in (str(self.m.BOT_USER_ID), str(self.m.BOT_ID))
+        return str(h.get("author_id")) in (str(self.m.bot_ids()[1]), str(self.m.bot_ids()[0]))
 
     def human(self, h):
         """A person's message: not this bot, another bot or a webhook."""
@@ -510,7 +542,7 @@ class Proactive:
         if uid in d["opted_out"]:
             return "opted out"
         st = self.st()
-        dm = self.m.MS.Scope.dm()
+        dm = MS.Scope.dm()
         if self.sent_total(now) >= self.total_cap():
             return "the day's total is reached"
         day = st.get("proactive.per_person_per_day", dm)
@@ -549,7 +581,7 @@ class Proactive:
         server, quiet for ACTIVE_SECS, the bot not the last to speak,
         within the caps)."""
         m = self.m
-        info = m.CHANNELS.get(cid)
+        info = m.channels().get(cid)
         if not info or info.get("thread") or info.get("can_send") is not True:
             return "not a channel the bot can post in"
         gid = info.get("guild_id")
@@ -606,7 +638,7 @@ class Proactive:
         p = self.data()["people"].get(uid) or {}
         if p.get("dm") or p.get("owner_dm"):
             return p.get("dm") or p["owner_dm"]
-        for cid, u in self.m.DM_CHANNEL_USER.items():
+        for cid, u in self.m.dm_users().items():
             if u == uid:
                 return str(cid)
         if self.m.rest_backing_off():
@@ -617,7 +649,7 @@ class Proactive:
             print(f"Proactive: no DM channel for owner {uid} ({e}).", flush=True)
             return None
         cid = str((c or {}).get("id") or "")
-        if not self.m._is_snowflake(cid):
+        if not is_snowflake(cid):
             return None
         # Its own key: "dm" means they DMed the bot first, and an owner who
         # never did must not become a "dm" target once no longer an owner.
@@ -634,14 +666,14 @@ class Proactive:
         return self._dm_target_problem(state, t, now)
 
     def _dm_target_problem(self, state, t, now):
-        st, MS = self.st(), self.m.MS
+        st = self.st()
         dm_here = st.resolve(MS.Scope.dm())
         if not dm_here["proactive.enabled"]:
             return "proactive is off for DMs"
         if dm_here["who.replies"] == "off":
             return "DMs are off (or paused)"
         uid = t["user_id"]
-        owner = uid in self.m.OWNER_USER_IDS
+        owner = uid in self.m.owners()
         if t["type"] == "owner" and not owner:
             return "no longer an owner"
         if t["type"] == "dm":
@@ -664,18 +696,18 @@ class Proactive:
         """[target] the bot may reach out to now (the slot's list)."""
         m, d = self.m, self.data()
         cands = []
-        dm_here = self.st().resolve(m.MS.Scope.dm())
+        dm_here = self.st().resolve(MS.Scope.dm())
         if dm_here["proactive.enabled"] and dm_here["who.replies"] != "off":
-            for uid in sorted(m.OWNER_USER_IDS):
+            for uid in sorted(m.owners()):
                 if uid in d["opted_out"]:
                     continue
                 cid = self.owner_dm_channel(uid)
                 if cid:
                     cands.append({"type": "owner", "user_id": uid, "channel_id": cid})
             for uid, p in sorted(d["people"].items()):
-                if p.get("dm") and uid not in m.OWNER_USER_IDS and uid not in d["opted_out"]:
+                if p.get("dm") and uid not in m.owners() and uid not in d["opted_out"]:
                     cands.append({"type": "dm", "user_id": uid, "channel_id": p["dm"]})
-        for cid in sorted(m.CHANNELS):
+        for cid in sorted(m.channels()):
             cands.append({"type": "channel", "user_id": None, "channel_id": str(cid)})
         return self._eligible_targets(state, cands, now)
 
@@ -716,14 +748,14 @@ class Proactive:
         mine = self.sent_to("channel_id", cid, 0)
         out["last_unprompted"] = iso(max([e["at"] for e in mine] or [0]))
         if t["type"] == "channel":
-            info = m.CHANNELS.get(cid) or {}
+            info = m.channels().get(cid) or {}
             gid = info.get("guild_id")
             scope = m.scope_for(gid, cid)
             card = m.settings_card(
                 scope,
                 self.st().resolve(scope),
                 cid,
-                speaker=m.Speaker(author_id=None, from_bot=False),
+                speaker=Speaker(author_id=None, from_bot=False),
             )
             card.pop("speaker", None)
             humans = [h for h in hist if not self.is_bot_msg(h)]
@@ -737,16 +769,16 @@ class Proactive:
             )
         else:
             p = self.data()["people"].setdefault(uid, {})
-            name = m._USER_NAMES.get(uid) or p.get("name") or m.DM_CHANNELS.get(cid) or uid
+            name = m.user_names().get(uid) or p.get("name") or m.dm_channels().get(cid) or uid
             if name != uid and p.get("name") != name:
                 p["name"] = name
                 self._dirty = True
-            scope = m.MS.Scope.dm()
+            scope = MS.Scope.dm()
             card = m.settings_card(
                 scope,
                 self.st().resolve(scope),
                 cid,
-                speaker=m.Speaker(author_id=uid, from_bot=False),
+                speaker=Speaker(author_id=uid, from_bot=False),
             )
             card.pop("places", None)
             last_them = max(
@@ -756,7 +788,7 @@ class Proactive:
             last_you = max([0] + [snowflake_ts(h.get("id")) for h in hist if self.is_bot_msg(h)])
             outcome = None
             if p.get("last_mid"):
-                e = m._ledger_load()["entries"].get(p["last_mid"]) or {}
+                e = m.ledger()["entries"].get(p["last_mid"]) or {}
                 outcome = e.get("code")
             tz = self.tz_of(uid)
             out.update(
@@ -1038,7 +1070,7 @@ class Proactive:
         if why is None and len(s["posts"]) >= s.get("max_posts", MAX_PER_SLOT):
             why = "the slot's messages are used"
         # Clamped to Discord's limit after the rewrites, as replies are.
-        parts = [x[: self.m.DISCORD_MAX_CHARS] for x in self.m.normalize_parts(item)]
+        parts = [x[:DISCORD_MAX_CHARS] for x in self.m.normalize_parts(item)]
         if why is None and not parts:
             why = "nothing to send"
         if (
@@ -1081,7 +1113,7 @@ class Proactive:
             # The monitor's one send path (plain messages: no reply_to),
             # each part's Discord nonce seeded with the slot id.
             msgs = self.m.send_fragmented(
-                cid, parts, None, (), delivery=self.m.DeliveryOptions(mentions=mentions, nonce=sid)
+                cid, parts, None, (), delivery=DeliveryOptions(mentions=mentions, nonce=sid)
             )
         except Exception as e:
             return self._send_failure(s, cid, now, e)
@@ -1104,7 +1136,7 @@ class Proactive:
         post["n"] = post.get("n", 0) + 1
         # A secret in it (the monitor's send guard): never retried,
         # the slot is used up, nothing counts toward the caps.
-        blocked = isinstance(e, self.m.SecretBlocked)
+        blocked = isinstance(e, SecretBlocked)
         # A part may have landed: any part after the first (on this
         # or an earlier attempt), or the first one when the error
         # does not say it was refused (a timeout can land).
@@ -1283,10 +1315,10 @@ class Proactive:
         p = d["people"].get(uid) or {}
         if tz == p.get("tz") or uid in d["opted_out"]:
             return
-        dm_here = self.st().resolve(self.m.MS.Scope.dm())
+        dm_here = self.st().resolve(MS.Scope.dm())
         if not dm_here["proactive.enabled"] or dm_here["who.replies"] == "off":
             return
-        if uid in self.m.OWNER_USER_IDS:
+        if uid in self.m.owners():
             cid = self.owner_dm_channel(uid)
         elif (
             p.get("dm") and self.m.dm_refusal({"id": uid, "username": p.get("name") or uid}) is None
@@ -1341,7 +1373,7 @@ class Proactive:
                             ],
                         }
                     ],
-                    delivery=self.m.DeliveryOptions(nonce=tok, mentions={"parse": []}),
+                    delivery=DeliveryOptions(nonce=tok, mentions={"parse": []}),
                 )
                 a["sent"], a["at"] = True, now
             except Exception as e:

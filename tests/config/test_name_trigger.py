@@ -3,7 +3,7 @@
 (classify_message and trigger_kind), an @mention still does, and
 load_state drops a leftover name_drop burst. Each case imports
 monitor.py in a fresh subprocess with its own config.yaml (settings
-resolve at import), no network. MUT_DIR = the package tree under test
+resolve during explicit initialization), no network. MUT_DIR = the package tree under test
 (default: this checkout)."""
 
 import json
@@ -27,6 +27,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     spec = importlib.util.spec_from_file_location("monitor", sys.argv_repo)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
+    m.initialize(token_override="dummy-token")
 m.BOT_ID = m.BOT_USER_ID = "999"
 m.api_get = lambda path: (_ for _ in ()).throw(AssertionError(path))
 st = {"last_seen": {}, "replied_to": [], "history": {},
