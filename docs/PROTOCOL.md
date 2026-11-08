@@ -8,6 +8,7 @@
 | 処理 | 主な実装 |
 | --- | --- |
 | 起動・イベント処理・各機能の接続 | `src/muse_discord/monitor.py` |
+| 連投の集約・到着順序・登録失敗の再試行 | `src/muse_discord/bursts.py` |
 | 受信バーストの検証・キュー項目の組み立て | `src/muse_discord/ingest.py` |
 | 返信の認可・副作用・送信結果の処理順 | `src/muse_discord/reply_delivery.py` |
 | 応答回数・メディア回数・対象者のポリシー | `src/muse_discord/response_policy.py` |
@@ -102,6 +103,7 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 所有者の在籍確認は `owner.presence`、通知は `owner.messaging`・`owner.admin_digest`・`owner.join_notices`・`owner.updates`、返信の保留と承認は `owner.review` が持つ。更新通知も共通の設定Watcherを通す。
 サーバーとチャンネルの探索は `directory.discovery`、参加退出は `directory.lifecycle`、設定画面への公開は `directory.snapshot` が持つ。スナップショットはロック内で交換し、読み手にはコピーを返す。
 送信形式は `messaging.sending`、分割送信と重複抑止nonceは `messaging.parts`、入力中表示の期限と更新は `messaging.typing` が持つ。分割返信は全パートを検査してから最初の送信を行い、途中失敗では元の例外に送信済みIDを残す。
+連投の集約と再試行は `bursts.PendingBursts`、Gatewayの入力順序は `bursts.GatewayActivity` が持つ。未処理の連投と再試行時刻は保存対象の状態に残し、登録途中の例外ではその試行が追加したキュー項目だけを取り消す。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

@@ -110,3 +110,9 @@ LEDGER_TERMINAL = ("replied", "quarantined", "skipped")
 
 
 PROACTIVE_KIND = "proactive"
+
+
+@dataclass
+class MessagePlace:
+    guild_id: str | None = None
+    dm: bool = False

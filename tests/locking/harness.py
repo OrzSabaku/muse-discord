@@ -89,7 +89,7 @@ def fresh_pkg():
     CALLS.clear()
     getattr(monitor, "_typing_sources", {}).clear()
     getattr(monitor, "_typing_last", {}).clear()
-    getattr(monitor, "_activity", {}).clear()
+    monitor._ACTIVITY.clear()
     monitor._rl_until = 0.0
     monitor.BOT_ID = monitor.BOT_USER_ID = "999"
     monitor.BOT_NAME = "pip"

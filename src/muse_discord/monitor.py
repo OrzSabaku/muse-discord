@@ -67,6 +67,13 @@ from muse_discord import generated_media, media_ingest, reply_protocol, storage
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord import secret_scan as SCAN
+from muse_discord.bursts import (
+    BurstEffects,
+    CoalescePolicy,
+    GatewayActivity,
+    PendingBursts,
+    alias_fragments,
+)
 from muse_discord.channel_access import ChannelAccess
 from muse_discord.conversation import (
     PRIVATE_THREAD_TYPE,
@@ -92,6 +99,7 @@ from muse_discord.interactions import ephemeral, interaction_user_id
 from muse_discord.message_models import (
     LEDGER_TERMINAL,
     LedgerContext,
+    MessagePlace,
     QueueContext,
     SecretBlocked,
     Speaker,
@@ -141,8 +149,6 @@ CONFIG_PATH_ARGUMENT = 2
 APPLICATION_COMMAND_TYPE = 2
 HEARTBEAT_INTERVAL_SECS = 30
 MEMBER_CACHE_LIMIT = 2000
-ACTIVITY_CACHE_LIMIT = 1000
-PENDING_MESSAGE_ATTEMPTS = 3
 GENERATED_SEND_HISTORY_LIMIT = 50
 GENERATED_PATH_PAIR_LENGTH = 2
 EMPTY_OUTBOX_MAX_BYTES = 4  # JSON [] with optional whitespace/newline
@@ -2224,70 +2230,30 @@ def get_reply_context(msg):
     }
 
 
+_ACTIVITY: GatewayActivity
+
+
+def _bursts(state):
+    return PendingBursts(
+        state,
+        _ACTIVITY,
+        CoalescePolicy(COALESCE_SECS, BOT_COALESCE_SECS, is_bot_author),
+        enqueue_message,
+        BurstEffects(
+            note_ingested,
+            lambda mid: mid in _quarantine_ids() or _ledger_terminal(mid),
+            ledger_record_many,
+        ),
+        time.time,
+    )
+
+
 def hold_fragment(state, channel_id, msg):
-    """If (channel, author) already has a burst being coalesced, append this
-    message to it as a fragment and return True (caller must not classify it
-    independently). The trigger message itself is never a fragment."""
-    author_id = _who(msg).get("id")
-    key = f"{channel_id}:{author_id}"
-    entry = state.get("pending", {}).get(key)
-    if entry and msg["id"] != entry["first_id"]:
-        entry["fragments"].append(msg)
-        print(
-            f"Holding fragment from {_who(msg).get('username')} in "
-            f"{entry['channel_name']} for one coalesced reply.",
-            flush=True,
-        )
-        return True
-    return False
-
-
-@dataclass
-class MessagePlace:
-    guild_id: str | None = None
-    dm: bool = False
+    return _bursts(state).hold(channel_id, msg)
 
 
 def stage_trigger(state, msg, cname, kind, place=None):
-    """Stage a trigger (mention / DM message) in the
-    pending buffer instead of queueing it immediately. Fragments arriving
-    within COALESCE_SECS fold into the same burst; flush_pending() turns
-    each matured burst into a single queue item. A second trigger from the
-    same author while a burst is open becomes a fragment of it."""
-    place = place or MessagePlace()
-    guild_id = place.guild_id
-    dm = place.dm
-    author_id = _who(msg).get("id")
-    key = f"{msg['channel_id']}:{author_id}"
-    pending = state.setdefault("pending", {})
-    if key in pending:
-        entry = pending[key]
-        if msg["id"] == entry["first_id"] or any(f["id"] == msg["id"] for f in entry["fragments"]):
-            return  # already in this burst (staged twice): nothing to add
-        if kind == "mention" and entry.get("kind") == "follow_up":
-            entry["kind"] = "mention"  # direct address beats a follow-up
-        entry["fragments"].append(msg)
-        print(
-            f"Additional trigger from {_who(msg).get('username')} "
-            f"folded into pending burst in {cname}.",
-            flush=True,
-        )
-        return
-    pending[key] = {
-        "first_id": msg["id"],
-        "channel_id": msg["channel_id"],
-        "channel_name": cname,
-        "guild_id": guild_id,
-        "author_id": author_id,
-        "kind": kind,  # "mention" | "follow_up" | "dm"
-        "dm": dm,
-        "first_seen": time.time(),
-        "window": BOT_COALESCE_SECS if is_bot_author(msg.get("author")) else COALESCE_SECS,
-        "trigger": msg,
-        "fragments": [],
-    }
-    note_ingested(state, msg["id"])
-    print(f"Staged {kind} from {_who(msg).get('username')} in {cname} for coalescing.", flush=True)
+    return _bursts(state).stage(msg, cname, kind, place)
 
 
 def stage_found(state, msg, cname, guild_id, kind):
@@ -2305,190 +2271,16 @@ def stage_found(state, msg, cname, guild_id, kind):
     stage_trigger(state, msg, cname, kind, place=MessagePlace(guild_id=guild_id))
 
 
-def alias_fragments(state, trigger_id, fragments):
-    """Remember which trigger each burst fragment belongs to. The worker
-    replies under the LAST fragment while the ledger and the sweep track
-    the trigger, so a reply (or a silent pass) under any fragment settles
-    the whole burst, and the sweep never requeues a fragment alone."""
-    if not fragments:
-        return
-    aliases = state.setdefault("reply_aliases", {})
-    for f in fragments:
-        aliases[f["id"]] = trigger_id
-    _keep_last(aliases, 500)
-
-
-# ---------------------------------------------------------------------------
-# Early burst flush. The coalesce window (behavior.coalesce_seconds, or
-# BOT_COALESCE_SECS for bot authors) is the MAXIMUM wait. With the
-# gateway's typing events, a burst flushes as soon as its author has
-# visibly stopped: their newest message arrived over the gateway at least
-# BURST_QUIET_SECS ago and no TYPING_START from them in that channel has
-# arrived since. Gateway events are drained in order, so a sequence
-# number orders typing against messages exactly. When the gateway is
-# down (or missed the newest message) the burst waits the full window as
-# before. Bots get a longer quiet gap: a Muse sends multi-part replies
-# with 2-4s beats, and a bot may not send typing between parts. A
-# human's DM gets a shorter one: a DM is all addressed to the bot, and
-# the typing hold still keeps a burst open while they write the next
-# line.
-# ---------------------------------------------------------------------------
-BURST_QUIET_SECS = 1.5
-DM_BURST_QUIET_SECS = 0.5
-BOT_BURST_QUIET_SECS = 5.0
-_activity = {}  # "<channel>:<author>" -> {msg_id, msg_at, msg_seq, typing_seq}
-_activity_seq = 0
-
-
 def note_activity(channel_id, user_id, msg_id=None):
-    """Record a gateway MESSAGE_CREATE (msg_id set) or TYPING_START from
-    user_id in channel_id, in drain order."""
-    global _activity_seq
-    if not channel_id or not user_id:
-        return
-    _activity_seq += 1
-    key = f"{channel_id}:{user_id}"
-    act = dict(_activity.get(key) or {})
-    if msg_id:
-        if act.get("msg_id") and int(act["msg_id"]) >= int(msg_id):
-            return  # an older message arriving late changes nothing
-        act.update(msg_id=msg_id, msg_at=time.time(), msg_seq=_activity_seq)
-    else:
-        act["typing_seq"] = _activity_seq
-    _activity[key] = act
-    if len(_activity) > ACTIVITY_CACHE_LIMIT:
-        cutoff = time.time() - 600
-        for k in [k for k, a in _activity.items() if a.get("msg_at", 0) < cutoff]:
-            del _activity[k]
-
-
-def burst_quiet(entry, now):
-    """True once a pending burst's author has stopped (see above)."""
-    act = _activity.get(f"{entry['channel_id']}:{entry['author_id']}")
-    if not act or not act.get("msg_id"):
-        return False
-    newest = max([entry["trigger"]] + entry["fragments"], key=lambda m: int(m["id"]))
-    if act["msg_id"] != newest["id"]:
-        return False  # the gateway did not see the newest message
-    if act.get("typing_seq", 0) > act["msg_seq"]:
-        return False  # typing again since their newest message
-    quiet = (
-        BOT_BURST_QUIET_SECS if is_bot_author(entry["trigger"].get("author")) else BURST_QUIET_SECS
-    )
-    if entry.get("dm") and quiet == BURST_QUIET_SECS:
-        quiet = DM_BURST_QUIET_SECS  # a human's DM
-    return now - act["msg_at"] >= quiet
+    _ACTIVITY.note(channel_id, user_id, msg_id, now=time.time())
 
 
 def pending_wait(state, now):
-    """How long the main loop may sleep before a staged burst could
-    flush: until its window ends or its author's quiet gap (as in
-    burst_quiet) passes, at most 0.5s (typing events do not wake the
-    loop). None when no burst is staged."""
-    due = []
-    for entry in state.get("pending", {}).values():
-        if entry.get("next_try", 0) > now:
-            continue  # enqueue back-off: its retry is minutes away
-        due.append(entry.get("first_seen", now) + entry.get("window", COALESCE_SECS))
-        act = _activity.get(f"{entry.get('channel_id')}:{entry.get('author_id')}") or {}
-        if act.get("msg_at"):
-            due.append(
-                act["msg_at"] + (DM_BURST_QUIET_SECS if entry.get("dm") else BURST_QUIET_SECS)
-            )
-    if not due:
-        return None
-    ahead = [d - now for d in due if d > now]
-    return max(0.02, min([*ahead, 0.5]))
+    return _bursts(state).wait(now)
 
 
 def flush_pending(state, queue, force=False):
-    """Turn pending bursts whose author has stopped (burst_quiet) or whose
-    coalesce window has elapsed into single queue items. Returns True when
-    anything was queued."""
-    now = time.time()
-    pending = state.get("pending", {})
-    flushed = False
-    for key in list(pending.keys()):
-        entry = pending[key]
-        if not force and entry.get("next_try", 0) > now:
-            continue  # enqueue failed recently; backing off before retry
-        early = burst_quiet(entry, now)
-        if force or early or now - entry["first_seen"] >= entry.get("window", COALESCE_SECS):
-            trigger = entry["trigger"]
-            who = _who(trigger).get("username")
-            n_queue = len(queue)
-            try:
-                ok = enqueue_message(
-                    trigger,
-                    entry["channel_name"],
-                    state,
-                    queue,
-                    context=QueueContext(
-                        dm=entry["kind"] == "dm",
-                        fragments=entry["fragments"],
-                        guild_id=entry["guild_id"],
-                        follow_up=entry["kind"] == "follow_up",
-                    ),
-                )
-            except Exception as e:
-                # One poison burst must not hold back every other one:
-                # it is retried (then ledgered) like a failed enqueue.
-                # Whatever it appended goes too, or the duplicate check
-                # below would take the burst for queued.
-                print(f"Enqueue error: {type(e).__name__}: {e}", flush=True)
-                del queue[n_queue:]
-                ok = False
-            n_frag = len(entry["fragments"])
-            why = " (author stopped typing)" if early and not force else ""
-            print(
-                f"Flushed {entry['kind']} burst ({1 + n_frag} message(s)) "
-                f"from {who} in {entry['channel_name']}: queued={ok}{why}",
-                flush=True,
-            )
-            if ok:
-                del pending[key]
-                flushed = True
-            elif any(q["message_id"] == trigger["id"] for q in queue):
-                # Already queued by another path (e.g. the sweep): the
-                # enqueue "failure" was just its duplicate guard. Its
-                # fragments ride on that item.
-                alias_fragments(state, trigger["id"], entry["fragments"])
-                del pending[key]
-            elif trigger["id"] in _quarantine_ids() or _ledger_terminal(trigger["id"]):
-                # quarantine() or an enqueue gate (join watermark)
-                # already ledgered it.
-                del pending[key]
-            else:
-                # No silent drops: retry a few times, then record the
-                # loss in the ledger where the sweep can see it.
-                entry["tries"] = entry.get("tries", 0) + 1
-                if entry["tries"] >= PENDING_MESSAGE_ATTEMPTS:
-                    ledger_record_many(
-                        [trigger["id"]] + [f["id"] for f in entry["fragments"]],
-                        "skipped",
-                        f"enqueue failed {entry['tries']}x",
-                        context=LedgerContext(
-                            channel_id=entry["channel_id"],
-                            author=who,
-                            author_id=_who(trigger).get("id"),
-                        ),
-                    )
-                    print(
-                        f"Dropping burst from {who} in "
-                        f"{entry['channel_name']} after 3 failed "
-                        f"enqueues (recorded in mention ledger).",
-                        flush=True,
-                    )
-                    del pending[key]
-                else:
-                    entry["next_try"] = now + 300
-                    print(
-                        f"Enqueue failed for burst in "
-                        f"{entry['channel_name']}; retry "
-                        f"{entry['tries']}/3 in 5 min.",
-                        flush=True,
-                    )
-    return flushed
+    return _bursts(state).flush(queue, force)
 
 
 # What a monitor send may ping: users (the worker addresses people with
@@ -4717,7 +4509,7 @@ def initialize(config_path=None, token_override=None):
     global COALESCE_SECS, GUILD_ALLOWLIST, MAX_REPLY_CHARS, OWNER_USER_IDS, POLL_INTERVAL
     global PRO, SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
     global TM, TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
-    global _S0, _SETTINGS, _DIRECTORY_VIEW
+    global _S0, _SETTINGS, _DIRECTORY_VIEW, _ACTIVITY
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
@@ -4761,6 +4553,7 @@ def initialize(config_path=None, token_override=None):
         )
         sys.exit(1)
     _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
+    _ACTIVITY = GatewayActivity()
     TM = _import_telemetry()
     PRO = _import_proactive()
     _INITIALIZED = True

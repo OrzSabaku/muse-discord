@@ -531,7 +531,7 @@ def _early_flush_on_typing_stop():
     q = []
     with capture():
         assert not m.flush_pending(st, q)  # too soon (< 1.5s)
-    m._activity["101:U1"]["msg_at"] -= 1.6
+    m._ACTIVITY.entries["101:U1"]["msg_at"] -= 1.6
     with capture():
         assert m.flush_pending(st, q)
     assert q[0]["message_id"] == t["id"]
@@ -542,7 +542,7 @@ def _typing_after_message_holds_then_max_wait():
     st = new_state()
     t = msg(author="U1")
     _drain(st, [t, {"_typing": {"channel_id": "101", "user_id": "U1"}}])
-    m._activity["101:U1"]["msg_at"] -= 3
+    m._ACTIVITY.entries["101:U1"]["msg_at"] -= 3
     q = []
     with capture():
         assert not m.flush_pending(st, q)  # still typing
@@ -553,14 +553,14 @@ def _typing_after_message_holds_then_max_wait():
     assert [x["id"] for x in entry["fragments"]] == [f["id"]]
     with capture():
         assert not m.flush_pending(st, q)
-    m._activity["101:U1"]["msg_at"] -= 1.6
+    m._ACTIVITY.entries["101:U1"]["msg_at"] -= 1.6
     with capture():
         assert m.flush_pending(st, q)
     assert q[0]["burst_fragments"][0]["message_id"] == f["id"]
     # typing never stops: the window is the maximum wait
     t2 = msg(author="U2")
     _drain(st, [t2, {"_typing": {"channel_id": "101", "user_id": "U2"}}])
-    m._activity["101:U2"]["msg_at"] -= 4.9
+    m._ACTIVITY.entries["101:U2"]["msg_at"] -= 4.9
     st["pending"]["101:U2"]["first_seen"] -= 4.9
     with capture():
         assert not m.flush_pending(st, q)
@@ -594,11 +594,11 @@ def _bot_author_longer_quiet():
     t = msg(author="B1", bot=True)
     _drain(st, [t])
     assert st["pending"]["101:B1"]["window"] == m.BOT_COALESCE_SECS
-    m._activity["101:B1"]["msg_at"] -= 2
+    m._ACTIVITY.entries["101:B1"]["msg_at"] -= 2
     q = []
     with capture():
         assert not m.flush_pending(st, q)
-    m._activity["101:B1"]["msg_at"] -= 3.1
+    m._ACTIVITY.entries["101:B1"]["msg_at"] -= 3.1
     with capture():
         assert m.flush_pending(st, q)
 
