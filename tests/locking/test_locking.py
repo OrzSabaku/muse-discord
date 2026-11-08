@@ -577,7 +577,7 @@ def _no_gateway_waits_full_window():
     st = new_state()
     t = msg(author="U1")
     with capture():
-        kind = m.classify_message(st, t, "S #c", "G")
+        kind = m._receiver(st).classify(t, "S #c", "G")
         m.stage_trigger(st, t, "S #c", kind, place=m.MessagePlace(guild_id="G"))
     entry = st["pending"]["101:U1"]
     entry["first_seen"] -= 4.0

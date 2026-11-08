@@ -50,7 +50,7 @@ class LockTimeout(unittest.TestCase):
         with (
             patch.object(m.fcntl, "flock", side_effect=OSError(errno.EIO, "lock I/O error")),
             self.assertRaises(OSError) as raised,
-            m.shared_lock(),
+            m._queue_files().lock(),
         ):
             self.fail("the writer entered without acquiring the lock")
         self.assertEqual(raised.exception.errno, errno.EIO)

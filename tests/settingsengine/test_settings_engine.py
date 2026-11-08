@@ -649,24 +649,24 @@ class DmsFrom(unittest.TestCase):
         sam = {"id": SAM, "username": "sam"}
         ann = {"id": ANN, "username": "ann"}
         owner = {"id": OWNER, "username": "zach"}
-        self.assertTrue(m.dm_sender_allowed(sam))
-        self.assertTrue(m.dm_sender_allowed(owner))
-        self.assertFalse(m.dm_sender_allowed(ann))
+        self.assertTrue(m._admission().dm_sender_allowed(sam))
+        self.assertTrue(m._admission().dm_sender_allowed(owner))
+        self.assertFalse(m._admission().dm_sender_allowed(ann))
         # dms.who.allow / ignore still apply on top of the list
         m = load_monitor(
             self, BASE + f'dms:\n  who:\n    dms_from: ["{SAM}", "{ANN}"]\n    ignore: ["{ANN}"]\n'
         )
-        self.assertTrue(m.dm_sender_allowed(sam))
-        self.assertFalse(m.dm_sender_allowed(ann))
+        self.assertTrue(m._admission().dm_sender_allowed(sam))
+        self.assertFalse(m._admission().dm_sender_allowed(ann))
         m = load_monitor(self, BASE + f'dms:\n  who:\n    dms_from: anyone\n    allow: ["{SAM}"]\n')
-        self.assertTrue(m.dm_sender_allowed(sam))
-        self.assertFalse(m.dm_sender_allowed(ann))
+        self.assertTrue(m._admission().dm_sender_allowed(sam))
+        self.assertFalse(m._admission().dm_sender_allowed(ann))
         # Nobody: DMs off, owners included.
         m = load_monitor(
             self, BASE + f"dms:\n  who:\n    dms_from: [\"{SAM}\"]\n    replies: 'off'\n"
         )
-        self.assertFalse(m.dm_sender_allowed(sam))
-        self.assertFalse(m.dm_sender_allowed(owner))
+        self.assertFalse(m._admission().dm_sender_allowed(sam))
+        self.assertFalse(m._admission().dm_sender_allowed(owner))
 
 
 # ---------------------------------------------------------------------------
@@ -976,8 +976,8 @@ class ReviewMedium(unittest.TestCase):
         )
         m = load_monitor(self, text + f'dms:\n  who:\n    dms_from: ["{SAM}"]\n')
         self.assertIn(SAM, m.dm_poll_user_ids())
-        self.assertTrue(m.dm_swept_author(SAM))
-        self.assertFalse(m.dm_swept_author(ANN))
+        self.assertTrue(m._admission().dm_swept_author(SAM))
+        self.assertFalse(m._admission().dm_swept_author(ANN))
         chans = dict(m.list_dm_channels())
         sam_dm = "4" + SAM[1:]
         own_dm = "4" + OWNER[1:]

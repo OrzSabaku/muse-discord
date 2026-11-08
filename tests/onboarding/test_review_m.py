@@ -38,7 +38,7 @@ class FirstRun(unittest.TestCase):
             for gid in (G1, G2):  # READY's GUILD_CREATEs
                 mod.on_guild_event(st, {"op": "create", "id": gid})
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
-        self.assertIsNone(mod.trigger_kind(stranger, G2))
+        self.assertIsNone(mod._admission().trigger_verdict(stranger, G2)[0])
 
     def test_first_run_checks_stop_at_a_rate_limit(self):
         """The first run checks every server at once (every=True); after a

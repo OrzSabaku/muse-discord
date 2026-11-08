@@ -90,7 +90,7 @@ class Base(unittest.TestCase):
     def stage(self, msg, guild=G1, cname="Lounge #general"):
         """Classify and stage msg the way the poll / gateway do."""
         with quiet() as buf:
-            kind = self.m.classify_message(self.st, msg, cname, guild)
+            kind = self.m._receiver(self.st).classify(msg, cname, guild)
             if kind:
                 self.m._receiver(self.st).stage(msg, cname, guild, kind)
         return kind, buf.getvalue()

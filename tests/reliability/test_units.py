@@ -48,12 +48,12 @@ class F2BurstLedger(unittest.TestCase):
     def _burst(self, mod, st, contents):
         msgs = [msg("C1", "U1", c, mention=True) for c in contents]
         for m in msgs:
-            mod.record_history(st, "C1", [m])
+            mod._conversation().record_history(st, "C1", [m])
         mod.stage_trigger(
             st, msgs[0], "Srv #general", "mention", place=mod.MessagePlace(guild_id=G1)
         )
         for m in msgs[1:]:
-            mod.classify_message(st, m, "Srv #general", G1)
+            mod._receiver(st).classify(m, "Srv #general", G1)
         q = []
         mod.flush_pending(st, q, force=True)
         return msgs, q
@@ -295,7 +295,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
             return {"id": "1"}
 
         with mock.patch.object(mod._DISCORD, "request", send):
-            mod.send_reply_with_files(
+            mod._message_sender().files(
                 "123456789012345678",
                 "hi",
                 [(path, "a.png")],

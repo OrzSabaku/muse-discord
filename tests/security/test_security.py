@@ -163,7 +163,7 @@ def fake_send_files(channel_id, text, files, reply_to=None, delivery=None):
     return {"id": "999999999999999998"}
 
 
-ORIG_SEND_FILES = M.send_reply_with_files
+ORIG_SEND_FILES = M._message_sender().files
 M.api_post = fake_api_post
 M.api_get = fake_api_get
 M.send_typing = lambda cid: None
@@ -634,7 +634,7 @@ def f4_monitor_reaction_slash_encoded():
 
     M._DISCORD.request = cap
     try:
-        M.add_reaction(GEN_CH, "123456789012345678", "../../x")
+        M._message_sender().reaction(GEN_CH, "123456789012345678", "../../x")
     finally:
         M._DISCORD.request = orig
     assert seen and "%2F" in seen[0] and "/../" not in seen[0], seen

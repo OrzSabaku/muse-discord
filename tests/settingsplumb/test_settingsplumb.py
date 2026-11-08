@@ -642,7 +642,7 @@ class AdminDigest(unittest.TestCase):
     def test_long_digest_capped(self):
         for i in range(80):
             self.ctx.notify_owners_admin_change(G1, U1, "who.ignore", [], [str(10**17 + i)] * 3)
-        text = self.mod.admin_digest_text(G1, self.mod._ADMIN_CHANGES[G1]["changes"])
+        text = self.mod._admin_digests().text(G1, self.mod._ADMIN_CHANGES[G1]["changes"])
         self.assertLessEqual(len(text), 1990)
 
 

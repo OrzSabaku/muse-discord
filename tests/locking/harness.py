@@ -11,6 +11,7 @@ import re
 import shutil
 import sys
 import time
+from urllib.parse import unquote
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
@@ -58,9 +59,14 @@ def fake_get(path):
 
 monitor.api_post = fake_post
 monitor.api_get = fake_get
-monitor.add_reaction = lambda cid, mid, emoji: (
-    CALLS.append((time.time(), "react", mid, emoji)) or True
-)
+
+
+def fake_put(path):
+    _, _, _cid, _, mid, _, emoji, _ = path.split("/")
+    CALLS.append((time.time(), "react", mid, unquote(emoji)))
+
+
+monitor._DISCORD.put = fake_put
 monitor.collect_media = lambda msg: ([], [], [])
 
 

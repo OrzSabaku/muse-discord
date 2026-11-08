@@ -77,15 +77,15 @@ class Outbox(tb.Base):
         m = self.mod
         n0 = len(m.api.posts)
         with quiet():
-            self.assertFalse(m.dm_owner(OWNER, {"content": TOKEN}))
+            self.assertFalse(m._owner_messenger().dm(OWNER, {"content": TOKEN}))
         self.assertEqual([p for p, d in m.api.posts[n0:] if TOKEN in json.dumps(d)], [])
         # The real helpers: nothing reaches the network.
         opened = []
         calls = [
             lambda: m.real_api_post(f"/channels/{CH}/messages", {"content": "x " + TOKEN}),
             lambda: m.api_patch(f"/channels/{CH}/messages/1", {"content": TOKEN}),
-            lambda: m.send_reply_with_files(CH, TOKEN, []),
-            lambda: m.send_reply_with_files(
+            lambda: m._message_sender().files(CH, TOKEN, []),
+            lambda: m._message_sender().files(
                 CH,
                 "ok",  # file name
                 [("/x", TOKEN + ".png")],
@@ -111,7 +111,7 @@ class Outbox(tb.Base):
             quiet(),
             self.assertRaises(SecretBlocked),
         ):
-            m.send_reply_with_files(CH, "ok", [(leak, "cat.png")])
+            m._message_sender().files(CH, "ok", [(leak, "cat.png")])
         self.assertEqual(opened, [])
 
 

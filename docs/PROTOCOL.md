@@ -115,7 +115,7 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 `monitor` のimportでは設定やトークンを読み込まず、サービスを生成しない。`main()` が `initialize()` を呼び、テストも設定とトークンを指定して明示的に初期化する。
 自発発言は `ProactiveContext` に宣言した操作と状態の参照だけを受け取る。モニターの名前空間全体を渡さない。
 受信・返信の各段階は、検証済みの入力と処理結果を値として渡す。前のメソッドによる属性の追加を前提にしない。
-受信項目の組み立ては `ingest`、返信の処理順は `reply_delivery`、取得・復旧・確定のトランザクションは `outbox_store` が持つ。これらからモニターをimportしない。
+受信項目の組み立ては `ingest`、返信の処理順は `reply_delivery`、取得・復旧・確定のトランザクションは `outbox_store` が持つ。これらからモニターをimportしない。機能のテストは担当モジュールを直接使い、モニターにはテスト専用の中継関数を置かない。
 応答ポリシーは設定と所有者の取得関数を受け取り、再読み込み後も同じポリシーの呼び出しに反映する。
 通知の登録と対象者判定は `watches.requests`・`watches.audience`、発火と復旧は `watches.runtime` が持つ。閲覧権限の確認は保存ロックの前、キュー登録は保存後に行う。
 所有者DMの認可は `owner.authorization`、権限発行・再発行は `owner.capabilities`、原文からのコマンド対象解決は `owner.targets`、記憶への保存は `owner.memory` が持つ。権限の消費はoutboxの確定時に行う。

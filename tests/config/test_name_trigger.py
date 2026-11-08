@@ -41,8 +41,8 @@ def msg(mid, content, mention):
 bare = msg("1300000000000000001", "Pip, look at this", False)
 direct = msg("1300000000000000002", "hey look at this", True)
 with contextlib.redirect_stdout(io.StringIO()):
-    bare_kind = m.classify_message(st, bare, "S #a", "G")
-    direct_kind = m.classify_message(st, direct, "S #a", "G")
+    bare_kind = m._receiver(st).classify(bare, "S #a", "G")
+    direct_kind = m._receiver(st).classify(direct, "S #a", "G")
 # load_state drops a burst left behind by the old name trigger.
 m.STATE_FILE = os.path.join(os.environ["TMPD"], "state.json")
 with open(m.STATE_FILE, "w") as f:
@@ -50,7 +50,7 @@ with open(m.STATE_FILE, "w") as f:
         "101:U1": {"kind": "name_drop", "channel_id": "101"},
         "101:U2": {"kind": "mention", "channel_id": "101"}}}, f)
 pending = sorted(m.load_state()["pending"])
-print(json.dumps({"bare": bare_kind, "trigger_kind": m.trigger_kind(bare),
+print(json.dumps({"bare": bare_kind, "trigger_kind": m._admission().trigger_verdict(bare)[0],
                   "direct": direct_kind, "pending": pending}))
 """
 

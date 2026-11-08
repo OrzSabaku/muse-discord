@@ -235,7 +235,7 @@ class NeverIdentifying(Base):
         ignored = gmsg(U2, f"<@{BOT}> {secret} again", mention=True)
         with quiet():
             for msg in (mention, chatter, ignored):
-                kind = m.classify_message(self.st, msg, "Lounge #general", G1)
+                kind = m._receiver(self.st).classify(msg, "Lounge #general", G1)
                 if kind and kind != "join":
                     m._receiver(self.st).stage(msg, "Lounge #general", G1, kind)
             for entry in self.st.get("pending", {}).values():

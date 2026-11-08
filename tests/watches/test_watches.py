@@ -88,7 +88,7 @@ class Base(unittest.TestCase):
 
         m.api_get = get
         # Everyone reads CH; CH2 is for ROLE only.
-        m.watch_note_guild(
+        m._channel_access().note_guild(
             G1,
             {
                 "owner_id": "1",
@@ -175,7 +175,7 @@ class Base(unittest.TestCase):
 
     def scan(self, msg):
         with quiet():
-            self.mod.classify_message(self.st, msg, "#x", G1)
+            self.mod._receiver(self.st).classify(msg, "#x", G1)
 
     # -- looking --------------------------------------------------------------
     def items(self):

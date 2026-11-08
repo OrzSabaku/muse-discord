@@ -69,7 +69,7 @@ class Upload(ts.tb.Base):
             quiet(),
             contextlib.suppress(SecretBlocked, OSError),
         ):
-            m.send_reply_with_files(CH, "see " + TOKEN[:30], [(half, "half.txt")])
+            m._message_sender().files(CH, "see " + TOKEN[:30], [(half, "half.txt")])
         self.assertEqual(opened, [], "the upload was sent")
 
 

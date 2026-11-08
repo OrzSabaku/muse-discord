@@ -561,7 +561,7 @@ class MonitorBase(unittest.TestCase):
 
     def kind(self, msg, guild=G1):
         with quiet():
-            return self.m.classify_message(self.st, msg, "#c", guild)
+            return self.m._receiver(self.st).classify(msg, "#c", guild)
 
 
 class LiveReload(MonitorBase):
@@ -579,7 +579,7 @@ class LiveReload(MonitorBase):
         # An invalid edit keeps the last good settings, logged once.
         self.rewrite(NEW_BASE + "all_servers:\n  who:\n    replies: maybe\n")
         with quiet():
-            self.assertIsNone(m.trigger_kind(gmsg(U1, mention=True), G1))
+            self.assertIsNone(m._admission().trigger_verdict(gmsg(U1, mention=True), G1)[0])
         # The overlay is watched too.
         self.rewrite(
             NEW_BASE
@@ -788,11 +788,18 @@ class Who(MonitorBase):
 '''
         )
         m = self.m
-        self.assertEqual(m.trigger_kind(gmsg(U1, "hello"), G1, self.st), "follow_up")
-        self.assertIsNone(m.trigger_kind(gmsg(U1, "hello", channel=CH2), G1, self.st))
-        self.assertIsNone(m.trigger_kind(gmsg(OTHER_BOT, "beep", bot=True), G1, self.st))
         self.assertEqual(
-            m.trigger_kind(gmsg(OTHER_BOT, mention=True, bot=True), G1, self.st), "mention"
+            m._admission().trigger_verdict(gmsg(U1, "hello"), G1, self.st)[0], "follow_up"
+        )
+        self.assertIsNone(
+            m._admission().trigger_verdict(gmsg(U1, "hello", channel=CH2), G1, self.st)[0]
+        )
+        self.assertIsNone(
+            m._admission().trigger_verdict(gmsg(OTHER_BOT, "beep", bot=True), G1, self.st)[0]
+        )
+        self.assertEqual(
+            m._admission().trigger_verdict(gmsg(OTHER_BOT, mention=True, bot=True), G1, self.st)[0],
+            "mention",
         )
 
     def test_dms_from(self):
@@ -836,7 +843,10 @@ class Who(MonitorBase):
             f'      allow: ["role:{ROLE}", "{U2}"]\n'
             f'      ignore: ["{OTHER_BOT}"]\n'
         )
-        k = m.trigger_kind
+
+        def k(msg, guild_id=None, state=None):
+            return m._admission().trigger_verdict(msg, guild_id, state)[0]
+
         self.assertEqual(k(gmsg(U1, mention=True, roles=[ROLE]), G1), "mention")
         self.assertIsNone(k(gmsg(U1, mention=True, roles=["1"]), G1))
         self.assertEqual(k(gmsg(U2, mention=True, roles=[]), G1), "mention")
@@ -1002,9 +1012,9 @@ class FollowUps(MonitorBase):
         self.answered()
         first = gmsg(U1, "one more thing")
         with quiet():
-            kind = m.classify_message(self.st, first, "#c", G1)
+            kind = m._receiver(self.st).classify(first, "#c", G1)
             m._receiver(self.st).stage(first, "#c", G1, kind)
-            self.assertIsNone(m.classify_message(self.st, gmsg(U1, "and another"), "#c", G1))
+            self.assertIsNone(m._receiver(self.st).classify(gmsg(U1, "and another"), "#c", G1))
             q = []
             m.flush_pending(self.st, q, force=True)
         self.assertEqual(len(q), 1)
@@ -1015,9 +1025,9 @@ class FollowUps(MonitorBase):
         self.answered()
         first = gmsg(U1, "wait")
         with quiet():
-            kind = m.classify_message(self.st, first, "#c", G1)
+            kind = m._receiver(self.st).classify(first, "#c", G1)
             m._receiver(self.st).stage(first, "#c", G1, kind)
-            m.classify_message(self.st, gmsg(U1, "@muse hm", mention=True), "#c", G1)
+            m._receiver(self.st).classify(gmsg(U1, "@muse hm", mention=True), "#c", G1)
             q = []
             m.flush_pending(self.st, q, force=True)
         self.assertFalse(q[0]["follow_up"])

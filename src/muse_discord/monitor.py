@@ -53,7 +53,7 @@ except ImportError:
     print("PyYAML and Pydantic v2 are required: run uv sync", file=sys.stderr)
     sys.exit(1)
 
-from muse_discord import media_ingest, storage
+from muse_discord import media_ingest
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord.admission import AdmissionPolicy, SharedServers
@@ -99,7 +99,7 @@ from muse_discord.message_models import (
     Speaker,
 )
 from muse_discord.message_outcomes import MessageOutcomes
-from muse_discord.message_queue import QueueFiles, owner_dm_metadata
+from muse_discord.message_queue import QueueFiles
 from muse_discord.messaging import formatting as reply_formatting
 from muse_discord.messaging.parts import PartDelivery
 from muse_discord.messaging.sending import MessageSender
@@ -169,7 +169,7 @@ LEDGER_FILE = os.path.join(BASE_DIR, "mention_ledger.json")
 HEARTBEAT_FILE = os.path.join(BASE_DIR, "monitor.heartbeat")
 # The monitor and the worker both edit the queue and the outbox. Every
 # read-modify-write of either file happens under an exclusive flock on
-# this file (see shared_lock and docs/PROTOCOL.md), so neither side can write
+# this file (see QueueFiles.lock and docs/PROTOCOL.md), so neither side can write
 # back a stale copy over the other's changes.
 LOCK_FILE = os.path.join(BASE_DIR, "reply.lock")
 # Outbox items the monitor has taken and is sending. If it dies mid-send
@@ -558,11 +558,6 @@ def api_patch(path, data):
 LOCK_WAIT_SECS = 20
 
 
-def shared_lock():
-    """Acquire the configured queue/outbox lock; never hold it across network calls."""
-    return storage.shared_lock(LOCK_FILE, LOCK_WAIT_SECS)
-
-
 def _queue_files():
     return QueueFiles(QUEUE_FILE, LOCK_FILE, LOCK_WAIT_SECS)
 
@@ -713,14 +708,6 @@ def _response_policy():
     )
 
 
-def rate_block(state, user_id, channel_id=None, scope=None):
-    return _response_policy().rate_block(state, user_id, channel_id, scope)
-
-
-def rate_record(state, user_id, scope=None):
-    return _response_policy().rate_record(state, user_id, scope)
-
-
 # ---------------------------------------------------------------------------
 # Join watermark. A message that predates the bot's arrival in a guild is
 # never a trigger: not on catch-up after a restart, not in a channel
@@ -767,14 +754,6 @@ def member_roles(guild_id, user_id):
     return AuthorRoles(api_get, rest_backing_off, _MEMBER_ROLES).get_roles(guild_id, user_id)
 
 
-def people_match(value, user_id, roles=lambda: set()):
-    return _response_policy().people_match(value, user_id, roles)
-
-
-def who_allows(msg, guild_id, resolved):
-    return _response_policy().who_allows(msg, guild_id, resolved)
-
-
 # user id -> (shares a server with the bot?, checked at), for
 # who.dms_from: shared-servers. Positive answers last an hour, negative
 # ones ten minutes.
@@ -787,16 +766,8 @@ def _admission():
     )
 
 
-def shares_server(user_id):
-    return _SHARED_MEMBERSHIP.contains(user_id)
-
-
 def dm_refusal(author):
     return _admission().dm_refusal(author)
-
-
-def dm_sender_allowed(author):
-    return _admission().dm_sender_allowed(author)
 
 
 def retire_overlay_changes():
@@ -817,10 +788,6 @@ def retire_overlay_changes():
     return len(notes)
 
 
-def dms_enabled():
-    return _admission().dms_enabled()
-
-
 # ---------------------------------------------------------------------------
 # Conversational follow-ups (who.replies: conversational, the default).
 # After the bot's reply to a HUMAN is actually sent in a channel, that
@@ -835,18 +802,6 @@ def dms_enabled():
 # requeues them (a missed follow-up is not a dropped mention).
 # state["follow_up"]: {"<channel>:<user>": time the window opened}
 # ---------------------------------------------------------------------------
-
-
-def addresses_someone_else(msg):
-    return _conversation().addresses_someone_else(msg)
-
-
-def follow_up_open(state, msg):
-    return _conversation().follow_up_open(state, msg)
-
-
-def own_replies_in_run(history, msg):
-    return _conversation().own_replies_in_run(history, msg)
 
 
 def _owner_messenger():
@@ -879,10 +834,6 @@ def _admin_digests():
 
 def notify_owners(text, components=None, flags=None):
     return _owner_messenger().notify(text, components, flags)
-
-
-def dm_owner(uid, payload):
-    return _owner_messenger().dm(uid, payload)
 
 
 # Servers none of the owners is in. A public bot can be
@@ -925,16 +876,8 @@ def mirror_owner_presence(state):
     return _owner_presence().restore(state)
 
 
-def note_guild_join_for_owners(state, gid):
-    return _owner_presence().joined(state, gid)
-
-
-def check_owner_presence(state, guilds, joined=(), every=False):
-    return _owner_presence().check(state, guilds, joined, every)
-
-
 # Servers where an owner spoke since the last check (main loop and the
-# gateway path), folded into state by check_owner_presence.
+# gateway path), folded into state by OwnerPresence.check.
 _OWNER_SPOKE = {}
 
 
@@ -961,10 +904,6 @@ def sync_guilds(state, guilds, channels):
 
 
 _stale_labels = set()
-
-
-def warn_stale_labels():
-    return _guild_lifecycle().warn_labels()
 
 
 def flush_join_notices(state, guilds, channels):
@@ -1130,10 +1069,6 @@ def _directory_name(some_id):
     return _DIRECTORY_VIEW.name(some_id)
 
 
-def admin_digest_text(gid, changes):
-    return _admin_digests().text(gid, changes)
-
-
 def flush_admin_digests(force=False):
     return _admin_digests().flush(force)
 
@@ -1211,29 +1146,13 @@ def _owner_memory():
     )
 
 
-def _meta_owner_dm(meta):
-    return owner_dm_metadata(meta, OWNER_USER_IDS)
-
-
-def is_owner_dm_item(state, mid):
-    return _owner_auth().is_owner_dm_item(state, mid)
-
-
-def owner_dm_channels(state):
-    return _owner_auth().dm_channels(state)
-
-
 def queue_index(state):
     return _queue_files().index(state, OWNER_USER_IDS)
 
 
-# Channels looked up from the API (owner_dm_gate): channel id -> (is a
+# Channels looked up from the API (OwnerAuthorization.gate): channel id -> (is a
 # DM, its recipients). Neither changes; who the owners are can.
 _CHANNEL_LOOKUP = {}
-
-
-def owner_dm_gate(state, item, index=None):
-    return _owner_auth().gate(state, item, index)
 
 
 # ---------------------------------------------------------------------------
@@ -1276,20 +1195,8 @@ _OWNER_ITEMS_WRITTEN = {"body": None}
 # Bare channel names ("post this in announcements") that are never one.
 
 
-def owner_targets(content, guild_id=None):
-    return _owner_targets().resolve(content, guild_id)
-
-
 def note_owner_item(state, mid, dm=False, command=None):
     return _capabilities().note_command(state, mid, dm, command)
-
-
-def owner_items_write(state, check=False):
-    return _capabilities().write_commands(state, check)
-
-
-def owner_items_upkeep(state, queue, now):
-    return _capabilities().upkeep_commands(state, queue, now)
 
 
 # ---------------------------------------------------------------------------
@@ -1315,39 +1222,11 @@ def reply_nonces_write(state, check=False):
     return _capabilities().write_replies(state, check)
 
 
-def reply_nonces_upkeep(state, queued, now):
-    return _capabilities().upkeep_replies(state, queued, now)
-
-
 _COMMANDS: CommandRegistrar
 
 
 def register_commands(gateway_status=None):
     return _COMMANDS.register(gateway_status)
-
-
-def is_mention(msg):
-    return _conversation().is_mention(msg)
-
-
-def trigger_kind(msg, guild_id=None, state=None):
-    """Classify how a server message addresses the bot, with the settings
-    of its scope: "mention" (a platform @mention or a Discord reply to
-    the bot: direct address), "follow_up" (only when state is given: the
-    author's conversational follow-up window in this channel is open), or
-    None. who.replies: off answers nobody; other bots trigger by direct
-    address only, and never under who.bots: ignore; who.allow /
-    who.ignore apply to everyone but the owners. The bot's own messages
-    never trigger."""
-    return trigger_verdict(msg, guild_id, state)[0]
-
-
-def addresses_bot(msg):
-    return _conversation().addresses_bot(msg)
-
-
-def trigger_verdict(msg, guild_id=None, state=None):
-    return _admission().trigger_verdict(msg, guild_id, state)
 
 
 def note_refused(msg, cname, reason):
@@ -1368,10 +1247,6 @@ def note_refused(msg, cname, reason):
         ),
     )
     print(f"Not answering {author.get('username')} in {cname}: {reason}.", flush=True)
-
-
-def is_reply_to_bot(msg):
-    return _conversation().is_reply_to_bot(msg)
 
 
 def get_reply_context(msg):
@@ -1492,24 +1367,12 @@ _typing_sources = {}  # "burst:<key>" / "item:<id>" -> (channel_id, start)
 _typing_last = {}  # channel_id -> time of the last typing ping
 
 
-def typing_clear(keys, sent_in=None):
-    return _typing_service().clear(keys, sent_in)
-
-
 def typing_refresh(state, queue=None):
     return _typing_service().refresh(state, queue)
 
 
 def _typing_thread_main():
     return _typing_service().run()
-
-
-def add_reaction(channel_id, message_id, emoji):
-    return _message_sender().reaction(channel_id, message_id, emoji)
-
-
-def sanitize_reply(text):
-    return reply_formatting.sanitize_reply(text, MAX_REPLY_CHARS)
 
 
 def normalize_parts(item):
@@ -1520,16 +1383,8 @@ def send_fragmented(channel_id, parts, reply_to=None, attachments=(), delivery=N
     return _part_delivery().send(channel_id, parts, reply_to, attachments, delivery)
 
 
-def send_reply_with_files(channel_id, text, files, reply_to=None, delivery=None):
-    return _message_sender().files(channel_id, text, files, reply_to, delivery)
-
-
 def _generated_replies():
     return GeneratedReplies(GENERATED_DIR, time.time)
-
-
-def media_permission(state, scope, here, author_matches):
-    return _response_policy().media_permission(state, scope, here, author_matches)
 
 
 def collect_media(msg):
@@ -1539,10 +1394,6 @@ def collect_media(msg):
 
 def sweep_media():
     media_ingest.sweep_media(MEDIA_DIR)
-
-
-def record_history(state, channel_id, messages):
-    return _conversation().record_history(state, channel_id, messages)
 
 
 # Shared REST/Gateway reception and gap repair.
@@ -1575,20 +1426,8 @@ def check_channel(channel_id, channel_name, state, guild_id=None):
     return _receiver(state).poll_channel(channel_id, channel_name, guild_id)
 
 
-def classify_message(state, msg, channel_name, guild_id=None):
-    return _receiver(state).classify(msg, channel_name, guild_id)
-
-
-def dm_listed_people():
-    return _admission().dm_listed_people()
-
-
 def dm_poll_user_ids():
     return _admission().dm_poll_user_ids()
-
-
-def dm_swept_author(uid):
-    return _admission().dm_swept_author(uid)
 
 
 _DIRECT_MESSAGES: DirectChannels
@@ -1600,18 +1439,6 @@ def list_dm_channels():
 
 def check_dm_channel(dm_id, dm_name, state):
     return _receiver(state).poll_dm(dm_id, dm_name)
-
-
-def bot_run_length(history, msg):
-    return _conversation().bot_run_length(history, msg)
-
-
-def conversation_participants(history, msg, reply_ctx):
-    return _conversation().conversation_participants(history, msg, reply_ctx)
-
-
-def link_mentions(text, channel_id, state):
-    return _conversation().link_mentions(text, channel_id, state)
 
 
 def settings_card(scope, here, channel_id, speaker=None):
@@ -1781,7 +1608,7 @@ def process_outbox(state):
 # place its channel, from item_meta, never from the outbox
 # (watches.requests.WatchRequests). watches.json keeps them across restarts. When a
 # reminder is due, or a watch matches a server message the monitor
-# ingests (classify_message: gateway and poll, once each), watch_tick
+# ingests (ReceivedMessages.classify: gateway and poll, once each), watch_tick
 # queues a "reminder" item (a fire) for the worker. The worker's reply
 # to it is bound to the requester and the place (watches.delivery.WatchDelivery.bind) and may
 # ping the requester only (WatchDelivery.send). A fire is kept in
@@ -1819,10 +1646,6 @@ def _channel_access():
         _CHANNEL_OVERWRITES,
         _WATCH_MEMBERS,
     )
-
-
-def watch_note_guild(gid, gobj):
-    return _channel_access().note_guild(gid, gobj)
 
 
 def watch_perm_event(ev):
@@ -1895,10 +1718,6 @@ def _watch_runtime():
 
 def watch_tick(state, now=None):
     return _watch_runtime().tick(state, now)
-
-
-def watch_fire_upkeep(state, now=None):
-    return _watch_runtime().upkeep(state, now)
 
 
 def watch_scan(msg, guild_id):

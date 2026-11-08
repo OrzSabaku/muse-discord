@@ -123,9 +123,12 @@ class AdmissionPolicy:
         return None
 
     def trigger_verdict(self, msg, guild_id=None, state=None):
-        """trigger_kind plus why: (kind, refusal). refusal is set only when
-        the message addresses the bot directly (addresses_bot) and the
-        settings of its scope decline it; ordinary chatter gets None."""
+        """Return (kind, refusal) under this message's effective settings.
+
+        Kind is mention for direct address, follow_up for conversational
+        participation, or None. Refusal explains declined direct address;
+        ordinary chatter gets no refusal diagnostic.
+        """
         author = _who(msg)
         if author.get("id") == self.response.conversation.bot_id:
             return None, None

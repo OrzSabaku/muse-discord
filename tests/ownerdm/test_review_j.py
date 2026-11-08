@@ -3,7 +3,7 @@ asserts the safe behaviour (each failed on the branch as reviewed).
 Tested elsewhere: a reply_to borrowing another open item, and a 32-hex
 string that is no live nonce going out unaltered (test_replies_bound).
 The owner-tool tests build owner_items.json the way the monitor now
-does, with monitor.owner_targets resolving the owner's words to ids at
+does, with monitor._owner_targets().resolve resolving the owner's words to ids at
 queue time.
 
 Usage: [MUT_DIR=<tree>] python3 tests/ownerdm/test_review_j.py"""
@@ -110,7 +110,7 @@ MON.CHANNELS = {
 def owner_item(content):
     """The record the monitor writes for this owner command, typed in
     CMD_CH of server 5."""
-    channels, post = MON.owner_targets(content, "5")
+    channels, post = MON._owner_targets().resolve(content, "5")
     return {
         ITEM: {
             "nonce": NONCE,

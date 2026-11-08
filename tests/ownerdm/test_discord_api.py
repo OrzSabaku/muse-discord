@@ -95,7 +95,7 @@ SERVER = ("--for", SRV_ITEM, "--nonce", SRV_NONCE)
 def entry(nonce, cid, dm=False, channels=(), post_channels=()):
     """An owner_items.json record, as the monitor writes it: the places
     the owner's own words name, resolved to ids when it was queued
-    (monitor.owner_targets)."""
+    (monitor._owner_targets().resolve)."""
     return {
         "nonce": nonce,
         "channel_id": cid,
