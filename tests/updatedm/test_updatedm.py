@@ -301,7 +301,7 @@ class Interactions(unittest.TestCase):
         for rec in self.recs:
             q.put({"_record": rec})
         with contextlib.redirect_stdout(io.StringIO()):
-            mod.drain_gateway(state, q, {})
+            mod._gateway_ingress(state, {}).drain(q)
         self.assertEqual(state["update_notice"]["choice"]["action"], "later")
         self.assertEqual(state["update_notice"]["choice"]["by"], H.OWNER)
         for _ in range(3):

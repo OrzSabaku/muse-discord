@@ -51,7 +51,7 @@ def rel(t):
 
 
 # --- instrumentation -------------------------------------------------------
-_orig_drain = mod.drain_gateway
+_orig_drain = mod.GatewayIngress.drain
 
 
 def drain(*a, **kw):
@@ -59,7 +59,7 @@ def drain(*a, **kw):
     return _orig_drain(*a, **kw)
 
 
-mod.drain_gateway = drain
+mod.GatewayIngress.drain = drain
 _orig_load_state = mod.load_state
 LIVE = {}  # the main loop's state, for signing outbox items
 

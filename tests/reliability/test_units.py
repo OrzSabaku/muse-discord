@@ -27,7 +27,7 @@ from monitor_harness import (
     sf,
 )
 
-from muse_discord.message_models import Settlement
+from muse_discord.message_models import MessagePlace, Settlement
 
 
 def ledger(mod):
@@ -49,9 +49,7 @@ class F2BurstLedger(unittest.TestCase):
         msgs = [msg("C1", "U1", c, mention=True) for c in contents]
         for m in msgs:
             mod._conversation().record_history(st, "C1", [m])
-        mod.stage_trigger(
-            st, msgs[0], "Srv #general", "mention", place=mod.MessagePlace(guild_id=G1)
-        )
+        mod.stage_trigger(st, msgs[0], "Srv #general", "mention", place=MessagePlace(guild_id=G1))
         for m in msgs[1:]:
             mod._receiver(st).classify(m, "Srv #general", G1)
         q = []
@@ -114,7 +112,7 @@ class F4GuildAllowlist(unittest.TestCase):
         mod.api.routes["/channels/C9"] = {"id": "C9", "guild_id": "G2", "name": "x", "type": 0}
         inbox = pyqueue.Queue()
         inbox.put(msg("C9", "U1", "hi", mention=True, gid="G2", age=0))
-        mentions, _dms = mod.drain_gateway(st, inbox, {})
+        mentions, _dms = mod._gateway_ingress(st, {}).drain(inbox)
         self.assertEqual(mentions, [])
         self.assertFalse(st.get("pending"))
         self.assertNotIn("/channels/C9", mod.api.calls)
@@ -155,7 +153,7 @@ class F6Watermarks(unittest.TestCase):
         inbox = pyqueue.Queue()
         for m in msgs:
             inbox.put(m)
-        men, _ = self.mod.drain_gateway(self.st, inbox, self.mod._DIRECTORY.channels)
+        men, _ = self.mod._gateway_ingress(self.st, self.mod._DIRECTORY.channels).drain(inbox)
         return [m["id"] for m, *_ in men]
 
     def test_gateway_gap_is_repaired_by_poll(self):

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from muse_discord.channel_access import ChannelAccess
 from muse_discord.conversation import PRIVATE_THREAD_TYPE, THREAD_TYPES, _who, channel_display
+from muse_discord.message_models import MessagePlace
 from muse_discord.receiving.messages import CONVERSATION_TYPES, ReceivedMessages
 
 
@@ -36,6 +37,16 @@ class GatewayIngress:
     @property
     def state(self):
         return self.receiver.state
+
+    def consume(self, inbox):
+        """Stage live DMs with guild triggers once the bot's identity is known."""
+        if self.receiver.conversation.bot_id is None:
+            return
+        mentions, dms = self.drain(inbox)
+        if mentions or dms:
+            print(f"Gateway delivered {len(mentions)} mention(s), {len(dms)} DM(s).", flush=True)
+        for msg, cname in dms:
+            self.receiver.bursts.stage(msg, cname, "dm", place=MessagePlace(guild_id=None, dm=True))
 
     def metadata(self, m):
         if "_guild_event" in m:

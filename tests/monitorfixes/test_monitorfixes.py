@@ -270,13 +270,13 @@ class RefusedStaysRefused(Base):
         inbox = queue.Queue()
         inbox.put(dm)
         with quiet():
-            self.assertEqual(m.drain_gateway(self.st, inbox, m._DIRECTORY.channels)[1], [])
+            self.assertEqual(m._gateway_ingress(self.st, m._DIRECTORY.channels).drain(inbox)[1], [])
         self.assertEqual(self.ledger(dm["id"])["status"], "skipped")
         # A stranger's declined DM stays unrecorded.
         stranger = dmsg(U1, "hello", channel="400000000000000078")
         inbox.put(stranger)
         with quiet():
-            m.drain_gateway(self.st, inbox, m._DIRECTORY.channels)
+            m._gateway_ingress(self.st, m._DIRECTORY.channels).drain(inbox)
         self.assertIsNone(self.ledger(stranger["id"]))
         # An owner DM lost while DMs are off is not answered by the sweep
         # either (it used to be: the DM sweep ignored who.replies).
@@ -343,7 +343,7 @@ class NewThreads(Base):
         for msg in msgs:
             inbox.put(msg)
         with quiet():
-            return self.m.drain_gateway(self.st, inbox, self.m._DIRECTORY.channels)[0]
+            return self.m._gateway_ingress(self.st, self.m._DIRECTORY.channels).drain(inbox)[0]
 
     def poll(self, tid):
         with quiet():
@@ -436,7 +436,7 @@ class SystemNotices(Base):
         inbox = queue.Queue()
         inbox.put(pin)
         with quiet():
-            self.assertEqual(m.drain_gateway(self.st, inbox, m._DIRECTORY.channels)[1], [])
+            self.assertEqual(m._gateway_ingress(self.st, m._DIRECTORY.channels).drain(inbox)[1], [])
         m.api.history[DM_CH] = [pin]
         self.assertEqual(self.sweep({}, dms=True), [])
 

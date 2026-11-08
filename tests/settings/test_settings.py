@@ -819,7 +819,7 @@ class Who(MonitorBase):
             inbox = queue.Queue()
             inbox.put(msg)
             with quiet():
-                return m.drain_gateway(self.st, inbox, m._DIRECTORY.channels)[1]
+                return m._gateway_ingress(self.st, m._DIRECTORY.channels).drain(inbox)[1]
 
         stranger = dmsg(U1, "hi bot")
         self.assertEqual(drain(stranger), [])

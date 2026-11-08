@@ -16,6 +16,7 @@ from common import signed
 from harness import ARGV, capture, fresh_pkg, msg, new_state, read, sent_texts, snowflake, write
 from harness import monitor as m
 
+from muse_discord.message_models import MessagePlace
 from muse_discord.outbox_store import OUTBOX_POISON_TRIES
 from muse_discord.reply_delivery import SEND_RETRY_SECS
 from muse_discord.storage import SharedLockTimeout
@@ -164,7 +165,7 @@ class LockTimeout(unittest.TestCase):
             ),
             capture(),
         ):
-            m.stage_trigger(state, incoming, "general", "mention", place=m.MessagePlace("G"))
+            m.stage_trigger(state, incoming, "general", "mention", place=MessagePlace("G"))
             with held_lock(), self.assertRaises(SharedLockTimeout):
                 m._QUEUE_STAGING.stage(state, [])
         restored = read(m.STATE_FILE)
@@ -195,7 +196,7 @@ class LockTimeout(unittest.TestCase):
     def test_startup_continues_with_pending_burst_when_queue_is_locked(self):
         state, incoming = new_state(), msg()
         with capture():
-            m.stage_trigger(state, incoming, "general", "mention", place=m.MessagePlace("G"))
+            m.stage_trigger(state, incoming, "general", "mention", place=MessagePlace("G"))
         inbox, status = object(), {"connected": False}
         with (
             patch.object(m._PROCESS_LOCK, "acquire"),

@@ -32,6 +32,7 @@ from harness import (
     write,
 )
 
+from muse_discord.message_models import MessagePlace
 from muse_discord.messaging import parts as reply_parts
 from muse_discord.messaging.typing import TYPING_EVERY_SECS, TYPING_MAX_SECS
 
@@ -175,7 +176,7 @@ def test_queue_write_no_resurrect_no_drop():
     x, y, w = snowflake(), snowflake(), snowflake()
     write(m.QUEUE_FILE, [qitem(x), qitem(y)])
     trig = msg()
-    m.stage_trigger(st, trig, "S #c", "mention", place=m.MessagePlace(guild_id="G"))
+    m.stage_trigger(st, trig, "S #c", "mention", place=MessagePlace(guild_id="G"))
     st["pending"][next(iter(st["pending"]))]["first_seen"] -= 10
 
     def slow_media(_msg):
@@ -453,10 +454,10 @@ def test_typing_thread_lifecycle():
     try:
         # 1. pending burst types; a burst in enqueue back-off does not
         m.stage_trigger(
-            st, msg(cid="101", author="U1"), "S #a", "mention", place=m.MessagePlace(guild_id="G")
+            st, msg(cid="101", author="U1"), "S #a", "mention", place=MessagePlace(guild_id="G")
         )
         m.stage_trigger(
-            st, msg(cid="103", author="U3"), "S #c", "mention", place=m.MessagePlace(guild_id="G")
+            st, msg(cid="103", author="U3"), "S #c", "mention", place=MessagePlace(guild_id="G")
         )
         st["pending"]["103:U3"]["next_try"] = clock.now + 300
         write(m.QUEUE_FILE, [])
@@ -517,9 +518,9 @@ def _drain(st, inbox_items):
         q.put(it)
     chans = {"101": {"name": "c", "guild_id": "G", "guild_name": "S"}}
     with capture():
-        mentions, _dms = m.drain_gateway(st, q, chans)
+        mentions, _dms = m._gateway_ingress(st, chans).drain(q)
         for mm, cname, gid, kind in mentions:
-            m.stage_trigger(st, mm, cname, kind, place=m.MessagePlace(guild_id=gid))
+            m.stage_trigger(st, mm, cname, kind, place=MessagePlace(guild_id=gid))
     return mentions
 
 
@@ -578,7 +579,7 @@ def _no_gateway_waits_full_window():
     t = msg(author="U1")
     with capture():
         kind = m._receiver(st).classify(t, "S #c", "G")
-        m.stage_trigger(st, t, "S #c", kind, place=m.MessagePlace(guild_id="G"))
+        m.stage_trigger(st, t, "S #c", kind, place=MessagePlace(guild_id="G"))
     entry = st["pending"]["101:U1"]
     entry["first_seen"] -= 4.0
     q = []

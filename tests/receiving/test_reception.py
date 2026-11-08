@@ -1,12 +1,40 @@
 """Gateway and REST repair through independently assembled receiving services."""
 
+import contextlib
+import io
+import queue
 import unittest
 from unittest.mock import Mock
 
 from receiving_harness import drain, environment, message
 
+from muse_discord.conversation import Conversation
+
 
 class Reception(unittest.TestCase):
+    def test_live_dms_wait_for_identity_then_stage_once_as_private_bursts(self):
+        receiver, gateway = environment(Mock())
+        incoming = message("11", dm=True)
+        incoming["author"]["id"] = "300"  # an allowed owner
+        inbox = queue.Queue()
+        inbox.put(incoming)
+        receiver.admission.response.conversation = Conversation(None, None)
+        gateway.consume(inbox)
+        self.assertEqual(inbox.qsize(), 1)
+        self.assertEqual(receiver.state["history"], {})
+        self.assertNotIn("pending", receiver.state)
+        receiver.admission.response.conversation = Conversation("999", "muse")
+        with contextlib.redirect_stdout(io.StringIO()):
+            gateway.consume(inbox)
+            inbox.put(incoming)  # a replay must not add the message twice
+            gateway.consume(inbox)
+        burst = receiver.state["pending"]["200:300"]
+        self.assertEqual(burst["kind"], "dm")
+        self.assertTrue(burst["dm"])
+        self.assertIsNone(burst["guild_id"])
+        self.assertEqual(burst["first_id"], "11")
+        self.assertEqual(burst["fragments"], [])
+
     def test_gateway_replay_is_deduplicated_and_rest_repairs_the_gap(self):
         get = Mock(return_value=[message("13"), message("12"), message("11")])
         receiver, gateway = environment(get)

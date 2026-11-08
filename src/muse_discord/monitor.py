@@ -60,7 +60,6 @@ from muse_discord.interaction_dispatch import (
 from muse_discord.media import collector as media
 from muse_discord.message_ledger import MessageLedger
 from muse_discord.message_models import (
-    MessagePlace,
     QueueContext,
 )
 from muse_discord.message_outcomes import MessageOutcomes
@@ -741,10 +740,6 @@ _GATEWAY: GatewaySession
 PIDFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor.pid")
 
 
-def drain_gateway(state, inbox, channels):
-    return _gateway_ingress(state, channels).drain(inbox)
-
-
 def sweep_mentions(state, queue, channels, dms=True):
     return MentionReconciler(
         admission=_admission(),
@@ -774,23 +769,6 @@ def poll_targets():
         return []
     targets = [("dms",)] if dm_poll_user_ids() else []
     return targets + [("channel", cid) for cid in _DIRECTORY.channels]
-
-
-def _drain_live_messages(state, _gateway_inbox):
-    # Gateway fast path first: messages pushed in realtime are
-    # classified (and triggers staged) like polled ones. Anything
-    # the poll already processed is skipped. Guild join/leave
-    # events ride the same inbox. Waits for the bot's identity,
-    # like the poll.
-    if _IDENTITY.user_id is not None:
-        gw_mentions, gw_dms = drain_gateway(state, _gateway_inbox, _DIRECTORY.channels)
-        if gw_mentions or gw_dms:
-            print(
-                f"Gateway delivered {len(gw_mentions)} mention(s), {len(gw_dms)} DM(s).",
-                flush=True,
-            )
-        for msg, cname in gw_dms:
-            stage_trigger(state, msg, cname, "dm", place=MessagePlace(guild_id=None, dm=True))
 
 
 def _cleanup_cycle(state, cycle_done):
@@ -1137,7 +1115,10 @@ def main():
         now, backing = time.time(), _BACKOFF.active()
         scheduler.begin_tick(now, backing)
         dm_items = []
-        _run_phase("Gateway drain", _drain_live_messages, state, inbox)
+        _run_phase(
+            "Gateway drain",
+            lambda: _gateway_ingress(state, _DIRECTORY.channels).consume(inbox),
+        )
         _run_phase(
             "Settings overlay", _SETTINGS.retire_changes, _OWNER_MESSAGES.notify, _BACKOFF.active
         )
