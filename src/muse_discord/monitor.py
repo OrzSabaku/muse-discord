@@ -71,6 +71,7 @@ from muse_discord.messaging.parts import PartDelivery
 from muse_discord.messaging.sending import MessageSender
 from muse_discord.messaging.typing import TypingIndicators
 from muse_discord.monitor_cli import parse_options
+from muse_discord.monitor_features import NoProactive, NoTelemetry, load_proactive, load_telemetry
 from muse_discord.monitor_health import MonitorHealth, token_rejected_exit
 from muse_discord.monitor_process import MonitorLock
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
@@ -168,29 +169,6 @@ TELEMETRY_ID_FILE = os.path.join(BASE_DIR, "telemetry_id")
 TELEMETRY_WAKES_FILE = os.path.join(BASE_DIR, "telemetry.wakes")
 
 
-class _NoTelemetry:
-    def __getattr__(self, name):
-        return lambda *a, **kw: ""
-
-
-def _import_telemetry():
-    """A telemetry.Recorder; a stand-in that does nothing when
-    telemetry.py cannot be loaded (it never stops the bot)."""
-    try:
-        from muse_discord.settings_presets import PRESETS
-        from muse_discord.telemetry import Recorder
-        from muse_discord.usage_stats.settings_metrics import SettingsMetrics
-
-        return Recorder(
-            lambda: (TELEMETRY_FILE, TELEMETRY_ID_FILE, TELEMETRY_WAKES_FILE),
-            metrics=SettingsMetrics(PRESETS),
-            pkg_dir=BASE_DIR,
-        )
-    except Exception as e:
-        print(f"Telemetry not loaded ({type(e).__name__}); usage counts are off.", flush=True)
-        return _NoTelemetry()
-
-
 # Reaching out on its own, unprompted (proactive.py; docs/PROTOCOL.md,
 # "Unprompted messages"). Off by default; when proactive.py cannot be
 # loaded the bot only replies.
@@ -199,15 +177,7 @@ PROACTIVE_FILE = os.path.join(BASE_DIR, "proactive.json")
 PROACTIVE_NONCE_FILE = os.path.join(BASE_DIR, "proactive_nonce.json")
 
 
-TM = _NoTelemetry()
-
-
-class _NoProactive:
-    def __init__(self):
-        self.store = self.consent = self.policy = self.delivery = self.actions = self
-
-    def __getattr__(self, name):
-        return lambda *a, **kw: None
+TM = NoTelemetry()
 
 
 def _proactive_context():
@@ -246,17 +216,7 @@ def _proactive_context():
     )
 
 
-def _import_proactive():
-    try:
-        from muse_discord.proactive import Proactive
-
-        return Proactive(_proactive_context())
-    except Exception as e:
-        print(f"proactive.py not loaded ({type(e).__name__}); the bot only replies.", flush=True)
-        return _NoProactive()
-
-
-PRO = _NoProactive()
+PRO = NoProactive()
 # Configuration reloads, owner state and edit serialization belong to LiveSettings.
 
 
@@ -1119,8 +1079,8 @@ def _initialize_services():
         now=lambda: time.time(),
     )
     _WATCHES = _create_watches()
-    TM = _import_telemetry()
-    PRO = _import_proactive()
+    TM = load_telemetry(lambda: (TELEMETRY_FILE, TELEMETRY_ID_FILE, TELEMETRY_WAKES_FILE), BASE_DIR)
+    PRO = load_proactive(_proactive_context)
 
 
 def initialize(config_path=None, token_override=None):
