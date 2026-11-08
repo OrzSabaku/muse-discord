@@ -241,7 +241,7 @@ class NeverIdentifying(Base):
             for entry in self.st.get("pending", {}).values():
                 entry["first_seen"] = 0
             q = []
-            m.flush_pending(self.st, q)
+            m._bursts(self.st).flush(q)
             m._queue_files().edit(add=q)
         self.assertEqual([i["message_id"] for i in q], [mention["id"]])
         with open(m.OUTBOX_FILE, "w") as f:

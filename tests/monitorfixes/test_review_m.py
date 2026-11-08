@@ -1,4 +1,4 @@
-"""Review M (lean/core): flush_pending's burst isolation.
+"""Review M (lean/core): PendingBursts.flush isolates bursts.
 
 Usage: [MUT_DIR=<tree>] python3 tests/monitorfixes/test_review_m.py"""
 
@@ -14,14 +14,14 @@ from test_monitorfixes import CH, U1, Base, gmsg, quiet  # noqa: E402
 class PoisonAfterAppend(Base):
     def tick(self):
         """The main loop's staging phase: flush, then write what was
-        appended (only when flush_pending says it queued something)."""
+        appended (only when PendingBursts.flush says it queued something)."""
         for entry in self.st.get("pending", {}).values():
             entry["first_seen"] = 0
         with quiet():
             queue = self.m._queue_files().load()
             n_before = len(queue)
             try:
-                if self.m.flush_pending(self.st, queue):
+                if self.m._bursts(self.st).flush(queue):
                     self.m._queue_files().edit(add=queue[n_before:])
             except Exception:
                 pass  # the main loop logs it and goes on

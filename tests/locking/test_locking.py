@@ -176,7 +176,7 @@ def test_queue_write_no_resurrect_no_drop():
     x, y, w = snowflake(), snowflake(), snowflake()
     write(m.QUEUE_FILE, [qitem(x), qitem(y)])
     trig = msg()
-    m.stage_trigger(st, trig, "S #c", "mention", place=MessagePlace(guild_id="G"))
+    m._bursts(st).stage(trig, "S #c", "mention", place=MessagePlace(guild_id="G"))
     st["pending"][next(iter(st["pending"]))]["first_seen"] -= 10
 
     def slow_media(_msg):
@@ -189,7 +189,7 @@ def test_queue_write_no_resurrect_no_drop():
     queue = m._queue_files().load()
     n_before = len(queue)
     with capture():
-        assert m.flush_pending(st, queue)
+        assert m._bursts(st).flush(queue)
     m._queue_files().edit(add=queue[n_before:])
     m.collect_media = lambda _m: ([], [], [])
     ids = [q["message_id"] for q in read(m.QUEUE_FILE)]
@@ -453,11 +453,11 @@ def test_typing_thread_lifecycle():
 
     try:
         # 1. pending burst types; a burst in enqueue back-off does not
-        m.stage_trigger(
-            st, msg(cid="101", author="U1"), "S #a", "mention", place=MessagePlace(guild_id="G")
+        m._bursts(st).stage(
+            msg(cid="101", author="U1"), "S #a", "mention", place=MessagePlace(guild_id="G")
         )
-        m.stage_trigger(
-            st, msg(cid="103", author="U3"), "S #c", "mention", place=MessagePlace(guild_id="G")
+        m._bursts(st).stage(
+            msg(cid="103", author="U3"), "S #c", "mention", place=MessagePlace(guild_id="G")
         )
         st["pending"]["103:U3"]["next_try"] = clock.now + 300
         write(m.QUEUE_FILE, [])
@@ -520,7 +520,7 @@ def _drain(st, inbox_items):
     with capture():
         mentions, _dms = m._gateway_ingress(st, chans).drain(q)
         for mm, cname, gid, kind in mentions:
-            m.stage_trigger(st, mm, cname, kind, place=MessagePlace(guild_id=gid))
+            m._bursts(st).stage(mm, cname, kind, place=MessagePlace(guild_id=gid))
     return mentions
 
 
@@ -532,10 +532,10 @@ def _early_flush_on_typing_stop():
     _drain(st, [{"_typing": {"channel_id": "101", "user_id": "U1"}}, t])
     q = []
     with capture():
-        assert not m.flush_pending(st, q)  # too soon (< 1.5s)
+        assert not m._bursts(st).flush(q)  # too soon (< 1.5s)
     m._ACTIVITY.entries["101:U1"]["msg_at"] -= 1.6
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
     assert q[0]["message_id"] == t["id"]
 
 
@@ -547,17 +547,17 @@ def _typing_after_message_holds_then_max_wait():
     m._ACTIVITY.entries["101:U1"]["msg_at"] -= 3
     q = []
     with capture():
-        assert not m.flush_pending(st, q)  # still typing
+        assert not m._bursts(st).flush(q)  # still typing
     # a follow-up fragment arrives, then they stop typing
     f = msg(author="U1", content="and also", mention=False)
     _drain(st, [f])
     entry = st["pending"]["101:U1"]
     assert [x["id"] for x in entry["fragments"]] == [f["id"]]
     with capture():
-        assert not m.flush_pending(st, q)
+        assert not m._bursts(st).flush(q)
     m._ACTIVITY.entries["101:U1"]["msg_at"] -= 1.6
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
     assert q[0]["burst_fragments"][0]["message_id"] == f["id"]
     # typing never stops: the window is the maximum wait
     t2 = msg(author="U2")
@@ -565,10 +565,10 @@ def _typing_after_message_holds_then_max_wait():
     m._ACTIVITY.entries["101:U2"]["msg_at"] -= 4.9
     st["pending"]["101:U2"]["first_seen"] -= 4.9
     with capture():
-        assert not m.flush_pending(st, q)
+        assert not m._bursts(st).flush(q)
     st["pending"]["101:U2"]["first_seen"] -= 0.2
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
 
 
 def _no_gateway_waits_full_window():
@@ -579,15 +579,15 @@ def _no_gateway_waits_full_window():
     t = msg(author="U1")
     with capture():
         kind = m._receiver(st).classify(t, "S #c", "G")
-        m.stage_trigger(st, t, "S #c", kind, place=MessagePlace(guild_id="G"))
+        m._bursts(st).stage(t, "S #c", kind, place=MessagePlace(guild_id="G"))
     entry = st["pending"]["101:U1"]
     entry["first_seen"] -= 4.0
     q = []
     with capture():
-        assert not m.flush_pending(st, q)
+        assert not m._bursts(st).flush(q)
     entry["first_seen"] -= 1.1
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
 
 
 def _bot_author_longer_quiet():
@@ -599,10 +599,10 @@ def _bot_author_longer_quiet():
     m._ACTIVITY.entries["101:B1"]["msg_at"] -= 2
     q = []
     with capture():
-        assert not m.flush_pending(st, q)
+        assert not m._bursts(st).flush(q)
     m._ACTIVITY.entries["101:B1"]["msg_at"] -= 3.1
     with capture():
-        assert m.flush_pending(st, q)
+        assert m._bursts(st).flush(q)
 
 
 def test_burst_windows():

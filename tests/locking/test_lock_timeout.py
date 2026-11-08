@@ -165,7 +165,7 @@ class LockTimeout(unittest.TestCase):
             ),
             capture(),
         ):
-            m.stage_trigger(state, incoming, "general", "mention", place=MessagePlace("G"))
+            m._bursts(state).stage(incoming, "general", "mention", place=MessagePlace("G"))
             with held_lock(), self.assertRaises(SharedLockTimeout):
                 m._QUEUE_STAGING.stage(state, [])
         restored = read(m.STATE_FILE)
@@ -196,7 +196,7 @@ class LockTimeout(unittest.TestCase):
     def test_startup_continues_with_pending_burst_when_queue_is_locked(self):
         state, incoming = new_state(), msg()
         with capture():
-            m.stage_trigger(state, incoming, "general", "mention", place=MessagePlace("G"))
+            m._bursts(state).stage(incoming, "general", "mention", place=MessagePlace("G"))
         inbox, status = object(), {"connected": False}
         with (
             patch.object(m._PROCESS_LOCK, "acquire"),

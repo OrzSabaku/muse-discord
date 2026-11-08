@@ -167,9 +167,8 @@ TELEMETRY_ID_FILE = os.path.join(BASE_DIR, "telemetry_id")
 TELEMETRY_WAKES_FILE = os.path.join(BASE_DIR, "telemetry.wakes")
 
 
-# Reaching out on its own, unprompted (proactive.py; docs/PROTOCOL.md,
-# "Unprompted messages"). Off by default; when proactive.py cannot be
-# loaded the bot only replies.
+# Unprompted messages (proactive package; docs/PROTOCOL.md). Off by default;
+# when the feature cannot be loaded, the bot only replies.
 PROACTIVE_FILE = os.path.join(BASE_DIR, "proactive.json")
 # The live heartbeat slot's nonce, for the wake hook only (mode 600).
 PROACTIVE_NONCE_FILE = os.path.join(BASE_DIR, "proactive_nonce.json")
@@ -389,7 +388,6 @@ def _response_policy():
 
 
 _DISCOVERY_REFRESH: DiscoveryRefresh
-# channel id -> its category id (from discovery), for category settings.
 
 
 _SHARED_MEMBERSHIP: SharedServers
@@ -434,8 +432,6 @@ def telemetry_notice():
         _OWNER_MESSAGES.notify(text)
 
 
-_INTERACTIONS: InteractionRouter
-_INTERACTION_RESPONDER: InteractionResponder
 _INTERACTION_WORKER: InteractionWorker
 
 
@@ -520,20 +516,12 @@ def _bursts(state):
     )
 
 
-def stage_trigger(state, msg, cname, kind, place=None):
-    return _bursts(state).stage(msg, cname, kind, place)
-
-
 def note_activity(channel_id, user_id, msg_id=None):
     _ACTIVITY.note(channel_id, user_id, msg_id, now=time.time())
 
 
 def pending_wait(state, now):
     return _bursts(state).wait(now)
-
-
-def flush_pending(state, queue, force=False):
-    return _bursts(state).flush(queue, force)
 
 
 _SENDER: MessageSender
@@ -946,7 +934,7 @@ def _initialize_services():
     global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCHES
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
-    global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTIONS, _INTERACTION_RESPONDER, _INTERACTION_WORKER
+    global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTION_WORKER
     _STATE_STORE = StateFile(lambda: STATE_FILE)
     _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
     _BACKOFF = RestBackoff(
@@ -1018,16 +1006,15 @@ def _initialize_services():
         lambda since: _OUTBOX.waiting(since),
         _BACKOFF.active,
     )
-    _INTERACTIONS = InteractionRouter(lambda: _SETTINGS.owners)
-    _INTERACTIONS.register("mdupd", _UPDATE_NOTICES.on_button)
-    _INTERACTIONS.register("mdhold", _REVIEW.on_button)
-    _INTERACTIONS.register(
+    interactions = InteractionRouter(lambda: _SETTINGS.owners)
+    interactions.register("mdupd", _UPDATE_NOTICES.on_button)
+    interactions.register("mdhold", _REVIEW.on_button)
+    interactions.register(
         "mdpro",
         lambda ix, rest, uid, record: PRO.consent.on_button(ix, rest, uid, record),
         owner_only=False,
     )
-    _INTERACTION_RESPONDER = InteractionResponder(_DISCORD)
-    _INTERACTION_WORKER = InteractionWorker(_INTERACTIONS, _INTERACTION_RESPONDER)
+    _INTERACTION_WORKER = InteractionWorker(interactions, InteractionResponder(_DISCORD))
     _ACTIVITY = GatewayActivity()
     _DISCOVERY_REFRESH = DiscoveryRefresh()
     _SHARED_MEMBERSHIP = SharedServers(

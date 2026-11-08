@@ -96,13 +96,13 @@ class Base(unittest.TestCase):
         return kind, buf.getvalue()
 
     def flush(self, force=False):
-        """flush_pending; unforced, every staged burst counts as matured
+        """Flush pending bursts; unforced, every staged burst counts as matured
         (its coalesce window over), as in the main loop."""
         for entry in self.st.get("pending", {}).values():
             entry["first_seen"] = 0
         q = []
         with quiet() as buf:
-            self.m.flush_pending(self.st, q, force=force)
+            self.m._bursts(self.st).flush(q, force=force)
         return q, buf.getvalue()
 
     def sweep(self, channels=None, dms=False):

@@ -718,7 +718,7 @@ class NeverShare(MonitorBase):
             "member": {"user": {"id": uid}},
             "message": {"content": "Held a reply"},
         }
-        resp = self.m._INTERACTIONS.dispatch(ix, recs.append)
+        resp = self.m._INTERACTION_WORKER.router.dispatch(ix, recs.append)
         return resp, recs
 
     def test_hold_buttons_send_anyway(self):
@@ -1026,7 +1026,7 @@ class FollowUps(MonitorBase):
             m._receiver(self.st).stage(first, "#c", G1, kind)
             self.assertIsNone(m._receiver(self.st).classify(gmsg(U1, "and another"), "#c", G1))
             q = []
-            m.flush_pending(self.st, q, force=True)
+            m._bursts(self.st).flush(q, force=True)
         self.assertEqual(len(q), 1)
         self.assertTrue(q[0]["follow_up"])
         self.assertTrue(q[0]["burst"])
@@ -1039,7 +1039,7 @@ class FollowUps(MonitorBase):
             m._receiver(self.st).stage(first, "#c", G1, kind)
             m._receiver(self.st).classify(gmsg(U1, "@muse hm", mention=True), "#c", G1)
             q = []
-            m.flush_pending(self.st, q, force=True)
+            m._bursts(self.st).flush(q, force=True)
         self.assertFalse(q[0]["follow_up"])
         self.assertEqual(m._LEDGER.load()["entries"][first["id"]]["status"], "queued")
 

@@ -90,7 +90,7 @@ class Outbox(tb.Base):
                 "ok",  # file name
                 [("/x", TOKEN + ".png")],
             ),
-            lambda: m._INTERACTION_RESPONDER.send(
+            lambda: m._INTERACTION_WORKER.responder.send(
                 {"id": "1", "token": "t"}, {"type": 4, "data": {"content": TOKEN}}
             ),
         ]

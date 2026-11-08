@@ -254,7 +254,7 @@ class Base(unittest.TestCase):
             "message": {"content": "question"},
         }
         with quiet() as buf:
-            r = self.m._INTERACTIONS.dispatch(ix, recs.append)
+            r = self.m._INTERACTION_WORKER.router.dispatch(ix, recs.append)
             for rec in recs:
                 self.m._gateway_ingress(self.st, self.m._DIRECTORY.channels).metadata(
                     {"_record": rec}

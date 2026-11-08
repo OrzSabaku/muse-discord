@@ -49,11 +49,11 @@ class F2BurstLedger(unittest.TestCase):
         msgs = [msg("C1", "U1", c, mention=True) for c in contents]
         for m in msgs:
             mod._conversation().record_history(st, "C1", [m])
-        mod.stage_trigger(st, msgs[0], "Srv #general", "mention", place=MessagePlace(guild_id=G1))
+        mod._bursts(st).stage(msgs[0], "Srv #general", "mention", place=MessagePlace(guild_id=G1))
         for m in msgs[1:]:
             mod._receiver(st).classify(m, "Srv #general", G1)
         q = []
-        mod.flush_pending(st, q, force=True)
+        mod._bursts(st).flush(q, force=True)
         return msgs, q
 
     def _sweep(self, mod, st, msgs):
