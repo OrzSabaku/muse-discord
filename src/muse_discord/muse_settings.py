@@ -35,7 +35,6 @@ import os
 import re
 import secrets
 import shutil
-import tempfile
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -65,6 +64,7 @@ from muse_discord.settings_display import (
 from muse_discord.settings_schema import CORE, CORE_GROUPS, TOP, EngineSettings
 from muse_discord.settings_schema import NOTES_MAX as NOTES_MAX
 from muse_discord.settings_schema import PRESENCE_KINDS as PRESENCE_KINDS
+from muse_discord.storage import atomic_write_text as atomic_write_text
 
 PAIR_LENGTH = 2
 
@@ -867,26 +867,6 @@ OVERLAY_HEADER = (
     "# and the file wins again. `bin/settings.py fold` copies these into\n"
     "# config.yaml.\n"
 )
-
-
-def atomic_write_text(path, text):
-    try:
-        mode = os.stat(path).st_mode & 0o777
-    except OSError:
-        mode = 0o600
-    d = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(dir=d, prefix="." + os.path.basename(path) + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            os.fchmod(f.fileno(), mode)
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())  # never an empty file after a crash
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
 
 
 def _write_overlay_doc(path, doc):

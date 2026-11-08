@@ -8,6 +8,8 @@
 | 処理 | 主な実装 |
 | --- | --- |
 | 受信・キュー・返信・認可 | `src/muse_discord/monitor.py` |
+| 段階間で受け渡すメッセージの型 | `src/muse_discord/message_models.py` |
+| ファイル排他・原子的な保存 | `src/muse_discord/storage.py` |
 | 監視入力の型・検証 | `src/muse_discord/muse_watches.py`（Pydantic） |
 | Discordの権限計算 | `src/muse_discord/discord_permissions.py`（discord.py） |
 | 設定の型・検証 | `src/muse_discord/settings_schema.py`（Pydantic） |

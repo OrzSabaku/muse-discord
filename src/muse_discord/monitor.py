@@ -53,7 +53,6 @@ import secrets
 import socket
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -62,7 +61,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import Any, Protocol, cast, override
+from typing import Protocol, cast, override
 
 try:
     import yaml  # noqa: F401 (muse_settings needs it)
@@ -73,7 +72,7 @@ except ImportError:
 
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
-from muse_discord import reply_protocol
+from muse_discord import reply_protocol, storage
 from muse_discord import secret_scan as SCAN
 from muse_discord.message_models import (
     DISCORD_MAX_CHARS,
@@ -88,6 +87,8 @@ from muse_discord.message_models import (
 )
 from muse_discord.paths import project_root
 from muse_discord.reply_protocol import is_snowflake as _is_snowflake
+from muse_discord.storage import SharedLockTimeout, atomic_write
+from muse_discord.storage import read_json as _read_json
 
 CONFIG_PATH_ARGUMENT = 2
 PRIVATE_THREAD_TYPE = 12
@@ -1117,65 +1118,9 @@ def api_patch(path, data):
     return _api_send("PATCH", path, data)
 
 
-def atomic_write(path, obj, mode=None, text=None):
-    """Write JSON (obj, or text already serialized) to path via a unique
-    temp file and a rename (two writers on one fixed "<path>.tmp" could
-    rename each other's half-written file into place). The file keeps its
-    mode unless mode is given."""
-    if text is None:
-        text = json.dumps(obj)
-    if mode is None:
-        try:
-            mode = os.stat(path).st_mode & 0o777
-        except OSError:
-            mode = 0o644
-    fd, tmp = tempfile.mkstemp(
-        dir=os.path.dirname(path) or ".", prefix="." + os.path.basename(path) + ".", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w") as f:
-            os.fchmod(f.fileno(), mode)
-            f.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
-
-
 # Bound contention without bypassing mutual exclusion. The main loop retries
 # deferred work after the holder releases the lock.
 LOCK_WAIT_SECS = 20
-
-
-class SharedLockTimeout(TimeoutError):
-    """The queue/outbox writer must defer its work; it never acquired the lock."""
-
-
-@contextlib.contextmanager
-def shared_lock():
-    """Hold the exclusive flock on LOCK_FILE: the lock both the monitor
-    and the worker take around every read-modify-write of the queue and
-    the outbox. Inside it, re-read the file, apply only your own change,
-    and write it back atomically; never write a copy read earlier. Not
-    reentrant: never nest it. Never hold it across network calls."""
-    fd = os.open(LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o644)
-    try:
-        deadline = time.monotonic() + LOCK_WAIT_SECS
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise SharedLockTimeout(
-                        f"{os.path.basename(LOCK_FILE)} is busy; write deferred after "
-                        f"{LOCK_WAIT_SECS}s"
-                    ) from None
-                time.sleep(0.05)
-        yield
-    finally:
-        os.close(fd)  # closing the descriptor releases the flock
 
 
 def _keep_last(d, n):
@@ -1184,27 +1129,14 @@ def _keep_last(d, n):
         del d[k]
 
 
-def _read_json(path, kind: type = dict) -> Any:
-    """path's JSON: an empty `kind` when the file is missing, None when it
-    is unreadable or not a `kind` (dict or list)."""
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except FileNotFoundError:
-        return kind()
-    except OSError, ValueError:
-        return None
-    return data if isinstance(data, kind) else None
+def shared_lock():
+    """Acquire the configured queue/outbox lock; never hold it across network calls."""
+    return storage.shared_lock(LOCK_FILE, LOCK_WAIT_SECS)
 
 
 def load_queue():
-    """The queue as it is on disk now (a snapshot: writes are atomic
-    renames, so reading needs no lock)."""
-    if not os.path.exists(QUEUE_FILE):
-        return []
-    with open(QUEUE_FILE) as f:
-        queue = json.load(f)
-    return queue if isinstance(queue, list) else []
+    """Read the shared queue snapshot without initializing any other service."""
+    return storage.load_queue(QUEUE_FILE)
 
 
 def _queue_apply(add=(), drop=None):
