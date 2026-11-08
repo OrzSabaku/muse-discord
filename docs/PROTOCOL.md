@@ -9,6 +9,10 @@
 | --- | --- |
 | REST巡回・時間配分・定期ジョブの実行管理 | `src/muse_discord/rest_scheduler.py` |
 | 起動・イベント処理・各機能の接続 | `src/muse_discord/monitor.py` |
+| 匿名利用統計の公開API | `src/muse_discord/telemetry.py` |
+| 匿名レポートの項目選別・集計 | `src/muse_discord/usage_stats/payload.py` |
+| 設定からの列挙値・変更件数の抽出 | `src/muse_discord/usage_stats/settings_metrics.py` |
+| 利用統計の保存・ID・送信・日次制御 | `src/muse_discord/usage_stats/storage.py`・`transport.py`・`recorder.py` |
 | ワーカー向けの返信先・文脈・設定カードの作成 | `src/muse_discord/worker_context.py` |
 | チャンネル・サーバー・探索メタデータの共有状態 | `src/muse_discord/directory/state.py` |
 | チャンネル・スレッド探索結果の採用と公開 | `src/muse_discord/directory/refresh.py` |
@@ -227,3 +231,5 @@ node --test telemetry/worker/test/worker.test.js
 チャンネル権限のキャッシュはプロセス内で一つの `ChannelAccess`、投稿者ロールのキャッシュは `AuthorRoles` が保持する。両者の失敗時の扱いは混ぜない。通知の候補・再試行時刻・Web確認の公開キャッシュは `WatchState` にまとめる。通知ストアは保存先の提供関数を受け取り、保存先が変わると読み込みキャッシュとロック先も切り替える。既存の辞書を参照するサービスがあるため、一覧の更新には `DirectoryState.adopt()` を使う。
 
 設定画面の `Screen` はDiscord SDKから独立し、下書き・同時編集の検知・権限確認・保存と取り消しの判断を持つ。ネイティブ部品はクライアントの `settings_redraw` コールバックへ再描画を依頼し、部品と描画処理を循環参照させない。外部からの受付は応答を保留してからファイル操作を行い、描画前には改めて最新の権限と設定を確認する。
+
+利用統計の中核は標準ライブラリだけで読み込める。設定との接続は `SettingsMetricsSource` の集計と列挙値抽出だけに絞り、設定モジュール全体を渡さない。送信する項目の選別は `usage_stats.payload.build_payload` に集約し、設定・本文・IDなどの生データを追加の送信経路へ渡さない。スナップショットとインストールIDは共通のatomic writerを600権限で使う。
