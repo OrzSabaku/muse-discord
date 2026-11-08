@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 
 FOLLOW_UP_WINDOW_SECS = 120
+HISTORY_ATTACHED = 8
 HISTORY_PER_CHANNEL = 12
 HISTORY_TEXT_CHARS = 300
 
@@ -224,3 +225,11 @@ class Conversation:
             re.IGNORECASE,
         )
         return pattern.sub(lambda m: f"<@{names[m.group(1).lower()]}>", text)
+
+
+def channel_display(info):
+    return "{} #{}".format(info.get("guild_name", "?"), info.get("name", "?"))
+
+
+def msg_link(gid, cid, mid):
+    return f"https://discord.com/channels/{gid or '@me'}/{cid}/{mid}"

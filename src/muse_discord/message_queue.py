@@ -52,3 +52,13 @@ class QueueFiles:
         of items appended."""
         with self.lock():
             return self.apply_locked(add, drop)
+
+
+def owner_dm_metadata(meta, owners):
+    """item_meta says this item is an owner's own DM (an older record
+    without the owner_dm flag: judged from its fields, failing closed)."""
+    if not isinstance(meta, dict):
+        return False
+    if "owner_dm" in meta:
+        return bool(meta["owner_dm"])
+    return bool(meta.get("dm")) and str(meta.get("author_id")) in owners

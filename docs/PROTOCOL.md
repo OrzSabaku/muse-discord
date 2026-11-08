@@ -18,7 +18,9 @@
 | 受信添付の取得・文書抽出・動画フレーム抽出 | `src/muse_discord/media_ingest.py` |
 | 生成添付のパス検証・圧縮・期限切れ削除 | `src/muse_discord/generated_media.py` |
 | ファイル排他・原子的な保存 | `src/muse_discord/storage.py` |
+| 通知の権限・登録・発火・復旧・送信先 | `src/muse_discord/watches/` |
 | 監視入力の型・検証 | `src/muse_discord/muse_watches.py`（Pydantic） |
+| チャンネルの閲覧権限・メンバー取得キャッシュ | `src/muse_discord/channel_access.py` |
 | Discordの権限計算 | `src/muse_discord/discord_permissions.py`（discord.py） |
 | 設定の型・検証 | `src/muse_discord/settings_schema.py`（Pydantic） |
 | Discord HTTP通信 | `src/muse_discord/discord_rest.py`（discord.py） |
@@ -92,6 +94,7 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 受信・返信の各段階は、検証済みの入力と処理結果を値として渡す。前のメソッドによる属性の追加を前提にしない。
 受信項目の組み立ては `ingest`、返信の処理順は `reply_delivery`、取得・復旧・確定のトランザクションは `outbox_store` が持つ。これらからモニターをimportしない。
 応答ポリシーは設定と所有者の取得関数を受け取り、再読み込み後も同じポリシーの呼び出しに反映する。
+通知の登録と対象者判定は `watches.requests`・`watches.audience`、発火と復旧は `watches.runtime` が持つ。閲覧権限の確認は保存ロックの前、キュー登録は保存後に行う。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

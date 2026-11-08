@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from muse_discord import muse_settings as MS
-from muse_discord.conversation import Conversation, _snowflake_ts
+from muse_discord.conversation import Conversation, _snowflake_ts, _who
 
 
 def _iso_ts(iso):
@@ -219,3 +219,21 @@ class ResponsePolicy:
             return True
         want = {v[5:] for v in value if v.startswith("role:")}
         return bool(want and want & set(roles()))
+
+    def who_allows(self, msg, guild_id, resolved):
+        """who.allow / who.ignore for a message's author (owners always
+        pass; ignore wins over allow)."""
+        author = _who(msg)
+        uid = str(author.get("id") or "")
+        if uid in self.owners:
+            return True
+
+        def roles():
+            member = msg.get("member") or {}
+            if "roles" in member:
+                return set(member.get("roles") or [])
+            return self.member_roles(guild_id, uid)
+
+        if self.people_match(resolved["who.ignore"], uid, roles):
+            return False
+        return self.people_match(resolved["who.allow"], uid, roles)

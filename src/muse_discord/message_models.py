@@ -104,3 +104,6 @@ class Settlement:
     reason: str = ""
     replied: bool = False
     detail: dict | None = None
+
+
+LEDGER_TERMINAL = ("replied", "quarantined", "skipped")

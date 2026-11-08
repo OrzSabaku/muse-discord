@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
+from muse_discord.conversation import HISTORY_ATTACHED
 from muse_discord.message_models import (
     LedgerContext,
     MessageMedia,
@@ -18,8 +19,6 @@ from muse_discord.message_models import (
     Speaker,
 )
 from muse_discord.muse_settings import Scope, Settings
-
-HISTORY_ATTACHED = 8
 
 
 class IngestPolicy(Protocol):
