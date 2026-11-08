@@ -85,7 +85,7 @@ class ProactiveContext:
 
     path: Callable[[], str]
     nonce_path: Callable[[], str]
-    bot_ids: Callable[[], tuple[str | None, str | None]]
+    bot_id: Callable[[], str | None]
     owners: Callable[[], set[str]]
     channels: Callable[[], dict]
     dm_channels: Callable[[], dict]

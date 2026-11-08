@@ -28,7 +28,7 @@ with contextlib.redirect_stdout(io.StringIO()):
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     m.initialize(token_override="dummy-token")
-m.BOT_ID = m.BOT_USER_ID = "999"
+m._IDENTITY.user_id = "999"
 m.api_get = lambda path: (_ for _ in ()).throw(AssertionError(path))
 st = {"last_seen": {}, "replied_to": [], "history": {},
       "rate": {"day": "", "day_count": 0, "users": {}},

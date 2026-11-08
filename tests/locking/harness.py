@@ -97,8 +97,8 @@ def fresh_pkg():
     monitor._TYPING.last.clear()
     monitor._ACTIVITY.clear()
     monitor._BACKOFF.until = 0.0
-    monitor.BOT_ID = monitor.BOT_USER_ID = "999"
-    monitor.BOT_NAME = "pip"
+    monitor._IDENTITY.user_id = "999"
+    monitor._IDENTITY.name = "pip"
     return d
 
 

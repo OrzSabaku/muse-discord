@@ -19,7 +19,7 @@ from common import scratch  # noqa: E402
 tmp = scratch("muse-plumb-main-")
 mod = H.load_monitor(tmp)
 mod.api.routes["/users/@me"] = {"id": H.BOT, "username": "musebot"}
-mod.BOT_ID = mod.BOT_USER_ID = None
+mod._IDENTITY.user_id = None
 mod.discover_channels = lambda previous=None: (
     {"C1": H.chan()},
     {H.G1: {"name": "Srv", "system_channel_id": None, "joined_at": None}},

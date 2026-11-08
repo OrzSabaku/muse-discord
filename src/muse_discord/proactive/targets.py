@@ -122,10 +122,7 @@ class TargetPolicy:
 
     def is_bot_msg(self, h):
         """This bot's own message."""
-        return str(h.get("author_id")) in (
-            str(self.context.bot_ids()[1]),
-            str(self.context.bot_ids()[0]),
-        )
+        return str(h.get("author_id")) == str(self.context.bot_id())
 
     def human(self, h):
         """A person's message: not this bot, another bot or a webhook."""

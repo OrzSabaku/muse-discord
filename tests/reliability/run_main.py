@@ -60,7 +60,7 @@ def counting_sm():
 mod.sweep_media = counting_sm
 me = {"id": BOT, "username": "musebot"}
 mod.api.routes["/users/@me"] = me
-mod.BOT_ID = mod.BOT_USER_ID = None  # main() fetches it
+mod._IDENTITY.user_id = None  # main() fetches it
 until = None  # () -> True once the scenario has seen enough
 one_channel = ({"C1": chan()}, {G1: {"name": "Srv", "system_channel_id": None, "joined_at": None}})
 
@@ -131,7 +131,7 @@ elif scenario == "ready_identity":
         status["wake"].set()
 
     gw_action["fn"] = act
-    until = lambda: mod.BOT_USER_ID  # noqa: E731
+    until = lambda: mod._IDENTITY.user_id  # noqa: E731
 elif scenario == "batch_fold":
     mod.discover_channels = lambda previous=None: one_channel
     m0 = msg("C1", "U2", "earlier", age=60)

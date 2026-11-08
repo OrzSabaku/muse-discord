@@ -136,8 +136,8 @@ def load_monitor(cfg_text, tmp=None, channels=True):
     mod.api_post = api.post
     mod._TYPING.send = lambda cid: None
     mod.collect_media = lambda m: ([], [], [])
-    mod.BOT_ID = mod.BOT_USER_ID = BOT
-    mod.BOT_NAME = "muse"
+    mod._IDENTITY.user_id = BOT
+    mod._IDENTITY.name = "muse"
     mod.cfg_path = cfg
     mod.tmp = tmp
     if channels:

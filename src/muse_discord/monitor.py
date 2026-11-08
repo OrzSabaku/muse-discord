@@ -42,7 +42,6 @@ import os
 import sys
 import threading
 import time
-from http import HTTPStatus
 
 try:
     import yaml  # noqa: F401 (muse_settings needs it)
@@ -54,6 +53,7 @@ except ImportError:
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord.admission import AdmissionPolicy, SharedServers
+from muse_discord.bot_identity import BotIdentity
 from muse_discord.bursts import (
     BurstEffects,
     CoalescePolicy,
@@ -251,7 +251,7 @@ def _proactive_context():
     return ProactiveContext(
         path=lambda: PROACTIVE_FILE,
         nonce_path=lambda: PROACTIVE_NONCE_FILE,
-        bot_ids=lambda: (BOT_ID, BOT_USER_ID),
+        bot_id=lambda: _IDENTITY.user_id,
         owners=lambda: _SETTINGS.owners,
         channels=lambda: _DIRECTORY.channels,
         dm_channels=lambda: _DIRECT_MESSAGES.names,
@@ -310,7 +310,7 @@ RESPOND_TO = {"mention", "reply_to_bot"}
 
 
 def _conversation():
-    return Conversation(BOT_ID, BOT_NAME, TREAT_AS_HUMAN, frozenset(RESPOND_TO))
+    return Conversation(_IDENTITY.user_id, _IDENTITY.name, TREAT_AS_HUMAN, frozenset(RESPOND_TO))
 
 
 def is_bot_author(author):
@@ -341,10 +341,7 @@ def _load_token(initial_settings):
 
 # The bot's own identity, fetched at startup. Used to recognize mentions,
 # skip the bot's own messages, and compute its channel permissions.
-# BOT_USER_ID is the same id (proactive.py reads it).
-BOT_ID = None
-BOT_NAME = None
-BOT_USER_ID = None
+_IDENTITY: BotIdentity
 
 # Generated media: when the media settings grant permission on a queue
 # item (media_permission), the worker may write generated files into
@@ -391,7 +388,7 @@ def _discovery():
     return Discovery(
         api_get,
         rest_backing_off,
-        lambda: BOT_ID,
+        lambda: _IDENTITY.user_id,
         GUILD_ALLOWLIST,
         _DIRECTORY,
         _ACCESS,
@@ -835,7 +832,7 @@ def settings_context():
             lambda: _WATCH_STORE.read()["fired"],
         ),
         admin_change=_ADMIN_DIGESTS.note,
-        bot_id=str(BOT_ID or ""),
+        bot_id=str(_IDENTITY.user_id or ""),
         now=time.time(),
     )
 
@@ -1230,17 +1227,10 @@ def sweep_mentions(state, queue, channels, dms=True):
 def poll_targets():
     """The targets of one rotation. Empty until the bot knows its own id:
     nothing can be classified before that, so watermarks stay put."""
-    if BOT_USER_ID is None:
+    if _IDENTITY.user_id is None:
         return []
     targets = [("dms",)] if dm_poll_user_ids() else []
     return targets + [("channel", cid) for cid in _DIRECTORY.channels]
-
-
-def _adopt_identity(me, how=""):
-    global BOT_ID, BOT_USER_ID, BOT_NAME
-    BOT_ID = BOT_USER_ID = me.get("id")
-    BOT_NAME = me.get("username")
-    print(f"Bot user id: {BOT_ID}{how}", flush=True)
 
 
 def _drain_live_messages(state, _gateway_inbox):
@@ -1249,7 +1239,7 @@ def _drain_live_messages(state, _gateway_inbox):
     # the poll already processed is skipped. Guild join/leave
     # events ride the same inbox. Waits for the bot's identity,
     # like the poll.
-    if BOT_USER_ID is not None:
+    if _IDENTITY.user_id is not None:
         gw_mentions, gw_dms = drain_gateway(state, _gateway_inbox, _DIRECTORY.channels)
         if gw_mentions or gw_dms:
             print(
@@ -1258,17 +1248,6 @@ def _drain_live_messages(state, _gateway_inbox):
             )
         for msg, cname in gw_dms:
             stage_trigger(state, msg, cname, "dm", place=MessagePlace(guild_id=None, dm=True))
-
-
-def _retry_cycle_identity(cycle_done):
-    if cycle_done:
-        _BACKOFF.clean_cycle()
-        if BOT_USER_ID is None:
-            try:
-                _adopt_identity(api_get("/users/@me"), " (recovered in-loop)")
-            except Exception as e:
-                if getattr(e, "code", None) == HTTPStatus.UNAUTHORIZED:
-                    token_rejected_exit("401 from /users/@me")
 
 
 def _cleanup_cycle(state, cycle_done):
@@ -1295,7 +1274,7 @@ def _rest_scheduler():
             RestClock(time.time, rest_backing_off),
             RestOperations(
                 lambda: _DIRECTORY.channels,
-                lambda: BOT_USER_ID is not None,
+                lambda: _IDENTITY.user_id is not None,
                 poll_targets,
                 list_dm_channels,
                 check_dm_channel,
@@ -1347,28 +1326,8 @@ def _start_monitor():
     _PROCESS_LOCK.acquire()
     TM.start()
     touch_heartbeat()
-    # Identity first, discovery second: the watchdog's health check waits
-    # for the identity marker, and full discovery (a probe per channel
-    # and thread) can take longer than its window.
-    #
-    # Marker contract with watchdog.sh:
-    #   "Bot user id: <id>"    identity confirmed (here, in-loop, or from
-    #                          the gateway's READY).
-    #   "Bot identity pending" /users/@me failed for a reason that can
-    #                          heal (429 storm, network): the monitor is
-    #                          up, keeps retrying, and the gateway still
-    #                          delivers. The watchdog counts it as a
-    #                          start, without hiding a revoked token.
-    #   "TOKEN REJECTED"       a 401: the monitor exits (status 3) and the
-    #                          watchdog raises the token alert.
-    try:
-        _adopt_identity(api_get("/users/@me"))
-    except Exception as e:
-        if getattr(e, "code", None) == HTTPStatus.UNAUTHORIZED:
-            token_rejected_exit("401 from /users/@me")
-        print(
-            f"Bot identity pending: /users/@me failed at boot ({e}); retrying in-loop.", flush=True
-        )
+    # The watchdog waits for identity before slow channel discovery.
+    _IDENTITY.start()
     _DIRECTORY.adopt(*discover_channels())
     publish_directory()
     print(
@@ -1481,12 +1440,17 @@ def _initialize_owner_services():
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
     global _QUEUE_STAGING, _LEDGER, _RECEPTION_AUDIT
-    global _OUTBOX, _WORK_WAIT
+    global _IDENTITY, _OUTBOX, _WORK_WAIT
     global _SENDER, _PARTS, _TYPING
     global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
     global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTIONS, _INTERACTION_RESPONDER, _INTERACTION_WORKER
+    _IDENTITY = BotIdentity(
+        lambda path: api_get(path),
+        lambda: _BACKOFF.clean_cycle(),
+        lambda where: token_rejected_exit(where),
+    )
     _PROCESS_LOCK = MonitorLock(lambda: PIDFILE)
     _GATEWAY = GatewaySession(TOKEN, settings_context, guard_outgoing)
     _DIRECTORY = DirectoryState()
@@ -1571,7 +1535,7 @@ def _initialize_services():
         get=lambda path: api_get(path),
         post=lambda path, data: api_post(path, data),
         patch=lambda path, data: api_patch(path, data),
-        identity_ready=lambda: BOT_USER_ID is not None,
+        identity_ready=lambda: _IDENTITY.user_id is not None,
         backing_off=lambda: rest_backing_off(),
         now=lambda: time.time(),
     )
@@ -1629,8 +1593,7 @@ def main():
             save_state(state)
             token_rejected_exit(_HEALTH.rejected or "gateway closed with code 4004")
         touch_heartbeat()
-        if BOT_USER_ID is None and status.get("user"):
-            _adopt_identity(status["user"], " (from gateway READY)")
+        _IDENTITY.from_gateway(status)
         now, backing = time.time(), rest_backing_off()
         scheduler.begin_tick(now, backing)
         dm_items = []
@@ -1646,7 +1609,7 @@ def main():
         outbox_pass_at = time.time()
         _run_phase("Outbox", _send_outbox, state)
         recovery = scheduler.recovery_cycle()
-        _run_phase("Identity retry", _retry_cycle_identity, scheduler.cycle_done)
+        _run_phase("Identity retry", _IDENTITY.retry, scheduler.cycle_done)
         _run_phase("Job scheduling", scheduler.schedule_jobs, state, recovery)
         scheduler.run_job(state, poll_turn, rest_spent, queue is not None)
         _run_phase("Cleanup", _cleanup_cycle, state, scheduler.cycle_done)

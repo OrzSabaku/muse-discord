@@ -132,8 +132,8 @@ redirect_files(M, os.path.join(WORK, "run"))
 
 D = create_cli(SRC)
 
-M.BOT_ID = M.BOT_USER_ID = BOTID
-M.BOT_NAME = "musebot"
+M._IDENTITY.user_id = BOTID
+M._IDENTITY.name = "musebot"
 API_POSTS = []
 FILE_SENDS = []
 SEND_FILES_FAIL = [0]

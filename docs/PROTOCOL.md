@@ -21,6 +21,7 @@ outboxの処理中項目・失敗回数・新規返信の到着検知は `Outbox
 | REST巡回・時間配分・定期ジョブの実行管理 | `src/muse_discord/rest_scheduler.py` |
 | Gateway通知・REST期限・連投・返信到着に応じた待機 | `src/muse_discord/work_wait.py` |
 | 起動・イベント処理・各機能の接続 | `src/muse_discord/monitor.py` |
+| ボットID・名前の共有状態とREST／Gatewayによる本人確認・復旧 | `src/muse_discord/bot_identity.py` |
 | 接続CLIの引数解析と実行先の選択 | `bin/connect-discord.py` |
 | 接続用の入力判別・設定保存・本人確認・参加確認・結果表示 | `src/muse_discord/setup/` |
 | CLIのPython環境選択 | `bin/setup_common.py` |
