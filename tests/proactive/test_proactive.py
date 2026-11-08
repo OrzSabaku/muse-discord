@@ -143,13 +143,13 @@ class Base(unittest.TestCase):
         with quiet() as buf:
             pro.tick(self.st, self.now)
         self.out += buf.getvalue()
-        slots = [q for q in self.m.load_queue() if q.get("kind") == "proactive"]
+        slots = [q for q in self.m._queue_files().load() if q.get("kind") == "proactive"]
         return slots[-1] if slots else None
 
     def next_slot(self, side=None, hours=1):
         """Drop the slot (unanswered), let time pass, heartbeat again."""
         self.m.PRO.store.data()["slot"] = None
-        self.m.queue_edit(drop=lambda q: q["kind"] == "proactive")
+        self.m._queue_files().edit(drop=lambda q: q["kind"] == "proactive")
         self.now += hours * HOUR
         return self.heartbeat(side)
 
@@ -161,7 +161,7 @@ class Base(unittest.TestCase):
                     msg, "x", self.st, q, context=self.m.QueueContext(dm=dm, guild_id=guild)
                 )
             )
-        self.m.queue_edit(add=q)
+        self.m._queue_files().edit(add=q)
         return msg
 
     def rn(self, mid):
@@ -269,7 +269,7 @@ class OffByDefault(Base):
         for _ in range(50):
             self.now += 6 * HOUR
             self.assertIsNone(self.heartbeat(), self.out)
-        self.assertEqual(self.m.load_queue(), [])
+        self.assertEqual(self.m._queue_files().load(), [])
         self.assertEqual(self.sends(), [])
 
     def test_friends_preset_turns_it_on(self):
@@ -415,11 +415,11 @@ servers:
             self.m.PRO._next_tick = 0
             with quiet():
                 self.m.PRO.tick(self.st, self.now)
-            q = [x for x in self.m.load_queue() if x["kind"] == "proactive"]
+            q = [x for x in self.m._queue_files().load() if x["kind"] == "proactive"]
             self.assertLessEqual(len(q), 1)
             if q:
                 wakes += 1
-                self.m.queue_edit(drop=lambda x: x["kind"] == "proactive")
+                self.m._queue_files().edit(drop=lambda x: x["kind"] == "proactive")
                 self.m.PRO.store.data()["slot"] = None
             self.now += 60
         self.assertTrue(2 <= wakes <= 8, wakes)
@@ -447,7 +447,9 @@ class Posting(Base):
         sent = self.sends(DM_U1)
         self.assertEqual([s["content"] for s in sent], ["hey, how did the exam go?"], self.out)
         self.assertEqual(sent[0]["allowed_mentions"], {"parse": [], "users": [U1]})
-        self.assertNotIn(self.slot["message_id"], [q["message_id"] for q in self.m.load_queue()])
+        self.assertNotIn(
+            self.slot["message_id"], [q["message_id"] for q in self.m._queue_files().load()]
+        )
 
     def test_channel_post_pings_nobody(self):
         slot = self.next_slot("public")
@@ -626,7 +628,9 @@ class Posting(Base):
         with open(self.m.OUTBOX_FILE) as f:
             self.assertEqual(json.load(f), [])
         self.assertEqual(self.m.PRO.store.data()["sent"], [])
-        self.assertNotIn(self.slot["message_id"], [q["message_id"] for q in self.m.load_queue()])
+        self.assertNotIn(
+            self.slot["message_id"], [q["message_id"] for q in self.m._queue_files().load()]
+        )
 
     def test_slot_cannot_touch_anything_else(self):
         """The slot's item may not reply under, react to, or act on a
@@ -687,7 +691,7 @@ class Eligibility(Base):
         self.assertFalse({CH, CH2} & self.targets(slot), self.out)
         self.m._OWNER_PRESENCE.membership.pop(G1)
         self.m.PRO.store.data()["slot"] = None
-        self.m.queue_edit(drop=lambda q: True)
+        self.m._queue_files().edit(drop=lambda q: True)
         self.apply(MS.pause_changes(MS.Place.server(G1)) + MS.pause_changes(MS.Place.dms()))
         self.assertIsNone(self.heartbeat(), self.out)
 
@@ -935,7 +939,7 @@ class OwnerDmGate(Base):
         dm["id"] = sf(2 * HOUR)  # not a conversation going on
         with quiet():
             self.m.enqueue_message(dm, "DM", self.st, q, context=self.m.QueueContext(dm=True))
-        self.m.queue_edit(add=q)
+        self.m._queue_files().edit(add=q)
         for it in (
             # An ordinary item posting into the owner's DM, with the
             # slot's nonce, naming no slot, or naming the owner's DM.
@@ -953,7 +957,7 @@ class OwnerDmGate(Base):
         ):
             self.outbox(it)
             self.assert_refused()
-        self.assertIn(dm["id"], [x["message_id"] for x in self.m.load_queue()])
+        self.assertIn(dm["id"], [x["message_id"] for x in self.m._queue_files().load()])
         # A slot post to an owner who is a target is fine.
         self.outbox(self.post(slot, OWNER_DM))
         self.assertEqual(len(self.sends(OWNER_DM)), 1, self.out)
@@ -994,7 +998,9 @@ class Robustness(Base):
         self.m.PRO._next_tick = 0
         with quiet():
             self.m.PRO.tick(self.st, self.now)
-        self.assertNotIn(slot["message_id"], [q["message_id"] for q in self.m.load_queue()])
+        self.assertNotIn(
+            slot["message_id"], [q["message_id"] for q in self.m._queue_files().load()]
+        )
 
 
 @unittest.skipUnless(shutil.which("jq"), "jq not installed")
@@ -1103,13 +1109,13 @@ class PublicationRecovery(Base):
         saved = pro.store.data()["slot"]
         sid, nonce, deadlines = saved["id"], saved["nonce"], dict(pro.store.data()["heartbeats"])
         self.assertEqual(saved["pending_item"]["message_id"], sid)
-        self.assertEqual(m.load_queue(), [])
+        self.assertEqual(m._queue_files().load(), [])
         pro.store._data = None  # recreate from the durable slot, as after a restart
         pro._next_tick = 0
         with quiet():
             pro.tick(self.st, self.now + 31)
             pro.tick(self.st, self.now + 62)
-        self.assertEqual([q["message_id"] for q in m.load_queue()], [sid])
+        self.assertEqual([q["message_id"] for q in m._queue_files().load()], [sid])
         self.assertEqual(pro.store.data()["slot"]["nonce"], nonce)
         self.assertEqual(pro.store.data()["heartbeats"], deadlines)
         self.assertNotIn("pending_item", pro.store.data()["slot"])
@@ -1127,7 +1133,7 @@ class PublicationRecovery(Base):
         pro._next_tick = 0
         with quiet():
             pro.tick(self.st, slot["expires"] + 1)
-        self.assertNotIn(slot["id"], [q["message_id"] for q in m.load_queue()])
+        self.assertNotIn(slot["id"], [q["message_id"] for q in m._queue_files().load()])
 
 
 if __name__ == "__main__":

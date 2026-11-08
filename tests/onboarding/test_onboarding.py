@@ -423,7 +423,7 @@ class OwnerlessServer(unittest.TestCase):
         self.assertFalse(mod._SHARED_MEMBERSHIP.contains(U1))
         # A restart whose boot discovery fails keeps the gate.
         with quiet():
-            mod.save_state(st)
+            mod._STATE_STORE.save(st)
         again = load_monitor(base, tmp=mod.tmp)
         with quiet():
             st_again = again.load_state()

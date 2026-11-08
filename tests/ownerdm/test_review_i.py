@@ -98,7 +98,7 @@ class ReAnswerAfterRepliedToEviction(_R):
         # 200 later replies (each adds >= 1 id to replied_to), then a
         # save: u2 falls out of replied_to; item_meta still has it.
         self.st["replied_to"] += [sf() for _ in range(200)]
-        self.mod.save_state(self.st)
+        self.mod._STATE_STORE.save(self.st)
         self.assertNotIn(u2["id"], self.st["replied_to"])
         self.assertIn(u2["id"], self.st["item_meta"])
         write(self.mod.cfg_path, tb.CFG + "dms:\n  who:\n    dms_from: owners\n")

@@ -180,16 +180,16 @@ def test_queue_write_no_resurrect_no_drop():
 
     def slow_media(_msg):
         # Another writer removes x and appends w mid-flush.
-        m.queue_edit(add=[qitem(w)], drop=lambda q: q["message_id"] == x)
+        m._queue_files().edit(add=[qitem(w)], drop=lambda q: q["message_id"] == x)
         return [], [], []
 
     m.collect_media = slow_media
     # Main-loop pattern (main(): snapshot, flush, delta write).
-    queue = m.load_queue()
+    queue = m._queue_files().load()
     n_before = len(queue)
     with capture():
         assert m.flush_pending(st, queue)
-    m.queue_edit(add=queue[n_before:])
+    m._queue_files().edit(add=queue[n_before:])
     m.collect_media = lambda _m: ([], [], [])
     ids = [q["message_id"] for q in read(m.QUEUE_FILE)]
     assert ids == [y, w, trig["id"]], ids
@@ -206,16 +206,16 @@ def test_queue_stress_threads():
 
     def adder():
         for i in ids:
-            m.queue_edit(add=[{"message_id": i}])
+            m._queue_files().edit(add=[{"message_id": i}])
         done.set()
 
     def remover():
         while True:
             fin = done.is_set()
-            seen = {q["message_id"] for q in m.load_queue()}
+            seen = {q["message_id"] for q in m._queue_files().load()}
             take = {i for i in seen if int(i) % 2 == 0}
             if take:
-                m.queue_edit(drop=lambda q, take=take: q["message_id"] in take)
+                m._queue_files().edit(drop=lambda q, take=take: q["message_id"] in take)
                 removed.update(take)
             if fin and not take:
                 break

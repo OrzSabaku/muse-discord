@@ -228,13 +228,13 @@ def _proactive_context():
         api_post=lambda *args, **kwargs: api_post(*args, **kwargs),
         channel_display=lambda *args, **kwargs: channel_display(*args, **kwargs),
         dm_refusal=lambda *args, **kwargs: dm_refusal(*args, **kwargs),
-        load_queue=lambda *args, **kwargs: load_queue(*args, **kwargs),
+        load_queue=lambda: _queue_files().load(),
         never_share_hit=lambda *args, **kwargs: _REVIEW.hit(*args, **kwargs),
         normalize_parts=lambda *args, **kwargs: normalize_parts(*args, **kwargs),
         notify_owners=lambda *args, **kwargs: _OWNER_MESSAGES.notify(*args, **kwargs),
         owner_check_pending=lambda state, gid: _OWNER_PRESENCE.pending(state, gid),
         owners_absent=lambda *args, **kwargs: _OWNER_PRESENCE.absent(*args, **kwargs),
-        queue_edit=lambda *args, **kwargs: queue_edit(*args, **kwargs),
+        queue_edit=lambda add=(), drop=None: _queue_files().edit(add, drop),
         queued_item_meta=lambda *args, **kwargs: _REPLIES.queued_meta(*args, **kwargs),
         rest_backing_off=lambda *args, **kwargs: rest_backing_off(*args, **kwargs),
         scope_for=lambda *args, **kwargs: scope_for(*args, **kwargs),
@@ -298,7 +298,7 @@ _DIRECTORY: DirectoryState
 
 def _directory_refresh():
     return DirectoryRefresh(
-        _DIRECTORY, _discovery(), publish_directory, _GUILD_LIFECYCLE.sync, save_state
+        _DIRECTORY, _discovery(), publish_directory, _GUILD_LIFECYCLE.sync, _STATE_STORE.save
     )
 
 
@@ -414,20 +414,8 @@ def _deliver_outbox_item(batch, item):
     OutboxDelivery(batch, item, policy, effects, batch.current).process()
 
 
-def load_queue():
-    return _queue_files().load()
-
-
-def queue_edit(add=(), drop=None):
-    return _queue_files().edit(add, drop)
-
-
 def _queue_publication():
     return QueuePublication(_queue_files(), _STATE_STORE, _LEDGER)
-
-
-def publish_queue_additions(state, additions=()):
-    return _queue_publication().publish(state, additions)
 
 
 def load_state():
@@ -438,10 +426,6 @@ def load_state():
 
 
 _STATE_STORE: StateFile
-
-
-def save_state(state):
-    return _STATE_STORE.save(state)
 
 
 def _quarantine_store():
@@ -934,7 +918,7 @@ def _cleanup_cycle(state, cycle_done):
         sweep_media()
         _generated_replies().sweep(state)
         prune_gateway_seen(state)
-        save_state(state)
+        _STATE_STORE.save(state)
 
 
 def _rest_scheduler():
@@ -954,10 +938,10 @@ def _rest_scheduler():
                 list_dm_channels,
                 check_dm_channel,
                 check_channel,
-                load_queue,
+                lambda: _queue_files().load(),
                 sweep_mentions,
-                publish_queue_additions,
-                save_state,
+                lambda state, additions: _queue_publication().publish(state, additions),
+                _STATE_STORE.save,
                 lambda state: _directory_refresh().channels(state),
                 lambda state: _directory_refresh().threads(state),
             ),
@@ -973,7 +957,7 @@ def _settings_upkeep(status):
 
 def _send_outbox(state):
     _OUTBOX.pass_once(state)
-    save_state(state)
+    _STATE_STORE.save(state)
 
 
 def _start_monitor_threads(state):
@@ -1028,7 +1012,7 @@ def _start_monitor():
     inbox, status = _start_monitor_threads(state)
 
     _QUEUE_STAGING.recover(state)
-    save_state(state)
+    _STATE_STORE.save(state)
 
     return state, inbox, status
 
@@ -1070,7 +1054,7 @@ def _initialize_owner_services():
         ),
         _OWNER_AUTH,
         CommandTargets(_DIRECTORY.channels, _DIRECTORY.guild_channels),
-        lambda: load_queue(),
+        lambda: _queue_files().load(),
         lambda text: _OWNER_MESSAGES.notify(text),
     )
     _REVIEW = ReplyReview(settings, _OWNER_MESSAGES, _DIRECT_MESSAGES.users, _REPLIES.settle)
@@ -1152,7 +1136,7 @@ def _initialize_services():
     _TYPING = TypingIndicators(
         lambda path, body: api_post(path, body),
         lambda: rest_backing_off(),
-        lambda: load_queue(),
+        lambda: _queue_files().load(),
         lambda: time.time(),
         lambda seconds: time.sleep(seconds),
     )
@@ -1168,7 +1152,7 @@ def _initialize_services():
     )
     _REPLIES = ReplyState(
         _LEDGER,
-        lambda: load_queue(),
+        lambda: _queue_files().load(),
         lambda mid, meta: PRO.policy.note_item(mid, meta),
         lambda seconds: TM.latency(seconds),
         lambda: time.time(),
@@ -1179,7 +1163,7 @@ def _initialize_services():
     _OUTBOX = OutboxProcessor(
         _outbox_files,
         lambda state: queue_index(state),
-        lambda state: save_state(state),
+        _STATE_STORE.save,
         _CAPABILITIES.publish,
         _deliver_outbox_item,
     )
@@ -1274,7 +1258,7 @@ def main():
     outbox_pass_at = 0.0
     while True:
         if _HEALTH.rejected or status.get("token_rejected"):
-            save_state(state)
+            _STATE_STORE.save(state)
             token_rejected_exit(_HEALTH.rejected or "gateway closed with code 4004")
         touch_heartbeat()
         _IDENTITY.from_gateway(status)

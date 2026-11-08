@@ -343,7 +343,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
         mod._DIRECTORY.channels[cid] = {"name": "general", "guild_id": sf()}
         # The monitor queued rid there (an outbox item answers an open
         # item, with its reply_nonce).
-        mod.queue_edit(add=[{"message_id": rid, "channel_id": cid}])
+        mod._queue_files().edit(add=[{"message_id": rid, "channel_id": cid}])
         with open(mod.OUTBOX_FILE, "w") as f:
             json.dump(
                 [

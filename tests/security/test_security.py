@@ -177,7 +177,7 @@ def _enqueue_and_queue(msg_, cname, state, queue, *a, **kw):
     n = len(queue)
     ok = _ORIG_ENQ(msg_, cname, state, queue, *a, **kw)
     if ok:
-        M.queue_edit(add=queue[n:])
+        M._queue_files().edit(add=queue[n:])
     return ok
 
 

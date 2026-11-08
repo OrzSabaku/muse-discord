@@ -732,7 +732,7 @@ class NeverShare(MonitorBase):
         ids = [c["custom_id"] for c in dm["components"][0]["components"]]
         self.assertEqual(ids, [f"mdhold:send:{hid}", f"mdhold:discard:{hid}"])
         # Settled: out of the queue (no worker gets it again) and ledgered.
-        self.assertEqual(m.load_queue(), [])
+        self.assertEqual(m._queue_files().load(), [])
         self.assertEqual(m._LEDGER.load()["entries"][item["message_id"]]["status"], "skipped")
         resp, recs = self.click(hid, "send", uid=U1)  # not an owner
         self.assertEqual(recs, [])

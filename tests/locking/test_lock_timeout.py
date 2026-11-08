@@ -41,10 +41,10 @@ class LockTimeout(unittest.TestCase):
         write(m.QUEUE_FILE, [first])
         with held_lock():
             with self.assertRaises(SharedLockTimeout):
-                m.queue_edit(add=[incoming], drop=lambda q: q == first)
+                m._queue_files().edit(add=[incoming], drop=lambda q: q == first)
             self.assertEqual(read(m.QUEUE_FILE), [first])
             write(m.QUEUE_FILE, [first, worker])  # the lock holder's write
-        self.assertEqual(m.queue_edit(add=[incoming], drop=lambda q: q == first), 1)
+        self.assertEqual(m._queue_files().edit(add=[incoming], drop=lambda q: q == first), 1)
         self.assertEqual(read(m.QUEUE_FILE), [worker, incoming])
 
     def test_non_contention_lock_error_is_propagated_without_entering_body(self):
@@ -227,7 +227,7 @@ class LockTimeout(unittest.TestCase):
                 state["queue_backlog"] = [{"message_id": mid, "channel_id": "101"}]
                 write(m.QUEUE_FILE, [])
                 write(m.LEDGER_FILE, {"entries": {mid: {"status": status}}})
-                m.publish_queue_additions(state)
+                m._queue_publication().publish(state)
                 self.assertEqual(read(m.QUEUE_FILE), [])
                 self.assertNotIn("queue_backlog", state)
 

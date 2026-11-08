@@ -261,7 +261,7 @@ elif scenario == "outbox":
     def write_outbox(inbox, status):
         # A message the monitor queued there (an outbox item answers one).
         mid = H.sf(0)
-        mod.queue_edit(add=[{"message_id": mid, "channel_id": "500"}])
+        mod._queue_files().edit(add=[{"message_id": mid, "channel_id": "500"}])
         tmp = mod.OUTBOX_FILE + ".w"
         with open(tmp, "w") as f:
             json.dump(

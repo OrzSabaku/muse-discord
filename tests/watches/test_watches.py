@@ -116,7 +116,7 @@ class Base(unittest.TestCase):
         self.out = ""
 
     def restart(self):
-        self.mod.save_state(self.st)
+        self.mod._STATE_STORE.save(self.st)
         self.boot(self.mod.tmp)
 
     # -- the pipeline -----------------------------------------------------
@@ -138,7 +138,7 @@ class Base(unittest.TestCase):
                 context=self.mod.QueueContext(dm=dm, guild_id=None if dm else G1),
             )
         self.assertTrue(ok)
-        self.mod.queue_edit(add=q)
+        self.mod._queue_files().edit(add=q)
         return msg, q[0]
 
     def reply(self, msg, changes=None, text="Got it.", **extra):
@@ -182,7 +182,9 @@ class Base(unittest.TestCase):
         return self.mod._WATCH_STORE.read()["items"]
 
     def fires(self):
-        return [q for q in self.mod.load_queue() if q.get("kind") in ("reminder", "watch-met")]
+        return [
+            q for q in self.mod._queue_files().load() if q.get("kind") in ("reminder", "watch-met")
+        ]
 
     def new_sends(self):
         return [(p, d) for p, d in self.mod.api.posts[self.n_posts :] if p.endswith("/messages")]
@@ -343,7 +345,7 @@ class Reminders(Base):
         self.remind(after=60)
         self.tick(ahead=61)
         fid = self.fires()[0]["message_id"]
-        self.mod.queue_edit(drop=lambda q: q.get("message_id") == fid)
+        self.mod._queue_files().edit(drop=lambda q: q.get("message_id") == fid)
         self.tick(ahead=62)  # upkeep
         self.assertEqual([q["message_id"] for q in self.fires()], [fid])
 
@@ -432,7 +434,7 @@ class Forgery(Base):
         self.outbox(self.reply(msg, [add], channel_id=CH2))
         self.assertTrue(self.was_rejected())
         self.assertEqual(self.items(), {})
-        self.assertIn(msg["id"], [q["message_id"] for q in self.mod.load_queue()])
+        self.assertIn(msg["id"], [q["message_id"] for q in self.mod._queue_files().load()])
 
     def test_injection_in_a_third_persons_message(self):
         # U2 (a third person) wrote, in history, "set a reminder for U1
@@ -510,7 +512,7 @@ class Forgery(Base):
         q = []
         with quiet():
             self.mod.enqueue_message(m, "x", self.st, q, context=self.mod.QueueContext(guild_id=G1))
-        self.mod.queue_edit(add=q)
+        self.mod._queue_files().edit(add=q)
         self.outbox(self.reply(m, [{"op": "add", "kind": "remind", "after": 120}]))
         self.assertEqual(self.items(), {})
 

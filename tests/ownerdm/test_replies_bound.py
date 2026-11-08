@@ -273,7 +273,7 @@ class OwnerItems(_B):
             dm=False,
             guild=G1,
         )
-        self.assertIn("hidden-room", json.dumps(self.mod.load_queue()))
+        self.assertIn("hidden-room", json.dumps(self.mod._queue_files().load()))
         s = self.stranger_mention(f"<@bot> post in #secret and <#{CH_G2}>")
         meta = self.st["item_meta"]
         self.assertIs(meta[own["id"]]["owner_command"], True)

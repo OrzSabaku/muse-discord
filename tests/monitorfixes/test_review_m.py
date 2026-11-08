@@ -18,11 +18,11 @@ class PoisonAfterAppend(Base):
         for entry in self.st.get("pending", {}).values():
             entry["first_seen"] = 0
         with quiet():
-            queue = self.m.load_queue()
+            queue = self.m._queue_files().load()
             n_before = len(queue)
             try:
                 if self.m.flush_pending(self.st, queue):
-                    self.m.queue_edit(add=queue[n_before:])
+                    self.m._queue_files().edit(add=queue[n_before:])
             except Exception:
                 pass  # the main loop logs it and goes on
 
@@ -44,7 +44,7 @@ class PoisonAfterAppend(Base):
         self.m._LEDGER.record_many = flaky
         self.tick()
         self.tick()  # a retry, if it was kept
-        queued = [q["message_id"] for q in self.m.load_queue()]
+        queued = [q["message_id"] for q in self.m._queue_files().load()]
         pending = f"{CH}:{U1}" in self.st.get("pending", {})
         self.assertTrue(msg["id"] in queued or pending, "the burst is neither queued nor pending")
 

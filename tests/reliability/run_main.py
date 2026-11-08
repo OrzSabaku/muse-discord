@@ -139,7 +139,7 @@ elif scenario == "batch_fold":
     m1 = msg("C1", "U1", "@bot quick question", mention=True, age=5)
     m2 = msg("C1", "U1", "what's the deploy command?", age=4)
     mod.api.msgs["C1"] = [m0, m1, m2]
-    until = lambda: mod.load_queue()  # noqa: E731
+    until = lambda: mod._queue_files().load()  # noqa: E731
 else:
     sys.exit(f"unknown scenario {scenario}")
 

@@ -89,7 +89,7 @@ class Base(unittest.TestCase):
                 context=self.mod.QueueContext(dm=dm, fragments=fragments, guild_id=guild),
             )
         self.assertTrue(ok)
-        self.mod.queue_edit(add=q)
+        self.mod._queue_files().edit(add=q)
         return msg
 
     def owner_dm(self, text="hey, how's it going?", uid=OWNER, channel=DM, **kw):
@@ -138,7 +138,7 @@ class Base(unittest.TestCase):
         ]
 
     def queued(self):
-        return [q["message_id"] for q in self.mod.load_queue()]
+        return [q["message_id"] for q in self.mod._queue_files().load()]
 
     def rejected(self):
         try:
