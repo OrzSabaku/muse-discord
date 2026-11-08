@@ -242,6 +242,9 @@ TM = _NoTelemetry()
 
 
 class _NoProactive:
+    def __init__(self):
+        self.store = self.consent = self.policy = self
+
     def __getattr__(self, name):
         return lambda *a, **kw: None
 
@@ -483,7 +486,7 @@ def _live_nonces():
     return collect_nonces(
         (_OWNER_DM_NONCES_WRITTEN.get("body"), _ITEM_NONCES_WRITTEN.get("body")),
         (_OWNER_ITEMS_WRITTEN.get("body"), _WEB_DUE_WRITTEN.get("body")),
-        lambda: PRO.secret_nonces(),
+        lambda: PRO.store.secret_nonces(),
     )
 
 
@@ -912,7 +915,7 @@ def apply_record(state, rec):
     elif kind == "hold_choice":
         _reply_review().apply_choice(state, rec)
     elif kind == "proactive_yes":
-        PRO.apply_button(rec)
+        PRO.consent.apply_button(rec)
 
 
 # Interaction dispatch: one handler per key, the custom_id prefix (the
@@ -964,7 +967,9 @@ def on_hold_button(ix, rest, uid, record):
 def on_proactive_button(ix, rest, uid, record):
     """mdpro:yes:<token>: the Yes on the monitor's own question to one
     person (proactive.py, asks); anyone may click, only theirs counts."""
-    return PRO.on_button(ix, rest, uid, record) or ephemeral("That button is no longer active.")
+    return PRO.consent.on_button(ix, rest, uid, record) or ephemeral(
+        "That button is no longer active."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1425,7 +1430,9 @@ def settings_card(scope, here, channel_id, speaker=None):
 
 
 def _reply_state():
-    return ReplyState(_message_ledger(), _queue_files(), PRO.note_item, TM.latency, time.time)
+    return ReplyState(
+        _message_ledger(), _queue_files(), PRO.policy.note_item, TM.latency, time.time
+    )
 
 
 def queued_item_meta(state, qid, index):
