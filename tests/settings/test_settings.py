@@ -815,7 +815,7 @@ class Who(MonitorBase):
             inbox = queue.Queue()
             inbox.put(msg)
             with quiet():
-                return m.drain_gateway(self.st, inbox, m.CHANNELS)[1]
+                return m.drain_gateway(self.st, inbox, m._DIRECTORY.channels)[1]
 
         stranger = dmsg(U1, "hi bot")
         self.assertEqual(drain(stranger), [])
@@ -1047,12 +1047,12 @@ class FollowUps(MonitorBase):
         m.api.history[CH] = [old]
         q = []
         with quiet():
-            m.sweep_mentions(self.st, q, {CH: m.CHANNELS[CH]}, dms=False)
+            m.sweep_mentions(self.st, q, {CH: m._DIRECTORY.channels[CH]}, dms=False)
         self.assertEqual(q, [])
         mention = gmsg(U2, "@muse lost", mention=True, age=600)
         m.api.history[CH] = [old, mention]
         with quiet():
-            m.sweep_mentions(self.st, q, {CH: m.CHANNELS[CH]}, dms=False)
+            m.sweep_mentions(self.st, q, {CH: m._DIRECTORY.channels[CH]}, dms=False)
         self.assertEqual([i["message_id"] for i in q], [mention["id"]])
 
 

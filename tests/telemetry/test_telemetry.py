@@ -150,7 +150,7 @@ class Base(unittest.TestCase):
 
     def tick(self):
         with quiet():
-            self.tm.tick(self.m.settings, self.m.GUILDS, {G1: 37, "x": 3}, force=True)
+            self.tm.tick(self.m.settings, self.m._DIRECTORY.guilds, {G1: 37, "x": 3}, force=True)
 
     def wait_send(self, secs=5):
         """Until the send thread finished and its result was taken (at

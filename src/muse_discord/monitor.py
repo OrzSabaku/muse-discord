@@ -74,13 +74,12 @@ from muse_discord.conversation import _snowflake_ts as _snowflake_ts
 from muse_discord.conversation import _who as _who
 from muse_discord.directory.discovery import (
     Discovery,
-    DiscoveryState,
-    ThreadSnapshot,
 )
 from muse_discord.directory.lifecycle import GuildLifecycle
 from muse_discord.directory.membership import AuthorRoles
-from muse_discord.directory.scopes import DirectoryScopes
+from muse_discord.directory.refresh import DirectoryRefresh
 from muse_discord.directory.snapshot import DirectorySnapshot
+from muse_discord.directory.state import DirectoryState
 from muse_discord.durable_state import QueuePublication, StateFile
 from muse_discord.generated_replies import GeneratedReplies
 from muse_discord.http_runtime import DiscordCalls, RestBackoff
@@ -257,7 +256,7 @@ def _proactive_context():
         nonce_path=lambda: PROACTIVE_NONCE_FILE,
         bot_ids=lambda: (BOT_ID, BOT_USER_ID),
         owners=lambda: _SETTINGS.owners,
-        channels=lambda: CHANNELS,
+        channels=lambda: _DIRECTORY.channels,
         dm_channels=lambda: _DIRECT_MESSAGES.names,
         dm_users=lambda: _DIRECT_MESSAGES.users,
         user_names=lambda: _USER_NAMES,
@@ -366,14 +365,12 @@ BOT_USER_ID = None
 # Channels and guilds are discovered live at startup and refreshed
 # periodically: every channel/thread the bot can read, across every
 # guild it belongs to (restricted to bot.guild_ids when configured).
-# CHANNELS: {channel_id: {"name", "guild_id", "guild_name", "can_send"}}
+# DirectoryState.channels: {channel_id: {"name", "guild_id", "guild_name", "can_send"}}
 #   can_send is the bot's effective Send Messages permission for the
 #   channel (Send Messages in Threads for threads), or None when it
 #   could not be computed; callers then attempt the send and rely on
 #   the 403 safety net in process_outbox.
-# GUILDS: {guild_id: {"name", "joined_at"}}
-CHANNELS = {}
-GUILDS = {}
+# DirectoryState.guilds: {guild_id: {"name", "joined_at"}}
 
 
 # Channel types the bot can meaningfully read: 0 = text, 5 = announcement.
@@ -386,16 +383,11 @@ GUILDS = {}
 THREAD_REFRESH_CYCLES = 5
 
 
-def _discovery_state():
-    return DiscoveryState(
-        guilds=GUILDS,
-        member_counts=_MEMBER_COUNTS,
-        guild_channels=_GUILD_CHANNELS,
-        categories=CHANNEL_CATEGORY,
-        threads_listed=_THREADS_LISTED,
-        new_threads=_NEW_THREADS,
-        started_at=MONITOR_STARTED,
-    )
+_DIRECTORY: DirectoryState
+
+
+def _directory_refresh():
+    return DirectoryRefresh(_DIRECTORY, _discovery(), publish_directory, sync_guilds, save_state)
 
 
 def _discovery():
@@ -404,7 +396,7 @@ def _discovery():
         rest_backing_off,
         lambda: BOT_ID,
         GUILD_ALLOWLIST,
-        _discovery_state(),
+        _DIRECTORY,
         _channel_access(),
     )
 
@@ -420,10 +412,6 @@ def discover_channels(previous=None):
     return _discovery().channels(previous)
 
 
-def discover_channels_iter(previous=None):
-    return _discovery().channels_iter(previous)
-
-
 # Brand-new threads. A thread created since the previous successful
 # thread listing of its guild (or since the monitor started) is seeded at
 # its own id, not at its newest message: a mention posted in it before
@@ -433,13 +421,6 @@ def discover_channels_iter(previous=None):
 # the gateway/poll dedup (gw_seen, the watermark) keeps that to one
 # reply. Older threads seen for the first time keep the usual seeding:
 # their history is history.
-MONITOR_STARTED = time.time()
-_THREADS_LISTED = {}  # guild id -> when its threads were last listed
-_NEW_THREADS = set()  # thread ids to seed at their start
-
-
-def discover_threads_iter(gid, gname, snapshot):
-    return _discovery().threads_iter(gid, gname, snapshot)
 
 
 def seed_channel_seen(cid, cname, state):
@@ -546,7 +527,7 @@ def _deliver_outbox_item(batch, item):
         parts=_part_delivery(),
         sender=_message_sender(),
         response=_response_policy(),
-        directory=_directory_scopes(),
+        directory=_DIRECTORY.scopes,
         opt_action=PRO.opt_action,
         max_reply_chars=_SETTINGS.engine.max_reply_chars,
     )
@@ -612,7 +593,7 @@ def quarantine(msg, channel_name, matched_pattern, fragments=()):
 
 def _message_ledger():
     return MessageLedger(
-        LEDGER_FILE, CHANNELS, _DIRECT_MESSAGES, TM.ledger, remember_name, time.time
+        LEDGER_FILE, _DIRECTORY.channels, _DIRECT_MESSAGES, TM.ledger, remember_name, time.time
     )
 
 
@@ -682,19 +663,14 @@ def _response_policy():
 # ---------------------------------------------------------------------------
 _DISCOVERY_REFRESH: DiscoveryRefresh
 # channel id -> its category id (from discovery), for category settings.
-CHANNEL_CATEGORY = {}
-
-
-def _directory_scopes():
-    return DirectoryScopes(CHANNELS, GUILDS, CHANNEL_CATEGORY)
 
 
 def scope_for(guild_id=None, channel_id=None, dm=False):
-    return _directory_scopes().for_message(guild_id, channel_id, dm)
+    return _DIRECTORY.scopes.for_message(guild_id, channel_id, dm)
 
 
 def scope_of_channel(channel_id):
-    return _directory_scopes().for_channel(channel_id)
+    return _DIRECTORY.scopes.for_channel(channel_id)
 
 
 # (guild, user) -> (role ids, fetched at): roles of authors whose messages
@@ -715,7 +691,7 @@ _SHARED_MEMBERSHIP: SharedServers
 
 def _admission():
     return AdmissionPolicy(
-        _response_policy(), _owner_presence(), _directory_scopes(), _SHARED_MEMBERSHIP
+        _response_policy(), _owner_presence(), _DIRECTORY.scopes, _SHARED_MEMBERSHIP
     )
 
 
@@ -777,7 +753,7 @@ def _admin_digests():
     return AdminDigests(
         _directory_name,
         _USER_NAMES,
-        GUILDS,
+        _DIRECTORY.guilds,
         _owner_messenger().notify,
         rest_backing_off,
         _ADMIN_CHANGES,
@@ -841,8 +817,8 @@ def owners_absent(gid):
 def _guild_lifecycle():
     presence = _owner_presence()
     return GuildLifecycle(
-        _discovery_state(),
-        CHANNELS,
+        _DIRECTORY,
+        _DIRECTORY.channels,
         presence,
         JoinNotices(presence, _owner_messenger(), rest_backing_off, SETTINGS_PREFIX),
         settings,
@@ -978,8 +954,6 @@ def on_proactive_button(ix, rest, uid, record):
 # ---------------------------------------------------------------------------
 # Directory for settings screens, built on the main loop from discovery and
 # the gateway, published through the thread-safe _DIRECTORY_VIEW snapshot.
-_MEMBER_COUNTS = {}  # guild id -> member count (approximate)
-_GUILD_CHANNELS = {}  # guild id -> [{"id","name","type","parent_id",..}]
 _DIRECTORY_VIEW: DirectorySnapshot
 # The same snapshot on disk, for bin/settings.py (places, names in its
 # sentences): written atomically, only when it changed.
@@ -987,7 +961,9 @@ DIRECTORY_FILE = os.path.join(BASE_DIR, "directory.json")
 
 
 def publish_directory():
-    return _DIRECTORY_VIEW.update(GUILDS, CHANNELS, _MEMBER_COUNTS, _GUILD_CHANNELS)
+    return _DIRECTORY_VIEW.update(
+        _DIRECTORY.guilds, _DIRECTORY.channels, _DIRECTORY.member_counts, _DIRECTORY.guild_channels
+    )
 
 
 # Private settings screens and drafts, keyed by (user_id, random token).
@@ -1079,8 +1055,8 @@ _OWNER_DM_UPKEEP = {"next": 0.0}
 def _owner_auth():
     return OwnerAuthorization(
         lambda: _SETTINGS.owners,
-        CHANNELS,
-        _GUILD_CHANNELS,
+        _DIRECTORY.channels,
+        _DIRECTORY.guild_channels,
         _DIRECT_MESSAGES.users,
         api_get,
         _CHANNEL_LOOKUP,
@@ -1088,7 +1064,7 @@ def _owner_auth():
 
 
 def _owner_targets():
-    return CommandTargets(CHANNELS, _GUILD_CHANNELS)
+    return CommandTargets(_DIRECTORY.channels, _DIRECTORY.guild_channels)
 
 
 def _owner_memory():
@@ -1411,9 +1387,9 @@ def settings_card(scope, here, channel_id, speaker=None):
     owner = str(author_id) in _SETTINGS.owners
     card: dict[str, object] = {"where": "dm" if dm else "server"}
     if not dm:
-        info = CHANNELS.get(channel_id) or {}
+        info = _DIRECTORY.channels.get(channel_id) or {}
         card["server"] = (
-            (GUILDS.get(scope.guild_id) or {}).get("name")
+            (_DIRECTORY.guilds.get(scope.guild_id) or {}).get("name")
             or info.get("guild_name")
             or scope.guild_id
         )
@@ -1598,7 +1574,7 @@ def watch_store():
 # -- what a requester can read -------------------------------------------
 def _channel_access():
     return ChannelAccess(
-        CHANNELS,
+        _DIRECTORY.channels,
         api_get,
         rest_backing_off,
         _GUILD_PERMS,
@@ -1618,7 +1594,7 @@ def _watch_audience():
     return WatchAudience(
         _response_policy(),
         _channel_access(),
-        GUILDS,
+        _DIRECTORY.guilds,
         _USER_NAMES,
         owners_absent,
         dm_refusal,
@@ -1824,66 +1800,7 @@ def poll_targets():
     if BOT_USER_ID is None:
         return []
     targets = [("dms",)] if dm_poll_user_ids() else []
-    return targets + [("channel", cid) for cid in CHANNELS]
-
-
-def thread_refresh_iter(state):
-    """Light thread-only refresh: pick up brand-new posts and threads
-    minutes after they appear instead of waiting for the full channel
-    refresh. Only threads not already monitored cost an API probe."""
-    guilds = get_guilds()
-    yield
-    for gid, gname in guilds or []:
-        try:
-            chans = api_get(f"/guilds/{gid}/channels")
-        except Exception:
-            continue
-        finally:
-            yield
-        names_by_id = {c["id"]: c.get("name", "?") for c in chans}
-        for c in chans:
-            if c.get("parent_id"):
-                CHANNEL_CATEGORY[c["id"]] = c["parent_id"]
-        new_threads = yield from discover_threads_iter(
-            gid, gname, snapshot=ThreadSnapshot(names=names_by_id, known_ids=CHANNELS)
-        )
-        for tid, info in new_threads.items():
-            seed_channel_seen(tid, channel_display(info), state)
-            CHANNELS[tid] = info
-            print(f"Now monitoring {channel_display(info)}.", flush=True)
-            yield
-        if new_threads:
-            save_state(state)
-
-
-def discovery_iter(state):
-    """Periodic re-discovery of readable channels, so permission changes
-    (grants or revocations) take effect without a restart. Applied when
-    complete; a channel the gateway or the thread refresh registered
-    while it ran is kept."""
-    global CHANNELS, GUILDS
-    before = dict(CHANNELS)
-    fresh, fresh_guilds = yield from discover_channels_iter(before)
-    GUILDS = fresh_guilds
-    for cid, info in fresh.items():
-        if cid not in CHANNELS:
-            # Seeds only a channel with no last_seen yet.
-            seed_channel_seen(cid, channel_display(info), state)
-            yield
-    for cid, info in CHANNELS.items():
-        if cid not in before and cid not in fresh:
-            fresh[cid] = info
-    if set(fresh) != set(CHANNELS):
-        added = [channel_display(n) for i, n in fresh.items() if i not in CHANNELS]
-        removed = [channel_display(n) for i, n in CHANNELS.items() if i not in fresh]
-        if added:
-            print(f"Now monitoring {', '.join(added)}.", flush=True)
-        if removed:
-            print(f"Lost access to {', '.join(removed)}; unmonitoring.", flush=True)
-        CHANNELS = fresh
-    publish_directory()
-    sync_guilds(state, fresh_guilds, fresh)
-    save_state(state)
+    return targets + [("channel", cid) for cid in _DIRECTORY.channels]
 
 
 def _adopt_identity(me, how=""):
@@ -1913,7 +1830,7 @@ def _drain_live_messages(state, _gateway_inbox):
     # events ride the same inbox. Waits for the bot's identity,
     # like the poll.
     if BOT_USER_ID is not None:
-        gw_mentions, gw_dms = drain_gateway(state, _gateway_inbox, CHANNELS)
+        gw_mentions, gw_dms = drain_gateway(state, _gateway_inbox, _DIRECTORY.channels)
         if gw_mentions or gw_dms:
             print(
                 f"Gateway delivered {len(gw_mentions)} mention(s), {len(gw_dms)} DM(s).",
@@ -1959,7 +1876,7 @@ def _retry_cycle_identity(cycle_done):
 
 def _cleanup_cycle(state, cycle_done):
     if cycle_done:
-        flush_join_notices(state, GUILDS, CHANNELS)
+        flush_join_notices(state, _DIRECTORY.guilds, _DIRECTORY.channels)
         announce_update(state)
         telemetry_notice()
         expire_holds(state)
@@ -2004,7 +1921,7 @@ def _rest_scheduler():
             ),
             RestClock(time.time, rest_backing_off),
             RestOperations(
-                lambda: CHANNELS,
+                lambda: _DIRECTORY.channels,
                 lambda: BOT_USER_ID is not None,
                 poll_targets,
                 list_dm_channels,
@@ -2014,8 +1931,8 @@ def _rest_scheduler():
                 sweep_mentions,
                 publish_queue_additions,
                 save_state,
-                discovery_iter,
-                thread_refresh_iter,
+                lambda state: _directory_refresh().channels(state),
+                lambda state: _directory_refresh().threads(state),
             ),
         ),
         _DISCOVERY_REFRESH,
@@ -2064,7 +1981,6 @@ def _start_monitor_threads(state):
 
 
 def _start_monitor():
-    global CHANNELS, GUILDS
     _acquire_singleton()
     TM.start()
     touch_heartbeat()
@@ -2090,14 +2006,14 @@ def _start_monitor():
         print(
             f"Bot identity pending: /users/@me failed at boot ({e}); retrying in-loop.", flush=True
         )
-    CHANNELS, GUILDS = discover_channels()
+    _DIRECTORY.adopt(*discover_channels())
     publish_directory()
     print(
-        f"muse-discord monitor starting. Polling {len(CHANNELS)} "
+        f"muse-discord monitor starting. Polling {len(_DIRECTORY.channels)} "
         f"channels + DMs every {_SETTINGS.engine.rest_poll_seconds}s.",
         flush=True,
     )
-    if not CHANNELS:
+    if not _DIRECTORY.channels:
         print(
             "WARNING: no readable channels found (check the bot's "
             "guild membership and channel permissions); discovery "
@@ -2107,12 +2023,12 @@ def _start_monitor():
     state = load_state()
     # Join watermarks for every guild, plus the owner summary for any
     # guild joined while the monitor was down.
-    sync_guilds(state, GUILDS, CHANNELS)
+    sync_guilds(state, _DIRECTORY.guilds, _DIRECTORY.channels)
 
     # Seed last_seen for any monitored channel not tracked yet, so its
     # history is never mistaken for fresh mentions (first run, or a
     # newly discovered channel after a permission grant).
-    for cid, info in CHANNELS.items():
+    for cid, info in _DIRECTORY.channels.items():
         if cid not in state["last_seen"]:
             seed_channel_seen(cid, channel_display(info), state)
 
@@ -2141,9 +2057,10 @@ def _start_monitor():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
-    global TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
+    global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
     global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTIONS, _INTERACTION_RESPONDER, _INTERACTION_WORKER
+    _DIRECTORY = DirectoryState()
     _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _STATE_STORE = StateFile(lambda: STATE_FILE)
     _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
@@ -2174,7 +2091,7 @@ def _initialize_services():
     _SHARED_MEMBERSHIP = SharedServers(
         lambda path: api_get(path),
         lambda: rest_backing_off(),
-        lambda: list(GUILDS),
+        lambda: list(_DIRECTORY.guilds),
         lambda gid: owners_absent(gid),
         lambda: time.time(),
     )
@@ -2261,7 +2178,7 @@ def main():
         _run_phase("Job scheduling", scheduler.schedule_jobs, state, recovery)
         scheduler.run_job(state, poll_turn, rest_spent, queue is not None)
         _run_phase("Cleanup", _cleanup_cycle, state, scheduler.cycle_done)
-        TM.tick(settings, GUILDS, _MEMBER_COUNTS)
+        TM.tick(settings, _DIRECTORY.guilds, _DIRECTORY.member_counts)
         _wait_for_work(state, status, scheduler, outbox_pass_at)
 
 

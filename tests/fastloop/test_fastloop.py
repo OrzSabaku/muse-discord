@@ -149,7 +149,7 @@ class SlicedJobs(unittest.TestCase):
                 },
             }
         )
-        mod.CHANNELS = {"C1": H.chan(), "OLD": H.chan("old")}
+        mod._DIRECTORY.channels = {"C1": H.chan(), "OLD": H.chan("old")}
         self.st = {
             "last_seen": {"C1": "5", "OLD": "5"},
             "replied_to": [],
@@ -174,16 +174,16 @@ class SlicedJobs(unittest.TestCase):
         mod, H = self.mod, self.H
         job = GeneratorJob(
             "Channel refresh",
-            mod.discovery_iter(self.st),
+            mod._directory_refresh().channels(self.st),
             RestClock(time.time, mod.rest_backing_off),
         )
 
         def gateway_registers():
-            mod.CHANNELS["GW"] = H.chan("gw")
+            mod._DIRECTORY.channels["GW"] = H.chan("gw")
 
         steps = self._run(job, gateway_registers)
         self.assertGreaterEqual(steps, 6)
-        self.assertEqual(set(mod.CHANNELS), {"C1", "C2", "T1", "GW"})
+        self.assertEqual(set(mod._DIRECTORY.channels), {"C1", "C2", "T1", "GW"})
         self.assertIn("C2", self.st["last_seen"])  # seeded
         self.assertEqual(self.st["last_seen"]["C1"], "5")  # untouched
 
@@ -191,7 +191,7 @@ class SlicedJobs(unittest.TestCase):
         mod = self.mod
         job = GeneratorJob(
             "Thread refresh",
-            mod.thread_refresh_iter(self.st),
+            mod._directory_refresh().threads(self.st),
             RestClock(time.time, mod.rest_backing_off),
         )
         mod._BACKOFF.until = time.time() + 60  # REST back-off: the job waits
@@ -199,7 +199,7 @@ class SlicedJobs(unittest.TestCase):
         self.assertFalse(job.done())
         mod._BACKOFF.until = 0
         self.assertGreaterEqual(self._run(job), 3)
-        self.assertIn("T1", mod.CHANNELS)
+        self.assertIn("T1", mod._DIRECTORY.channels)
         self.assertIn("T1", self.st["last_seen"])
 
 

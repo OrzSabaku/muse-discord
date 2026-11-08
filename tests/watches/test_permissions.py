@@ -136,7 +136,7 @@ class WatchPermissionPolicy(H.Base):
         m = self.mod
         self.assertFalse(self.access.can_view(H.G1, H.U1, "unknown"))
         self.assertFalse(self.access.can_view(H.G1, "100000000000000099", H.CH))
-        m.CHANNELS[H.THREAD]["private"] = True
+        m._DIRECTORY.channels[H.THREAD]["private"] = True
         self.assertFalse(self.access.can_view(H.G1, H.U1, H.THREAD))
         m._CHANNEL_OVERWRITES[H.CH] = [{"id": "bad", "type": 0, "allow": str(VIEW), "deny": "0"}]
         self.assertIsNone(self.access.permissions(H.G1, H.U1, H.CH))

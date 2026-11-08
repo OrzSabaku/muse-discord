@@ -7,11 +7,12 @@ messages written before discovery are still ingested.
 
 import time
 from collections.abc import Callable, Container
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from muse_discord.channel_access import ChannelAccess
 from muse_discord.conversation import PRIVATE_THREAD_TYPE, _snowflake_ts, now_snowflake
+from muse_discord.directory.state import DirectoryState
 from muse_discord.reply_protocol import is_snowflake as _is_snowflake
 
 READABLE_CHANNEL_TYPES = (0, 5)
@@ -19,17 +20,6 @@ THREAD_PARENT_TYPES = (15, 16)
 PERM_SEND_MESSAGES = 1 << 11
 PERM_SEND_IN_THREADS = 1 << 38
 NEW_THREAD_SLACK_SECS = 60
-
-
-@dataclass
-class DiscoveryState:
-    guilds: dict = field(default_factory=dict)
-    member_counts: dict = field(default_factory=dict)
-    guild_channels: dict = field(default_factory=dict)
-    categories: dict = field(default_factory=dict)
-    threads_listed: dict = field(default_factory=dict)
-    new_threads: set[str] = field(default_factory=set)
-    started_at: float = field(default_factory=time.time)
 
 
 def _no_access(e):
@@ -120,7 +110,7 @@ class Discovery:
     backing_off: Callable[[], bool]
     identity: Callable[[], str | None]
     allowed_guilds: set[str]
-    state: DiscoveryState
+    state: DirectoryState
     access: ChannelAccess
 
     @property
@@ -351,7 +341,7 @@ class Discovery:
         the poll still reads what arrived in between. When the channel is
         empty or the read fails, the watermark is "now": the history stays
         seen and the next message is still new. A brand-new thread (see
-        _NEW_THREADS) is seeded just below its own id instead, so the poll
+        DirectoryState.new_threads) is seeded just below its own id instead, so the poll
         reads every message in it (a forum post's first message has the
         thread's id)."""
         brand_new = cid in self.state.new_threads

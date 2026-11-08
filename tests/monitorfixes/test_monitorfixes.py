@@ -109,7 +109,10 @@ class Base(unittest.TestCase):
         q = []
         with quiet():
             self.m.sweep_mentions(
-                self.st, q, channels if channels is not None else {CH: self.m.CHANNELS[CH]}, dms=dms
+                self.st,
+                q,
+                channels if channels is not None else {CH: self.m._DIRECTORY.channels[CH]},
+                dms=dms,
             )
         return q
 
@@ -267,13 +270,13 @@ class RefusedStaysRefused(Base):
         inbox = queue.Queue()
         inbox.put(dm)
         with quiet():
-            self.assertEqual(m.drain_gateway(self.st, inbox, m.CHANNELS)[1], [])
+            self.assertEqual(m.drain_gateway(self.st, inbox, m._DIRECTORY.channels)[1], [])
         self.assertEqual(self.ledger(dm["id"])["status"], "skipped")
         # A stranger's declined DM stays unrecorded.
         stranger = dmsg(U1, "hello", channel="400000000000000078")
         inbox.put(stranger)
         with quiet():
-            m.drain_gateway(self.st, inbox, m.CHANNELS)
+            m.drain_gateway(self.st, inbox, m._DIRECTORY.channels)
         self.assertIsNone(self.ledger(stranger["id"]))
         # An owner DM lost while DMs are off is not answered by the sweep
         # either (it used to be: the DM sweep ignored who.replies).
@@ -317,8 +320,8 @@ class ThreadAPI:
 class NewThreads(Base):
     def setUp(self):
         super().setUp()
-        self.m.CHANNELS.pop("703000000000000001", None)
-        self.m.CHANNEL_CATEGORY.clear()
+        self.m._DIRECTORY.channels.pop("703000000000000001", None)
+        self.m._DIRECTORY.categories.clear()
 
     def setup_thread(self, created, starter_mentions=False):
         tid = sf_at(created)
@@ -331,7 +334,7 @@ class NewThreads(Base):
 
     def refresh(self):
         with quiet() as buf:
-            for _ in self.m.thread_refresh_iter(self.st):
+            for _ in self.m._directory_refresh().threads(self.st):
                 pass
         return buf.getvalue()
 
@@ -340,7 +343,7 @@ class NewThreads(Base):
         for msg in msgs:
             inbox.put(msg)
         with quiet():
-            return self.m.drain_gateway(self.st, inbox, self.m.CHANNELS)[0]
+            return self.m.drain_gateway(self.st, inbox, self.m._DIRECTORY.channels)[0]
 
     def poll(self, tid):
         with quiet():
@@ -352,7 +355,7 @@ class NewThreads(Base):
         # stage it again.
         tid, starter, mention = self.setup_thread(time.time() - 1)
         self.refresh()
-        self.assertIn(tid, self.m.CHANNELS)
+        self.assertIn(tid, self.m._DIRECTORY.channels)
         found = self.drain(starter, mention)
         self.assertEqual([x[0]["id"] for x in found], [mention["id"]])
         self.assertEqual(self.poll(tid), [])
@@ -380,7 +383,7 @@ class NewThreads(Base):
     def test_old_threads_history_is_not_new(self):
         # Created long before the monitor started: seeded at its newest.
         tid, _starter, mention = self.setup_thread(time.time() - 3600)
-        self.m.MONITOR_STARTED = time.time() - 60
+        self.m._DIRECTORY.started_at = time.time() - 60
         self.refresh()
         self.assertEqual(self.st["last_seen"][tid], mention["id"])
         self.assertEqual(self.poll(tid), [])
@@ -389,8 +392,8 @@ class NewThreads(Base):
         # created since that listing is new.
         self.setUp()
         m = self.m
-        m.MONITOR_STARTED = time.time() - 7200
-        m._THREADS_LISTED[G1] = time.time() - 300
+        m._DIRECTORY.started_at = time.time() - 7200
+        m._DIRECTORY.threads_listed[G1] = time.time() - 300
         tid, _, mention = self.setup_thread(time.time() - 1200)
         tid2 = sf_at(time.time() - 200)
         api = ThreadAPI(
@@ -433,7 +436,7 @@ class SystemNotices(Base):
         inbox = queue.Queue()
         inbox.put(pin)
         with quiet():
-            self.assertEqual(m.drain_gateway(self.st, inbox, m.CHANNELS)[1], [])
+            self.assertEqual(m.drain_gateway(self.st, inbox, m._DIRECTORY.channels)[1], [])
         m.api.history[DM_CH] = [pin]
         self.assertEqual(self.sweep({}, dms=True), [])
 

@@ -60,9 +60,9 @@ class F2BurstLedger(unittest.TestCase):
 
     def _sweep(self, mod, st, msgs):
         mod.api.msgs["C1"] = msgs
-        mod.CHANNELS = {"C1": chan()}
+        mod._DIRECTORY.channels = {"C1": chan()}
         q = []
-        mod.sweep_mentions(st, q, mod.CHANNELS)
+        mod.sweep_mentions(st, q, mod._DIRECTORY.channels)
         return [i["message_id"] for i in q]
 
     def test_mid_burst_mention_not_answered_twice(self):
@@ -144,7 +144,7 @@ class F6Watermarks(unittest.TestCase):
         self.st = new_state(self.mod)
         self.m0 = msg("C1", "U2", "old", age=100)
         self.st["last_seen"]["C1"] = self.m0["id"]
-        self.mod.CHANNELS = {"C1": chan()}
+        self.mod._DIRECTORY.channels = {"C1": chan()}
 
     def poll(self):
         tr = self.mod.check_channel("C1", "Srv #general", self.st, G1)
@@ -154,7 +154,7 @@ class F6Watermarks(unittest.TestCase):
         inbox = pyqueue.Queue()
         for m in msgs:
             inbox.put(m)
-        men, _ = self.mod.drain_gateway(self.st, inbox, self.mod.CHANNELS)
+        men, _ = self.mod.drain_gateway(self.st, inbox, self.mod._DIRECTORY.channels)
         return [m["id"] for m, *_ in men]
 
     def test_gateway_gap_is_repaired_by_poll(self):
@@ -165,12 +165,12 @@ class F6Watermarks(unittest.TestCase):
         self.assertEqual(self.poll(), [m2["id"]])
         # An owner DM the poll missed is swept up.
         mod = self.mod
-        mod.CHANNELS = {}
+        mod._DIRECTORY.channels = {}
         mod._DIRECT_MESSAGES.names = {"DM1": "owner"}
         d1 = msg("DM1", OWNER, "are you there?", gid=None, age=600)
         mod.api.msgs["DM1"] = [d1]
         q = []
-        mod.sweep_mentions(self.st, q, mod.CHANNELS)
+        mod.sweep_mentions(self.st, q, mod._DIRECTORY.channels)
         self.assertEqual([(i["message_id"], i["kind"]) for i in q], [(d1["id"], "dm")])
 
     def test_gateway_and_poll_process_once(self):
@@ -229,7 +229,7 @@ class F7Discovery(unittest.TestCase):
     def test_unseeded_history_is_not_new_and_reseed_keeps_watermark(self):
         mod = H.load_monitor()
         st = new_state(mod)
-        mod.CHANNELS = {"C1": chan()}
+        mod._DIRECTORY.channels = {"C1": chan()}
         old = [msg("C1", "U1", f"@bot {i}", mention=True) for i in range(5)]
         mod.api.msgs["C1"] = list(old)
         tr = mod.check_channel("C1", "Srv #general", st, G1)
@@ -339,7 +339,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
         cid, rid = sf(), sf(5)
         # A server channel the bot reads (the owner-DM gate looks up any
         # channel it cannot place).
-        mod.CHANNELS[cid] = {"name": "general", "guild_id": sf()}
+        mod._DIRECTORY.channels[cid] = {"name": "general", "guild_id": sf()}
         # The monitor queued rid there (an outbox item answers an open
         # item, with its reply_nonce).
         mod.queue_edit(add=[{"message_id": rid, "channel_id": cid}])

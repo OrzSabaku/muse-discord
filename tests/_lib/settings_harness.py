@@ -141,7 +141,7 @@ def load_monitor(cfg_text, tmp=None, channels=True):
     mod.cfg_path = cfg
     mod.tmp = tmp
     if channels:
-        mod.CHANNELS = {
+        mod._DIRECTORY.channels = {
             CH: {"name": "general", "guild_id": G1, "guild_name": "Lounge", "can_send": True},
             CH2: {"name": "random", "guild_id": G1, "guild_name": "Lounge", "can_send": True},
             THREAD: {
@@ -154,8 +154,8 @@ def load_monitor(cfg_text, tmp=None, channels=True):
             },
             CH_G2: {"name": "chat", "guild_id": G2, "guild_name": "Other", "can_send": True},
         }
-        mod.CHANNEL_CATEGORY.update({CH: CAT})
-        mod.GUILDS = {G1: {"name": "Lounge"}, G2: {"name": "Other"}}
+        mod._DIRECTORY.categories.update({CH: CAT})
+        mod._DIRECTORY.guilds = {G1: {"name": "Lounge"}, G2: {"name": "Other"}}
     return mod
 
 

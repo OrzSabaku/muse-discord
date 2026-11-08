@@ -461,7 +461,7 @@ class UIData(unittest.TestCase):
     def test_recent_outcomes_by_place(self):
         m = self.mod
         thread = "703000000000000009"
-        m.CHANNELS[thread] = {
+        m._DIRECTORY.channels[thread] = {
             "name": "general > t",
             "guild_id": G1,
             "thread": True,
@@ -527,7 +527,7 @@ class UIData(unittest.TestCase):
         self.setUp()  # a fresh monitor and ledger
         m = self.mod
         new, cat = "705000000000000001", "800000000000000009"
-        m.CHANNELS[new] = {
+        m._DIRECTORY.channels[new] = {
             "name": "new-room",
             "guild_id": G1,
             "guild_name": "g",
@@ -551,7 +551,7 @@ class UIData(unittest.TestCase):
         )
         self.assertIsNone(self.ctx.outcome("3001")["parent_id"])
         # Discovery forgets the channel: the entry still says where.
-        del m.CHANNELS[new]
+        del m._DIRECTORY.channels[new]
         with quiet():
             m.publish_directory()
         self.assertEqual(self.ctx.outcome("3001")["guild_id"], G1)
@@ -655,7 +655,7 @@ class JoinNotice(unittest.TestCase):
         st = state(mod)
         st["known_guilds"] = {G1: "Lounge"}
         with quiet():
-            mod.sync_guilds(st, mod.GUILDS, mod.CHANNELS)
+            mod.sync_guilds(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)
         dms = mod.api.dm_posts()
         self.assertEqual(len(dms), 1)
         btn = dms[0]["components"][0]["components"][0]

@@ -261,7 +261,7 @@ class OwnerItems(_B):
             (the, "the"),
             ("708000000000000001", "hidden-room"),
         ):
-            self.mod.CHANNELS[cid] = {"name": name, "guild_id": G1}
+            self.mod._DIRECTORY.channels[cid] = {"name": name, "guild_id": G1}
         own = self.queue(
             gmsg(
                 OWNER,

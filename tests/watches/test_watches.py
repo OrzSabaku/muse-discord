@@ -412,10 +412,10 @@ class Robustness(Base):
 
     def test_a_fire_refused_for_now_is_kept_and_retried(self):
         self.remind(after=60)
-        info = self.mod.CHANNELS.pop(CH)  # briefly unknown
+        info = self.mod._DIRECTORY.channels.pop(CH)  # briefly unknown
         self.tick(ahead=61)
         self.assertEqual(self.fires(), [])
-        self.mod.CHANNELS[CH] = info
+        self.mod._DIRECTORY.channels[CH] = info
         self.tick(ahead=61 + 3601)
         (f,) = self.fires()
         self.assertTrue(f["reminder"]["late"])
@@ -521,7 +521,7 @@ class Watches(Base):
         # server: what they can read there decides alone.
         self.watch(OWNER, ["pizza"], where=f"server:{G1}", every=True, channel=DM, dm=True)
         self.assertEqual(len(self.items()), 1, self.out)
-        self.mod.CHANNELS[THREAD]["private"] = True
+        self.mod._DIRECTORY.channels[THREAD]["private"] = True
         # CH2 is closed to the owner, a private thread to everyone not
         # in it: never matched there.
         self.scan(gmsg(U2, "free PIZZA here", channel=CH2))
@@ -572,7 +572,7 @@ class Watches(Base):
         # notice in the lobby must not reveal what was said in CH.
         m = self.mod
         lobby = "705000000000000001"
-        m.CHANNELS[lobby] = {
+        m._DIRECTORY.channels[lobby] = {
             "name": "lobby",
             "guild_id": G1,
             "guild_name": "Lounge",

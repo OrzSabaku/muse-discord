@@ -7,7 +7,7 @@ scheduler flags or imports its composition root.
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from muse_discord.directory.discovery import DiscoveryState
+from muse_discord.directory.state import DirectoryState
 from muse_discord.muse_settings import Settings
 from muse_discord.owner.join_notices import JoinNotices
 from muse_discord.owner.presence import OwnerPresence
@@ -16,7 +16,7 @@ from muse_discord.response_policy import note_guild_joined
 
 @dataclass
 class GuildLifecycle:
-    directory: DiscoveryState
+    directory: DirectoryState
     channels: dict
     presence: OwnerPresence
     notices: JoinNotices
