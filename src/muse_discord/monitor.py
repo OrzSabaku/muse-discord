@@ -47,8 +47,6 @@ import os
 import queue as pyqueue
 import random
 import re
-import secrets
-import subprocess
 import sys
 import threading
 import time
@@ -81,13 +79,13 @@ from muse_discord.conversation import (
 from muse_discord.conversation import _snowflake_ts as _snowflake_ts
 from muse_discord.conversation import _who as _who
 from muse_discord.ingest import MessageEnqueuer
+from muse_discord.interactions import ephemeral, interaction_user_id
 from muse_discord.message_models import (
     LEDGER_TERMINAL,
     DeliveryOptions,
     LedgerContext,
     QueueContext,
     SecretBlocked,
-    Settlement,
     Speaker,
 )
 from muse_discord.message_models import (
@@ -98,10 +96,17 @@ from muse_discord.message_queue import answered_id as _answered_id
 from muse_discord.message_queue import keep_last as _keep_last
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
 from muse_discord.outbox_store import redact_nonces as redact_nonces
+from muse_discord.owner.admin_digest import AdminDigests
 from muse_discord.owner.authorization import OwnerAuthorization
 from muse_discord.owner.capabilities import CapabilityFiles, CapabilityIssuer
+from muse_discord.owner.join_notices import JoinNotices
 from muse_discord.owner.memory import OwnerMemory
+from muse_discord.owner.messaging import OwnerMessenger
+from muse_discord.owner.presence import OwnerPresence
+from muse_discord.owner.review import ReplyReview
+from muse_discord.owner.review import released_ok as hold_released_ok
 from muse_discord.owner.targets import CommandTargets
+from muse_discord.owner.updates import UpdateNotices, version_installed
 from muse_discord.paths import project_root
 from muse_discord.reply_delivery import OutboxDelivery
 from muse_discord.reply_protocol import is_snowflake as _is_snowflake
@@ -127,7 +132,6 @@ PRIVATE_THREAD_TYPE = 12
 APPLICATION_COMMAND_TYPE = 2
 HEARTBEAT_INTERVAL_SECS = 30
 MEMBER_CACHE_LIMIT = 2000
-DIRECTORY_PREVIEW_LIMIT = 40
 ACTIVITY_CACHE_LIMIT = 1000
 PENDING_MESSAGE_ATTEMPTS = 3
 TYPING_CACHE_TTL_SECS = 60
@@ -258,7 +262,7 @@ def _proactive_context():
         never_share_hit=lambda *args, **kwargs: never_share_hit(*args, **kwargs),
         normalize_parts=lambda *args, **kwargs: normalize_parts(*args, **kwargs),
         notify_owners=lambda *args, **kwargs: notify_owners(*args, **kwargs),
-        owner_check_pending=lambda *args, **kwargs: owner_check_pending(*args, **kwargs),
+        owner_check_pending=lambda state, gid: _owner_presence().pending(state, gid),
         owners_absent=lambda *args, **kwargs: owners_absent(*args, **kwargs),
         queue_edit=lambda *args, **kwargs: queue_edit(*args, **kwargs),
         queued_item_meta=lambda *args, **kwargs: queued_item_meta(*args, **kwargs),
@@ -1584,86 +1588,40 @@ def own_replies_in_run(history, msg):
     return _conversation().own_replies_in_run(history, msg)
 
 
+def _owner_messenger():
+    return OwnerMessenger(lambda: OWNER_USER_IDS, guard_outgoing, api_post)
+
+
+def _update_notices():
+    return UpdateNotices(
+        UPDATE_CHECK_FILE,
+        UPDATE_REQUEST_FILE,
+        _owner_messenger(),
+        updates_enabled,
+        rest_backing_off,
+        _version_installed,
+        _update_announced,
+    )
+
+
+def _admin_digests():
+    return AdminDigests(
+        _directory_name,
+        _USER_NAMES,
+        GUILDS,
+        _owner_messenger().notify,
+        rest_backing_off,
+        _ADMIN_CHANGES,
+        _ADMIN_LOCK,
+    )
+
+
 def notify_owners(text, components=None, flags=None):
-    """DM every owner (with message components, e.g. buttons, and
-    message flags when given). Returns True when at least one DM landed
-    (or there is nobody to tell). Never raises."""
-    if not OWNER_USER_IDS:
-        print(f"Owner notice (no owners configured): {text}", flush=True)
-        return True
-    payload = {"content": text[:1990], "allowed_mentions": {"parse": []}}
-    if components:
-        payload["components"] = components
-    if flags:
-        payload["flags"] = flags
-    delivered = False
-    for uid in sorted(OWNER_USER_IDS):
-        if dm_owner(uid, payload):
-            delivered = True
-    return delivered
+    return _owner_messenger().notify(text, components, flags)
 
 
 def dm_owner(uid, payload):
-    """Send one message payload (content, components, ...) to one
-    owner's DM channel. True when it landed. Never raises."""
-    try:
-        payload = guard_outgoing(payload, "an owner's DM")
-        c = api_post("/users/@me/channels", {"recipient_id": uid})
-        api_post(f"/channels/{c['id']}/messages", payload)
-        return True
-    except Exception as e:
-        print(f"Owner DM to {uid} failed: {e}", flush=True)
-        return False
-
-
-def _join_summary(gid, ginfo, channels):
-    name = ginfo.get("name") or gid
-    visible = sorted(
-        (info.get("name", "?"), info.get("can_send"))
-        for info in channels.values()
-        if info.get("guild_id") == gid and not info.get("thread")
-    )
-    shown = ", ".join(
-        "#" + n + (" (read-only)" if s is False else "")
-        for n, s in visible[:DIRECTORY_PREVIEW_LIMIT]
-    )
-    if len(visible) > DIRECTORY_PREVIEW_LIMIT:
-        shown += f", and {len(visible) - DIRECTORY_PREVIEW_LIMIT} more"
-    st = settings()
-    res = st.resolve(MS.Scope.server(gid, name))
-    seen = f"Channels I can see ({len(visible)}): {shown or 'none'}\n"
-    if owners_absent(gid) and OWNER_IN_GUILD.get(gid) is None:
-        return (
-            f"I was added to **{name}**. I couldn't check yet whether "
-            f"any of you is in that server, so I'm not answering "
-            f"anyone there for now.\n{seen}"
-            f"To let me talk there, press **Configure** and pick When "
-            f"it answers."
-        )
-    if owners_absent(gid):
-        return (
-            f"I was added to **{name}**, a server none of you is in, "
-            f"so I'm not answering anyone there.\n{seen}"
-            f"To let me talk there, press **Configure** and pick When "
-            f"it answers. To remove me, a server admin there can kick "
-            f"me."
-        )
-    replies = {
-        "freely": "I may join conversations without being mentioned there",
-        "off": "I stay quiet there",
-        "when-addressed": "I answer @mentions and replies to my messages there",
-        "conversational": "I answer @mentions and replies to my "
-        "messages there, and the follow-ups of "
-        "someone I just answered",
-    }
-    on = ["image and video generation"] if res.get("media.enabled") else []
-    return (
-        f"I just joined **{name}**.\n"
-        f"{replies.get(res['who.replies'], replies['when-addressed'])}"
-        f". Extras on there: {', '.join(on) or 'none'}.\n{seen}"
-        f"To change what I do there, press **Configure** or use "
-        f"/settings."
-    )
+    return _owner_messenger().dm(uid, payload)
 
 
 # Servers none of the owners is in. A public bot can be
@@ -1685,94 +1643,33 @@ def _join_summary(gid, ginfo, channels):
 # OWNER_IN_GUILD mirrors it: True, False (no owner), None (not checked
 # yet; gated like False).
 OWNER_IN_GUILD = {}
-OWNER_RECHECK_SECS = 3600
-OWNER_CHECKS_PER_PASS = 5
-OWNER_NOTICE_WAIT_FAILS = 3  # failed checks before a join notice says so
 
 
-def _owner_entry(e):
-    if isinstance(e, dict):
-        return {
-            "in": bool(e.get("in")),
-            "checked": bool(e.get("checked")),
-            "next": float(e.get("next") or 0),
-            "fails": int(e.get("fails") or 0),
-        }
-    return None
+def _owner_presence():
+    return OwnerPresence(
+        lambda: OWNER_USER_IDS,
+        settings,
+        api_get,
+        rest_backing_off,
+        OWNER_IN_GUILD,
+        _OWNER_SPOKE,
+    )
+
+
+def _join_notices():
+    return JoinNotices(_owner_presence(), _owner_messenger(), rest_backing_off, SETTINGS_PREFIX)
 
 
 def mirror_owner_presence(state):
-    """Rebuild OWNER_IN_GUILD from state (at boot, and after a check)."""
-    seen = state.setdefault("owner_in_guild", {})
-    for gid in list(seen):
-        e = _owner_entry(seen[gid])
-        if e is None:
-            del seen[gid]
-        else:
-            seen[gid] = e
-    OWNER_IN_GUILD.clear()
-    OWNER_IN_GUILD.update({g: (e["in"] if e["checked"] else None) for g, e in seen.items()})
-
-
-def owner_member(gid):
-    """Whether any owner is in the server; None when Discord could not
-    say (checked again later)."""
-    for uid in sorted(OWNER_USER_IDS):
-        try:
-            api_get(f"/guilds/{gid}/members/{uid}")
-            return True
-        except Exception as e:
-            if getattr(e, "code", None) in (403, 404):
-                continue  # not a member
-            return None
-    return False
+    return _owner_presence().restore(state)
 
 
 def note_guild_join_for_owners(state, gid):
-    """A join: the server is ownerless until a check says otherwise."""
-    state.setdefault("owner_in_guild", {}).setdefault(
-        gid, {"in": False, "checked": False, "next": 0, "fails": 0}
-    )
-    OWNER_IN_GUILD.setdefault(gid, None)
+    return _owner_presence().joined(state, gid)
 
 
 def check_owner_presence(state, guilds, joined=(), every=False):
-    """Check the servers due for an owner check (just joined, or still
-    ownerless), oldest due first, a few per pass (every: all of them);
-    then refresh the mirror."""
-    mirror_owner_presence(state)
-    seen = state["owner_in_guild"]
-    now = time.time()
-    for gid in joined:
-        note_guild_join_for_owners(state, gid)
-    for gid, e in seen.items():
-        if _OWNER_SPOKE.get(gid):
-            e.update({"in": True, "checked": True})
-    _OWNER_SPOKE.clear()
-    if OWNER_USER_IDS and not rest_backing_off():
-        due = sorted(
-            (e["next"], gid)
-            for gid, e in seen.items()
-            if not e["in"] and e["next"] <= now and gid in guilds
-        )
-        for _next, gid in due[: None if every else OWNER_CHECKS_PER_PASS]:
-            if rest_backing_off():
-                break  # the rest stay gated, and are checked later
-            e = seen[gid]
-            res = owner_member(gid)
-            if res is None:
-                e["fails"] += 1
-                e["next"] = now + min(60 * 2 ** e["fails"], OWNER_RECHECK_SECS)
-                continue
-            e.update({"in": res, "checked": True, "fails": 0, "next": now + OWNER_RECHECK_SECS})
-            if not res:
-                print(
-                    f"No owner is in server {gid}: answering nobody "
-                    f"there until an owner chooses When it answers "
-                    f"for it.",
-                    flush=True,
-                )
-    mirror_owner_presence(state)
+    return _owner_presence().check(state, guilds, joined, every)
 
 
 # Servers where an owner spoke since the last check (main loop and the
@@ -1781,41 +1678,7 @@ _OWNER_SPOKE = {}
 
 
 def owners_absent(gid):
-    """True when no owner is known to be in this server (checked and
-    absent, or not checked yet since the bot joined) and no owner chose
-    When it answers for it: then it answers nobody there."""
-    if not gid or not OWNER_USER_IDS or gid not in OWNER_IN_GUILD or OWNER_IN_GUILD[gid] is True:
-        return False
-    return not settings().owner_sets_server(gid, "who.replies")
-
-
-def owner_check_pending(state, gid):
-    """True while a just-joined server's owner check has not answered
-    and has not failed often enough to give up waiting for it."""
-    e = (state.get("owner_in_guild") or {}).get(gid)
-    return (
-        isinstance(e, dict)
-        and not e.get("checked")
-        and int(e.get("fails") or 0) < OWNER_NOTICE_WAIT_FAILS
-    )
-
-
-def configure_button(gid):
-    """The join notice's button: opens that server's /settings page
-    (handled by settings_ui, custom_id mdset:open:server:<id>)."""
-    return [
-        {
-            "type": 1,
-            "components": [
-                {
-                    "type": 2,
-                    "style": 1,
-                    "label": "Configure",
-                    "custom_id": f"{SETTINGS_PREFIX}:open:server:{gid}",
-                }
-            ],
-        }
-    ]
+    return _owner_presence().absent(gid)
 
 
 def sync_guilds(state, guilds, channels):
@@ -1876,22 +1739,7 @@ def warn_stale_labels():
 
 
 def flush_join_notices(state, guilds, channels):
-    """Send owed join summaries; anything undelivered is retried later."""
-    notices = state.get("join_notices") or []
-    if not notices or rest_backing_off():
-        return
-    left = []
-    for gid in notices:
-        if gid not in state.get("known_guilds", {}):
-            continue  # removed again before the notice went out
-        if owner_check_pending(state, gid):
-            left.append(gid)  # say what the owner check found
-            continue
-        if not notify_owners(
-            _join_summary(gid, guilds.get(gid) or {}, channels), components=configure_button(gid)
-        ):
-            left.append(gid)
-    state["join_notices"] = left
+    return _join_notices().flush(state, guilds, channels)
 
 
 def on_guild_event(state, ev):
@@ -1939,139 +1787,21 @@ def on_guild_event(state, ev):
 # ---------------------------------------------------------------------------
 UPDATE_CHECK_FILE = os.path.join(BASE_DIR, "update_check.json")
 UPDATE_REQUEST_FILE = os.path.join(BASE_DIR, "update_request.json")
-UPDATE_ENTRIES_SHOWN = 5
-UPDATE_DM_TRIES = 10  # owed DMs retried once per cycle, then given up
 # The newest announced version, mirrored from state.json for the
 # interaction thread (only the main loop touches state).
 _update_announced = {"version": None}
-_updates_cfg = {"mtime": None, "check": MS.TOP["updates.notify"].default}
 
 
 def updates_enabled():
-    """updates.notify (old layout: updates.check), re-read when
-    config.yaml or the overlay changes, so turning it off stops the DMs
-    without a restart."""
-    path = _config_path()
-    try:
-        mtime = os.path.getmtime(path)
-    except OSError:
-        return _updates_cfg["check"]
-    with contextlib.suppress(OSError):
-        mtime = (mtime, os.path.getmtime(_SETTINGS.overlay_path))
-    if mtime != _updates_cfg["mtime"]:
-        _updates_cfg["mtime"] = mtime
-        # An invalid edit keeps the last known settings.
-        _updates_cfg["check"] = settings().updates_notify
-    return _updates_cfg["check"]
-
-
-def release_version(value):
-    """(major, minor, patch) for a release tag "vX.Y.Z", else None
-    (pre-releases such as v1.2.0-rc.1 and other tags are not releases)."""
-    if not isinstance(value, str):
-        return None
-    m = re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", value)
-    return tuple(int(x) for x in m.groups()) if m else None
+    return bool(settings().updates_notify)
 
 
 def _version_installed(tag, timeout=5):
-    """True when HEAD already contains the release tag (updated by hand
-    before the notice went out, or since). False when git cannot tell,
-    e.g. the tag was never fetched."""
-    try:
-        r = subprocess.run(
-            ["git", "-C", BASE_DIR, "merge-base", "--is-ancestor", f"refs/tags/{tag}", "HEAD"],
-            capture_output=True,
-            timeout=timeout,
-        )
-    except Exception:
-        return False
-    return r.returncode == 0
-
-
-def _entry_line(heading):
-    """A CHANGELOG release heading "vX.Y.Z (YYYY-MM-DD): Title" as
-    "vX.Y.Z: Title"; anything else as is."""
-    m = re.fullmatch(r"(v\S+)\s+\([^)]*\):\s*(.+)", heading)
-    return f"{m.group(1)}: {m.group(2)}" if m else heading
-
-
-def update_notice_text(info):
-    version = info["latest"]
-    installed = info.get("installed")
-    on = (
-        f"you're on {installed}"
-        if release_version(installed)
-        else "you're on an unreleased version"
-    )
-    lines = [f"**muse-discord {version} is out** ({on})."]
-    entries = [_entry_line(str(e))[:150] for e in info.get("entries") or [] if e]
-    if entries:
-        lines.append("What's new:")
-        lines += ["- " + e for e in entries[:UPDATE_ENTRIES_SHOWN]]
-        if len(entries) > UPDATE_ENTRIES_SHOWN:
-            lines.append(f"- +{len(entries) - UPDATE_ENTRIES_SHOWN} more")
-    else:
-        lines.append("See the changelog for what's new.")
-    if info.get("action_needed"):
-        lines.append("Some changes need a step from you; your Muse walks you through them.")
-    lines.append(
-        f"**Update now**: your Muse updates to {version} in its "
-        "main chat and asks before touching anything you "
-        f"changed. **Later**: skip {version}; I'll ask again when "
-        "a newer version comes out."
-    )
-    return "\n".join(lines)[:1990]
-
-
-def update_buttons(version):
-    return [
-        {
-            "type": 1,
-            "components": [
-                {"type": 2, "style": 1, "label": "Update now", "custom_id": f"mdupd:now:{version}"},
-                {"type": 2, "style": 2, "label": "Later", "custom_id": f"mdupd:later:{version}"},
-            ],
-        }
-    ]
+    return version_installed(BASE_DIR, tag, timeout)
 
 
 def announce_update(state):
-    """DM the owners about the release in update_check.json, once per
-    version: only a version newer than the last one announced is
-    offered. Owners whose DM failed are retried each cycle."""
-    upd = state.setdefault("update_notice", {})
-    _update_announced["version"] = upd.get("version")
-    if not updates_enabled():
-        return
-    info = _read_json(UPDATE_CHECK_FILE) or {}
-    version = info.get("latest")
-    new = release_version(version)
-    last = release_version(upd.get("version"))
-    if new and (last is None or new > last):
-        upd.clear()
-        upd.update(version=version, at=int(time.time()), owed=[], tries=0)
-        if _version_installed(version):
-            print(f"Update {version} is already installed; no notice.", flush=True)
-        elif not OWNER_USER_IDS:
-            print(f"Update {version} available (no owners configured to tell).", flush=True)
-        else:
-            upd.update(owed=sorted(OWNER_USER_IDS), text=update_notice_text(info))
-            print(f"Update {version} available: DMing the owners.", flush=True)
-        _update_announced["version"] = version
-    owed = upd.get("owed") or []
-    if not owed or rest_backing_off():
-        return
-    payload = {
-        "content": upd.get("text") or "",
-        "allowed_mentions": {"parse": []},
-        "components": update_buttons(upd["version"]),
-    }
-    upd["owed"] = [uid for uid in owed if not dm_owner(uid, payload)]
-    upd["tries"] = upd.get("tries", 0) + 1
-    if upd["owed"] and upd["tries"] >= UPDATE_DM_TRIES:
-        print(f"Update notice undeliverable to {', '.join(upd['owed'])}; giving up.", flush=True)
-        upd["owed"] = []
+    return _update_notices().announce(state)
 
 
 def telemetry_notice():
@@ -2083,50 +1813,13 @@ def telemetry_notice():
 
 
 def apply_record(state, rec):
-    """Main-loop side of an interaction: persist what the interaction
-    thread decided (it never writes state.json itself)."""
-    if rec.get("kind") == "update_choice":
-        upd = state.setdefault("update_notice", {})
-        if rec.get("version") == upd.get("version"):
-            upd["choice"] = {k: rec.get(k) for k in ("action", "by", "at")}
-        print(
-            f"Owner {rec.get('by')} chose "
-            f"{'Update now' if rec.get('action') == 'now' else 'Later'} "
-            f"for update {rec.get('version')}.",
-            flush=True,
-        )
-    elif rec.get("kind") == "hold_choice":
-        hid = rec.get("hold")
-        hold = state.get("holds", {}).pop(hid, None)
-        _holds_live.pop(hid, None)
-        if not hold:
-            return  # expired meanwhile
-        where = hold.get("where") or "?"
-        if rec.get("action") == "send":
-            # Sent through the outbox like any reply (retries, the
-            # attachment pipeline, settling); the hold id lets this one
-            # item past the never_share check.
-            state.setdefault("hold_released", {})[hid] = {
-                "at": time.time(),
-                "qid": hold.get("qid"),
-                "channel_id": str((hold.get("item") or {}).get("channel_id")),
-            }
-            state.setdefault("released", []).append(dict(hold["item"], _hold=hid))
-            print(
-                f"Owner {rec.get('by')} chose Send anyway for the held reply in {where}.",
-                flush=True,
-            )
-        else:
-            _settle(
-                state,
-                hold["item"],
-                outcome=Settlement(
-                    status="skipped", reason="never_share hold discarded by an owner"
-                ),
-            )
-            print(f"Owner {rec.get('by')} discarded the held reply in {where}.", flush=True)
-    elif rec.get("kind") == "proactive_yes":
-        PRO.apply_button(rec)  # a person's own Yes (proactive.py)
+    kind = rec.get("kind")
+    if kind == "update_choice":
+        _update_notices().apply_choice(state, rec)
+    elif kind == "hold_choice":
+        _reply_review().apply_choice(state, rec)
+    elif kind == "proactive_yes":
+        PRO.apply_button(rec)
 
 
 # Interaction dispatch: one handler per key, the custom_id prefix (the
@@ -2140,30 +1833,6 @@ INTERACTION_CALLBACK_TIMEOUT = 2.5  # inside Discord's 3s deadline
 
 def register_interaction(key, handler, owner_only=True):
     INTERACTION_HANDLERS[key] = (handler, owner_only)
-
-
-def ephemeral(text):
-    """A callback response only the clicking user sees."""
-    return {"type": 4, "data": {"content": text, "flags": 64, "allowed_mentions": {"parse": []}}}
-
-
-def closed_card(ix, line):
-    """The clicked message, buttons removed, with line added: what was
-    chosen."""
-    original = (ix.get("message") or {}).get("content") or ""
-    return {
-        "type": 7,
-        "data": {
-            "content": original[: 1990 - len(line)] + "\n\n" + line,
-            "components": [],
-            "allowed_mentions": {"parse": []},
-        },
-    }
-
-
-def interaction_user_id(ix):
-    user = (ix.get("member") or {}).get("user") or ix.get("user") or {}
-    return str(user.get("id") or "")
 
 
 def dispatch_interaction(ix, record):
@@ -2217,39 +1886,7 @@ def _interaction_thread_main(ix_inbox, record):
 
 
 def on_update_button(ix, rest, uid, record):
-    action, _, version = rest.partition(":")
-    if action not in ("now", "later") or not release_version(version):
-        return ephemeral("That control is no longer active.")
-    announced = _update_announced["version"]
-    if version != announced:
-        version_key, announced_key = release_version(version), release_version(announced)
-        if version_key is not None and announced_key is not None and version_key < announced_key:
-            return ephemeral(
-                f"This message is out of date: {announced} "
-                f"is out now. Use the newest update message."
-            )
-        return ephemeral("That control is no longer active.")
-    # Short timeout: the whole answer must land within Discord's 3s.
-    if _version_installed(version, timeout=1):
-        return ephemeral(f"{version} is already installed; nothing to do.")
-    now = int(time.time())
-    if action == "now":
-        if (_read_json(UPDATE_REQUEST_FILE) or {}).get("version") != version:
-            try:
-                atomic_write(
-                    UPDATE_REQUEST_FILE, {"version": version, "requested_at": now, "by": uid}
-                )
-            except OSError as e:
-                print(f"Could not write update_request.json: {e}", flush=True)
-                return ephemeral("I could not record the request; try again in a moment.")
-        line = (
-            f"**Update now** chosen. Your Muse is starting the update "
-            f"to {version} in its main chat."
-        )
-    else:
-        line = f"**Later** chosen. I won't offer {version} again, only newer versions."
-    record({"kind": "update_choice", "version": version, "action": action, "by": uid, "at": now})
-    return closed_card(ix, line)
+    return _update_notices().on_button(ix, rest, uid, record)
 
 
 register_interaction("mdupd", on_update_button)
@@ -2266,129 +1903,29 @@ register_interaction("mdupd", on_update_button)
 # it back through the outbox as the original reply; Discard and the
 # 24-hour expiry drop it. The phrase list is never logged.
 # ---------------------------------------------------------------------------
-HOLD_TTL_SECS = 24 * 3600
 # hold id -> held at, mirrored from state.json for the interaction thread
 # (only the main loop touches state).
 _holds_live = {}
 
 
+def _reply_review():
+    return ReplyReview(settings, _owner_messenger(), DM_CHANNEL_USER, _settle, _holds_live)
+
+
 def never_share_hit(state, item, qid, parts):
-    """True when this reply must be held (see above)."""
-    phrases = settings().get("privacy.never_share", MS.Scope.everywhere())
-    if not phrases or not parts:
-        return False
-    if hold_released_ok(state, item):
-        return False  # an owner chose Send anyway
-    meta = state.get("item_meta", {}).get(qid) if qid else None
-    if meta:
-        owner_dm = bool(meta.get("dm")) and str(meta.get("author_id")) in OWNER_USER_IDS
-    else:
-        owner_dm = DM_CHANNEL_USER.get(item.get("channel_id")) in OWNER_USER_IDS
-    if owner_dm:
-        return False
-    text = "\n".join(parts)
-    return any(
-        re.search(r"(?<!\w)" + re.escape(str(p)) + r"(?!\w)", text, re.IGNORECASE)
-        for p in phrases
-        if str(p).strip()
-    )
-
-
-def hold_buttons(hid):
-    return [
-        {
-            "type": 1,
-            "components": [
-                {"type": 2, "style": 4, "label": "Send anyway", "custom_id": f"mdhold:send:{hid}"},
-                {"type": 2, "style": 2, "label": "Discard", "custom_id": f"mdhold:discard:{hid}"},
-            ],
-        }
-    ]
+    return _reply_review().hit(state, item, qid, parts)
 
 
 def hold_reply(state, item, qid, parts):
-    """Hold a reply that hit never_share and DM the owners about it."""
-    hid = secrets.token_hex(6)
-    where = item.get("channel_name") or item.get("channel_id")
-    to = item.get("author") or "someone"
-    state.setdefault("holds", {})[hid] = {
-        "item": {k: v for k, v in item.items() if k != "_retry"},
-        "at": time.time(),
-        "qid": qid,
-        "where": where,
-        "to": to,
-    }
-    _holds_live[hid] = time.time()
-    _settle(
-        state,
-        item,
-        outcome=Settlement(status="skipped", reason="held for owner review (never_share)"),
-    )
-    head = (
-        f"**I held back a reply** to {to} in {where}: it contains one "
-        f"of your never-share phrases, so I didn't post it.\n"
-    )
-    tail = (
-        "\n**Send anyway** posts it as written; **Discard** drops "
-        "it. If you don't choose within a day, I drop it."
-    )
-    body = "> " + "\n".join(parts).replace("\n", "\n> ")
-    room = 1990 - len(head) - len(tail)
-    if len(body) > room:
-        body = body[: room - 1] + "\u2026"
-    payload = {
-        "content": head + body + tail,
-        "allowed_mentions": {"parse": []},
-        "components": hold_buttons(hid),
-    }
-    delivered = [uid for uid in sorted(OWNER_USER_IDS) if dm_owner(uid, payload)]
-    print(
-        f"Held a reply to {to} in {where}: it contains a never_share "
-        f"phrase; {'owners DMed' if delivered else 'no owner reachable'}"
-        f" (hold {hid}).",
-        flush=True,
-    )
+    return _reply_review().hold(state, item, qid, parts)
 
 
 def expire_holds(state):
-    now = time.time()
-    holds = state.get("holds") or {}
-    for hid, hold in list(holds.items()):
-        if now - hold.get("at", 0) >= HOLD_TTL_SECS:
-            del holds[hid]
-            _holds_live.pop(hid, None)
-            _settle(
-                state,
-                hold["item"],
-                outcome=Settlement(status="skipped", reason="never_share hold expired (24 h)"),
-            )
-            print(f"Held reply in {hold.get('where')} expired undecided; discarded.", flush=True)
-    released = state.get("hold_released") or {}
-    for hid in [
-        h
-        for h, t in released.items()
-        if now - (t.get("at", 0) if isinstance(t, dict) else t) > 2 * 86400
-    ]:
-        del released[hid]
+    return _reply_review().expire(state)
 
 
 def on_hold_button(ix, rest, uid, record):
-    action, _, hid = rest.partition(":")
-    at = _holds_live.get(hid)
-    if action not in ("send", "discard") or at is None or time.time() - at >= HOLD_TTL_SECS:
-        return ephemeral(
-            "That reply is no longer waiting: it was sent or dropped, or a day went by."
-        )
-    _holds_live.pop(hid, None)  # one decision per hold
-    record(
-        {"kind": "hold_choice", "hold": hid, "action": action, "by": uid, "at": int(time.time())}
-    )
-    return closed_card(
-        ix,
-        "**Send anyway** chosen: posting it now."
-        if action == "send"
-        else "**Discarded**: it will not be posted.",
-    )
+    return _reply_review().on_button(ix, rest, uid, record)
 
 
 register_interaction("mdhold", on_hold_button)
@@ -2433,7 +1970,6 @@ WHY_COMMAND = {
     # use Why no reply? on the /settings pages anyway).
     "default_member_permissions": "32",
 }
-ADMIN_DIGEST_SECS = 60
 
 # Directory for SettingsCtx, built on the main loop from discovery and
 # the gateway, published as one immutable snapshot under _DIRECTORY_LOCK.
@@ -2647,15 +2183,7 @@ class SettingsCtx:
         return settings()
 
     def notify_owners_admin_change(self, guild_id, user_id, key, old, new):
-        """Queue one line for the owners' digest of server-admin changes
-        in that server (sent by the main loop, one DM per server per
-        ADMIN_DIGEST_SECS)."""
-        gid = str(guild_id)
-        with _ADMIN_LOCK:
-            entry = _ADMIN_CHANGES.setdefault(gid, {"first": time.time(), "changes": []})
-            entry["changes"].append(
-                {"user": str(user_id), "key": key, "old": old, "new": new, "at": time.time()}
-            )
+        _admin_digests().note(guild_id, user_id, key, old, new)
 
     def log(self, msg):
         print(f"/settings: {msg}", flush=True)
@@ -2698,18 +2226,6 @@ def _outcome(mid, e, where):
     }
 
 
-def _show_value(v):
-    if v is True:
-        return "on"
-    if v is False:
-        return "off"
-    if v is None:
-        return "none"
-    if isinstance(v, (list, tuple)):
-        return ", ".join(str(x) for x in v) or "(empty)"
-    return str(v)
-
-
 def _directory_name(some_id):
     """A server's or channel's name from discovery, else None."""
     some_id = str(some_id)
@@ -2724,82 +2240,12 @@ def _directory_name(some_id):
     return None
 
 
-def _digest_name(some_id):
-    """A server's, channel's or person's name for the digest's words."""
-    return _directory_name(some_id) or _USER_NAMES.get(str(some_id))
-
-
-def _digest_words(c):
-    """ "In #general, When it answers: Chatty → Off" for a change whose
-    key is an overlay key (what /settings sends), else None."""
-    try:
-        path, key = MS.parse_key(c["key"])
-        place = MS.place_of_path(path)
-        if place is None or MS.CORE.get(key) is None:
-            return None
-        return MS.describe_change(
-            place,
-            key,
-            names=_digest_name,
-            path=path,
-            values=MS.ValueChange(old=c["old"], new=c["new"]),
-        )
-    except Exception:
-        return None
-
-
 def admin_digest_text(gid, changes):
-    name = _directory_name(gid) or (GUILDS.get(gid) or {}).get("name") or gid
-    head = f"**A server admin changed my settings in {name}:**\n"
-    tail = (
-        "\nAdmins can only make me quieter. To undo a change, use /settings there and press Undo."
-    )
-    lines = []
-    for c in changes:
-        when = datetime.fromtimestamp(c["at"], UTC).strftime("%H:%M UTC")
-        words = _digest_words(c)
-        if words:
-            lines.append(f"- <@{c['user']}>: {words}, {when}")
-            continue
-        lines.append(
-            f"- <@{c['user']}> set `{c['key']}` to "
-            f"{_show_value(c['new'])} (was "
-            f"{_show_value(c['old'])}), {when}"
-        )
-    kept = []
-    room = 1900 - len(head) - len(tail) - len("- and 9999 more")
-    for line in lines:
-        if sum(len(x) + 1 for x in kept) + len(line) > room:
-            kept.append(f"- and {len(lines) - len(kept)} more")
-            break
-        kept.append(line)
-    return head + "\n".join(kept) + tail
+    return _admin_digests().text(gid, changes)
 
 
 def flush_admin_digests(force=False):
-    """Main loop: DM the owners one digest per server whose first queued
-    admin change is ADMIN_DIGEST_SECS old. Undelivered ones are kept and
-    retried. Returns how many went out."""
-    now = time.time()
-    with _ADMIN_LOCK:
-        due = {
-            gid: e
-            for gid, e in _ADMIN_CHANGES.items()
-            if force or now - e["first"] >= ADMIN_DIGEST_SECS
-        }
-    if not due or rest_backing_off():
-        return 0
-    sent = 0
-    for gid, entry in due.items():
-        if notify_owners(admin_digest_text(gid, entry["changes"])):
-            sent += 1
-            with _ADMIN_LOCK:
-                cur = _ADMIN_CHANGES.get(gid)
-                if cur is entry:
-                    del _ADMIN_CHANGES[gid]
-        else:
-            print(f"Admin digest for server {gid} undelivered; retrying.", flush=True)
-    return sent
+    return _admin_digests().flush(force)
 
 
 # ---------------------------------------------------------------------------
@@ -4440,19 +3886,6 @@ def could_name_slot(item):
         return True
 
 
-def hold_released_ok(state, item):
-    """A held reply an owner chose to send (Send anyway): its hold id,
-    item and channel are the ones the monitor recorded for it."""
-    hid = item.get("_hold")
-    rec = (state.get("hold_released") or {}).get(hid) if isinstance(hid, str) else None
-    return (
-        isinstance(rec, dict)
-        and rec.get("channel_id") == str(item.get("channel_id"))
-        and rec.get("qid") is not None
-        and str(rec["qid"]) == str(_answered_id(state, item))
-    )
-
-
 # An outdated worker prompt (from before reply nonces) writes outbox
 # items without reply_nonce, every one of which is refused: the bot goes
 # silent. STALE_PROMPT_HITS such refusals within STALE_PROMPT_WINDOW
@@ -5957,7 +5390,6 @@ def initialize(config_path=None, token_override=None):
         sys.exit(1)
     TM = _import_telemetry()
     PRO = _import_proactive()
-    _updates_cfg.update(mtime=None, check=_S0.updates_notify)
     _INITIALIZED = True
 
 

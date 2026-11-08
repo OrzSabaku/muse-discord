@@ -27,6 +27,8 @@ from monitor_harness import (
     sf,
 )
 
+from muse_discord.message_models import Settlement
+
 
 def ledger(mod):
     return mod._ledger_load()["entries"]
@@ -70,7 +72,7 @@ class F2BurstLedger(unittest.TestCase):
         mod._settle(
             st,
             {"reply_to": q3["id"], "channel_id": "C1"},
-            outcome=mod.Settlement(status="replied", replied=True),
+            outcome=Settlement(status="replied", replied=True),
         )
         for m in (q1, q2, q3):
             self.assertEqual(ledger(mod)[m["id"]]["status"], "replied")
@@ -83,9 +85,7 @@ class F2BurstLedger(unittest.TestCase):
         mod._settle(
             st,
             {"reply_to": q2["id"], "channel_id": "C1"},
-            outcome=mod.Settlement(
-                status="skipped", reason="no reply (worker's call)", replied=True
-            ),
+            outcome=Settlement(status="skipped", reason="no reply (worker's call)", replied=True),
         )
         self.assertEqual(ledger(mod)[q3["id"]]["status"], "skipped")
         self.assertEqual(self._sweep(mod, st, [q1, q2, q3]), [])

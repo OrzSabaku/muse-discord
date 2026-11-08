@@ -29,6 +29,8 @@ from common import (  # noqa: E402 (local import path bootstrap)
     HOOK_RUNTIME as RUNTIME,
 )
 
+from muse_discord.owner.updates import UPDATE_DM_TRIES  # noqa: E402 (local import path bootstrap)
+
 V0 = "v1.0.0"
 V1 = "v1.1.0"
 V2 = "v1.2.0"
@@ -181,7 +183,7 @@ class Announce(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             for _ in range(15):
                 mod2.announce_update(st)
-        self.assertEqual(len(dm_posts(mod2)), mod2.UPDATE_DM_TRIES)
+        self.assertEqual(len(dm_posts(mod2)), UPDATE_DM_TRIES)
 
     def test_already_installed_version_not_announced(self):
         mod = load()

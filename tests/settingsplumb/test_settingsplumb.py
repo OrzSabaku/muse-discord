@@ -628,11 +628,12 @@ class AdminDigest(unittest.TestCase):
     def test_undelivered_kept_and_retried(self):
         self.ctx.notify_owners_admin_change(G1, U1, "who.replies", "a", "b")
         self.age(61)
-        self.mod.dm_owner = lambda uid, payload: False
+        original_post = self.mod.api_post
+        self.mod.api_post = lambda *_: (_ for _ in ()).throw(OSError("offline"))
         with quiet():
             self.assertEqual(self.mod.flush_admin_digests(), 0)
         self.assertIn(G1, self.mod._ADMIN_CHANGES)
-        self.mod.dm_owner = lambda uid, payload: True
+        self.mod.api_post = original_post
         with quiet():
             self.assertEqual(self.mod.flush_admin_digests(), 1)
         self.assertEqual(self.mod._ADMIN_CHANGES, {})
