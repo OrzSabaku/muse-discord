@@ -32,7 +32,7 @@ class PoisonAfterAppend(Base):
         reply_queue.json, or stay pending to be tried again."""
         msg = gmsg(U1, "@muse hello", mention=True)
         self.stage(msg)
-        real = self.m.ledger_record_many
+        real = self.m._LEDGER.record_many
         failed = []
 
         def flaky(mids, status, *a, **k):
@@ -41,7 +41,7 @@ class PoisonAfterAppend(Base):
                 raise OSError("No space left on device")
             return real(mids, status, *a, **k)
 
-        self.m.ledger_record_many = flaky
+        self.m._LEDGER.record_many = flaky
         self.tick()
         self.tick()  # a retry, if it was kept
         queued = [q["message_id"] for q in self.m.load_queue()]

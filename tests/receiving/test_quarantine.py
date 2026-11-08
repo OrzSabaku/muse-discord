@@ -23,7 +23,7 @@ class Quarantine(unittest.TestCase):
             with open(quarantine_path, "wb") as file:
                 file.write(damaged)
             ledger = MessageLedger(
-                os.path.join(path, "ledger.json"), {}, DirectChannels(), Mock(), Mock()
+                lambda: os.path.join(path, "ledger.json"), {}, DirectChannels(), Mock()
             )
             store = MessageQuarantine(quarantine_path, ledger)
             trigger = {

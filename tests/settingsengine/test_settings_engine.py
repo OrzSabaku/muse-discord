@@ -1017,7 +1017,7 @@ class ReviewMedium(unittest.TestCase):
         os.utime(m.cfg_path, (_t.time() + 5, _t.time() + 5))
         with contextlib.redirect_stdout(io.StringIO()):
             m._receiver({}).note_dm_refused(dict(sam_msg, id="123456789012345679"))
-        self.assertEqual(m._ledger_load()["entries"]["123456789012345679"]["status"], "skipped")
+        self.assertEqual(m._LEDGER.load()["entries"]["123456789012345679"]["status"], "skipped")
 
 
 def _writer(cfg, gid, n):

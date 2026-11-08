@@ -48,7 +48,7 @@ def render_outcome(mid, e, where, channels, direct):
 
 @dataclass
 class MessageOutcomes:
-    ledger_source: Callable[[], MessageLedger]
+    ledger: MessageLedger
     directory: DirectorySnapshot
     direct: DirectChannels
     fired_source: Callable[[], dict]
@@ -59,7 +59,7 @@ class MessageOutcomes:
         newest first: message_id, channel_id, guild_id, parent_id,
         author_id (None in old entries), author,
         status, code, detail, reason, at."""
-        ledger = self.ledger_source()
+        ledger = self.ledger
         where = self.directory.locations(include_unmonitored=True)
         out = []
         fired = self.fired_source()  # reminders: not messages
@@ -83,7 +83,7 @@ class MessageOutcomes:
 
     def one(self, message_id):
         """recent_outcomes' entry for one message, or None."""
-        ledger = self.ledger_source()
+        ledger = self.ledger
         e = ledger.load()["entries"].get(str(message_id))
         if not isinstance(e, dict):
             return None

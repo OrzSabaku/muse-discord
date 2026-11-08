@@ -31,7 +31,7 @@ from muse_discord.message_models import Settlement
 
 
 def ledger(mod):
-    return mod._ledger_load()["entries"]
+    return mod._LEDGER.load()["entries"]
 
 
 def new_state(mod):

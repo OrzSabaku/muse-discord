@@ -26,6 +26,7 @@ from settings_harness import (  # noqa: E402 (local import path bootstrap)
     state,
 )
 
+from muse_discord.message_models import LedgerContext  # noqa: E402 (source path bootstrap)
 from muse_discord.settings_commands import SETTINGS_COMMAND, WHY_COMMAND  # noqa: E402 (source path bootstrap)
 
 CFG = f"""version: 1
@@ -469,36 +470,36 @@ class UIData(unittest.TestCase):
         }
         with quiet():
             m.publish_directory()
-        m.ledger_record(
+        m._LEDGER.record(
             "2001",
             "skipped",
             "settings: who.replies is off here",
-            context=m.LedgerContext(channel_id=CH, author="sam", author_id=U1),
+            context=LedgerContext(channel_id=CH, author="sam", author_id=U1),
         )
-        m.ledger_record(
+        m._LEDGER.record(
             "2002",
             "skipped",
             "daily cap reached",
-            context=m.LedgerContext(
+            context=LedgerContext(
                 channel_id=thread,
                 author="kai",
                 author_id="222000000000000009",
                 detail={"key": "limits.per_day", "counter": f"server:{G1}", "cap": 5},
             ),
         )
-        m.ledger_record(
+        m._LEDGER.record(
             "2003",
             "skipped",
             "settings: who.dms_from is owners",
-            context=m.LedgerContext(
+            context=LedgerContext(
                 channel_id="400000000000000077", author="ann", author_id="222000000000000008"
             ),
         )
-        m.ledger_record(
+        m._LEDGER.record(
             "2004",
             "replied",
             "",
-            context=m.LedgerContext(channel_id="704000000000000001", author="x"),
+            context=LedgerContext(channel_id="704000000000000001", author="x"),
         )
         ch = MS.Place.channel(G1, CH)
         got = self.ctx.recent_outcomes(ch, 10)
@@ -537,13 +538,13 @@ class UIData(unittest.TestCase):
         }
         with quiet():
             m.publish_directory()
-        m.ledger_record(
+        m._LEDGER.record(
             "3001",
             "skipped",
             "settings: who.replies is off here",
-            context=m.LedgerContext(channel_id=new, author="sam", author_id=U1),
+            context=LedgerContext(channel_id=new, author="sam", author_id=U1),
         )
-        e = m._ledger_load()["entries"]["3001"]
+        e = m._LEDGER.load()["entries"]["3001"]
         self.assertEqual((e["guild_id"], e["parent_id"]), (G1, None))
         self.assertEqual(
             [o["message_id"] for o in self.ctx.recent_outcomes(MS.Place.channel(G1, new), 10)],
@@ -556,7 +557,7 @@ class UIData(unittest.TestCase):
             m.publish_directory()
         self.assertEqual(self.ctx.outcome("3001")["guild_id"], G1)
         # An older entry for an unmapped channel: not a DM.
-        d = m._ledger_load()
+        d = m._LEDGER.load()
         d["entries"]["3002"] = {
             "status": "skipped",
             "reason": "settings: not allowed by who.allow / who.ignore",
@@ -564,17 +565,17 @@ class UIData(unittest.TestCase):
             "author": "kai",
             "updated": 1.0,
         }
-        m._message_ledger().save(d)
+        m._LEDGER.save(d)
         self.assertEqual(self.ctx.recent_outcomes(MS.Place.dms(), 10), [])
         # A DM channel the monitor polls is one.
         m._DIRECT_MESSAGES.names["400000000000000077"] = "owner"
-        m.ledger_record(
+        m._LEDGER.record(
             "3003",
             "skipped",
             "settings: who.replies is off for DMs",
-            context=m.LedgerContext(channel_id="400000000000000077", author="o", author_id=U1),
+            context=LedgerContext(channel_id="400000000000000077", author="o", author_id=U1),
         )
-        self.assertTrue(m._ledger_load()["entries"]["3003"]["dm"])
+        self.assertTrue(m._LEDGER.load()["entries"]["3003"]["dm"])
         self.assertEqual(
             [o["message_id"] for o in self.ctx.recent_outcomes(MS.Place.dms(), 10)], ["3003"]
         )

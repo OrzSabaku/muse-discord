@@ -66,7 +66,6 @@ from muse_discord.conversation import (
     channel_display,
 )
 from muse_discord.conversation import _snowflake_ts as _snowflake_ts
-from muse_discord.conversation import _who as _who
 from muse_discord.directory.discovery import (
     Discovery,
 )
@@ -89,7 +88,6 @@ from muse_discord.interactions import ephemeral
 from muse_discord.media import collector as media
 from muse_discord.message_ledger import MessageLedger
 from muse_discord.message_models import (
-    LedgerContext,
     MessagePlace,
     QueueContext,
 )
@@ -114,6 +112,7 @@ from muse_discord.owner.review import ReplyReview
 from muse_discord.owner.targets import CommandTargets
 from muse_discord.owner.updates import UpdateNotices, version_installed
 from muse_discord.paths import project_root
+from muse_discord.receiving.audit import ReceptionAudit
 from muse_discord.receiving.cursor import ReceiveCursor
 from muse_discord.receiving.direct import DirectChannels
 from muse_discord.receiving.gateway import GatewayEvents, GatewayIngress
@@ -152,7 +151,6 @@ from muse_discord.watches.web import WebWatchWork
 from muse_discord.worker_context import WorkerContext
 
 CONFIG_PATH_ARGUMENT = 2
-MEMBER_CACHE_LIMIT = 2000
 
 
 BASE_DIR = str(project_root(__file__))
@@ -256,9 +254,9 @@ def _proactive_context():
         channels=lambda: _DIRECTORY.channels,
         dm_channels=lambda: _DIRECT_MESSAGES.names,
         dm_users=lambda: _DIRECT_MESSAGES.users,
-        user_names=lambda: _USER_NAMES,
+        user_names=lambda: _LEDGER.names,
         write_private=lambda path, body: atomic_write(path, body, 0o600),
-        ledger=lambda *args, **kwargs: _ledger_load(*args, **kwargs),
+        ledger=lambda *args, **kwargs: _LEDGER.load(*args, **kwargs),
         api_get=lambda *args, **kwargs: api_get(*args, **kwargs),
         api_post=lambda *args, **kwargs: api_post(*args, **kwargs),
         channel_display=lambda *args, **kwargs: channel_display(*args, **kwargs),
@@ -535,9 +533,7 @@ def queue_edit(add=(), drop=None):
 
 
 def publish_queue_additions(state, additions=()):
-    return QueuePublication(_queue_files(), _STATE_STORE, _message_ledger()).publish(
-        state, additions
-    )
+    return QueuePublication(_queue_files(), _STATE_STORE, _LEDGER).publish(state, additions)
 
 
 def load_state():
@@ -555,7 +551,7 @@ def save_state(state):
 
 
 def _quarantine_store():
-    return MessageQuarantine(QUARANTINE_FILE, _message_ledger())
+    return MessageQuarantine(QUARANTINE_FILE, _LEDGER)
 
 
 # ---------------------------------------------------------------------------
@@ -567,39 +563,8 @@ def _quarantine_store():
 # ---------------------------------------------------------------------------
 
 
-def _message_ledger():
-    return MessageLedger(
-        LEDGER_FILE, _DIRECTORY.channels, _DIRECT_MESSAGES, TM.ledger, remember_name, time.time
-    )
-
-
-def _ledger_load():
-    return _message_ledger().load()
-
-
-def ledger_record(mid, status, reason="", context=None):
-    return _message_ledger().record(mid, status, reason, context)
-
-
-def ledger_record_many(mids, status, reason="", context=None):
-    return _message_ledger().record_many(mids, status, reason, context)
-
-
-# Display names of people the monitor has seen (ledger authors), for
-# /settings' "Remove Sam" (bounded; ids only otherwise).
-_USER_NAMES = {}
-
-
-def remember_name(uid, name):
-    if uid and name:
-        _USER_NAMES[str(uid)] = str(name)
-        if len(_USER_NAMES) > MEMBER_CACHE_LIMIT:
-            for k in list(_USER_NAMES)[:500]:
-                _USER_NAMES.pop(k, None)
-
-
-def _ledger_terminal(mid):
-    return _message_ledger().terminal(mid)
+_LEDGER: MessageLedger
+_RECEPTION_AUDIT: ReceptionAudit
 
 
 def _quarantine_ids():
@@ -873,10 +838,10 @@ def settings_context():
         config_path=_SETTINGS.watcher.config_path,
         overlay_lock=_SETTINGS.overlay_lock,
         directory=_DIRECTORY_VIEW,
-        people=_USER_NAMES,
+        people=_LEDGER.names,
         sessions=_SETTINGS_SESSIONS,
         outcomes=MessageOutcomes(
-            _message_ledger,
+            _LEDGER,
             _DIRECTORY_VIEW,
             _DIRECT_MESSAGES,
             lambda: _WATCH_STORE.read()["fired"],
@@ -926,26 +891,6 @@ def register_commands(gateway_status=None):
     return _COMMANDS.register(gateway_status)
 
 
-def note_refused(msg, cname, reason):
-    """A message that addressed the bot directly but that the settings
-    decline: ledgered as skipped, so the reconciliation sweep (which
-    judges by the settings in force when it runs) never answers it
-    later, after a setting is relaxed. A deliberately ignored message
-    stays ignored. Ordinary chatter is never ledgered."""
-    author = _who(msg)
-    ledger_record(
-        msg["id"],
-        "skipped",
-        f"settings: {reason}",
-        context=LedgerContext(
-            channel_id=msg.get("channel_id"),
-            author=author.get("username"),
-            author_id=author.get("id"),
-        ),
-    )
-    print(f"Not answering {author.get('username')} in {cname}: {reason}.", flush=True)
-
-
 _ACTIVITY: GatewayActivity
 
 
@@ -959,8 +904,8 @@ def _bursts(state):
         enqueue_message,
         BurstEffects(
             note_ingested,
-            lambda mid: mid in _quarantine_ids() or _ledger_terminal(mid),
-            ledger_record_many,
+            lambda mid: mid in _quarantine_ids() or _LEDGER.terminal(mid),
+            _LEDGER.record_many,
         ),
         time.time,
     )
@@ -1022,7 +967,13 @@ def _receiver(state):
         _admission(),
         _bursts(state),
         api_get,
-        ReceptionEffects(watch_scan, TM.count, note_refused, _note_no_send, seed_channel_seen),
+        ReceptionEffects(
+            watch_scan,
+            TM.count,
+            _RECEPTION_AUDIT.refused,
+            _RECEPTION_AUDIT.no_send,
+            seed_channel_seen,
+        ),
     )
 
 
@@ -1056,9 +1007,7 @@ def check_dm_channel(dm_id, dm_name, state):
 
 
 def _reply_state():
-    return ReplyState(
-        _message_ledger(), _queue_files(), PRO.policy.note_item, TM.latency, time.time
-    )
+    return ReplyState(_LEDGER, _queue_files(), PRO.policy.note_item, TM.latency, time.time)
 
 
 def queued_item_meta(state, qid, index):
@@ -1088,7 +1037,7 @@ def _worker_context():
 
 
 def _ingest_journal():
-    return IngestJournal(_message_ledger(), _quarantine_store(), _reply_state(), _CAPABILITIES)
+    return IngestJournal(_LEDGER, _quarantine_store(), _reply_state(), _CAPABILITIES)
 
 
 def enqueue_message(msg, cname, state, queue, context=None):
@@ -1169,7 +1118,7 @@ def _watch_audience():
         _response_policy(),
         _ACCESS,
         _DIRECTORY.guilds,
-        _USER_NAMES,
+        _LEDGER.names,
         owners_absent,
         dm_refusal,
     )
@@ -1200,7 +1149,7 @@ def _watch_runtime():
     return WatchRuntime(
         store=_WATCH_STORE,
         audience=audience,
-        fires=WatchFireBuilder(audience, ledger_record, _worker_context().settings_card),
+        fires=WatchFireBuilder(audience, _LEDGER.record, _worker_context().settings_card),
         queue=WatchQueue(
             _queue_files(),
             _reply_state(),
@@ -1216,7 +1165,7 @@ def _watch_runtime():
             is_suspicious,
             _WATCH_STATE.web_cache,
         ),
-        entries=lambda: _ledger_load()["entries"],
+        entries=lambda: _LEDGER.load()["entries"],
         state=_WATCH_STATE,
     )
 
@@ -1269,7 +1218,7 @@ def drain_gateway(state, inbox, channels):
 def sweep_mentions(state, queue, channels, dms=True):
     return MentionReconciler(
         admission=_admission(),
-        ledger=_message_ledger(),
+        ledger=_LEDGER,
         get=api_get,
         enqueue=enqueue_message,
         quarantined=_quarantine_ids,
@@ -1286,25 +1235,6 @@ def sweep_mentions(state, queue, channels, dms=True):
 
 
 # ---------------------------------------------------------------------------
-_no_send_logged = set()
-
-
-def _note_no_send(msg, cname):
-    """Record a mention that cannot be answered because the bot has no
-    send permission in the channel: ledgered as skipped (terminal, so the
-    sweep won't resurrect it) and logged once per channel per run."""
-    cid = msg.get("channel_id")
-    if cid not in _no_send_logged:
-        _no_send_logged.add(cid)
-        print(f"Skipping replies in {cname}: the bot cannot send messages there.", flush=True)
-    ledger_record(
-        msg["id"],
-        "skipped",
-        "no send permission in channel",
-        context=LedgerContext(
-            channel_id=cid, author=_who(msg).get("username"), author_id=_who(msg).get("id")
-        ),
-    )
 
 
 def poll_targets():
@@ -1596,7 +1526,7 @@ def _initialize_owner_services():
     )
     _ADMIN_DIGESTS = AdminDigests(
         _directory_name,
-        _USER_NAMES,
+        _LEDGER.names,
         _DIRECTORY.guilds,
         _OWNER_MESSAGES.notify,
         lambda: rest_backing_off(),
@@ -1617,6 +1547,7 @@ def _initialize_owner_services():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
+    global _LEDGER, _RECEPTION_AUDIT
     global _OUTBOX
     global _SENDER, _PARTS, _TYPING
     global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
@@ -1665,6 +1596,14 @@ def _initialize_services():
     _PARTS = PartDelivery(_SENDER, lambda cid: _TYPING.send(cid), lambda secs: time.sleep(secs))
     _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
     _DIRECT_MESSAGES = DirectChannels()
+    _LEDGER = MessageLedger(
+        lambda: LEDGER_FILE,
+        _DIRECTORY.channels,
+        _DIRECT_MESSAGES,
+        lambda *args: TM.ledger(*args),
+        now=lambda: time.time(),
+    )
+    _RECEPTION_AUDIT = ReceptionAudit(_LEDGER)
     _initialize_owner_services()
     _OUTBOX = OutboxProcessor(
         _outbox_files,

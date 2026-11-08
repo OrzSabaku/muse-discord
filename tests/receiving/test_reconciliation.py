@@ -24,7 +24,7 @@ class Reconciliation(unittest.TestCase):
         self.state = self.receiver.state
         self.channels = self.receiver.admission.directory.channels
         self.ledger = MessageLedger(
-            os.path.join(path, "ledger.json"), self.channels, DirectChannels(), Mock(), Mock()
+            lambda: os.path.join(path, "ledger.json"), self.channels, DirectChannels(), Mock()
         )
         self.queue = []
 

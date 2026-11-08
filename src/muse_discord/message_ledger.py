@@ -2,12 +2,14 @@
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from muse_discord.message_models import LEDGER_TERMINAL, LedgerContext
 from muse_discord.receiving.direct import DirectChannels
 from muse_discord.storage import atomic_write, read_json
+
+NAME_CACHE_LIMIT = 2000
 
 _LEDGER_CODES = (
     ("settings: who.replies is off", "replies-off"),
@@ -57,15 +59,23 @@ def ledger_code(status, reason=""):
 
 @dataclass
 class MessageLedger:
-    path: str
+    path_source: Callable[[], str]
     channels: dict
     direct: DirectChannels
     telemetry: Callable[[str, list], Any]
-    remember_name: Callable[[str, str], None]
     now: Callable[[], float] = time.time
+    names: dict[str, str] = field(default_factory=dict)
+
+    def remember_name(self, uid, name):
+        """Bound observed ledger-author names for settings screens and target labels."""
+        if uid and name:
+            self.names[str(uid)] = str(name)
+            if len(self.names) > NAME_CACHE_LIMIT:
+                for key in list(self.names)[:500]:
+                    self.names.pop(key, None)
 
     def load(self):
-        d = read_json(self.path)
+        d = read_json(self.path_source())
         if d and isinstance(d.get("entries"), dict):
             return d
         return {"entries": {}}
@@ -73,7 +83,7 @@ class MessageLedger:
     def save(self, d):
         items = sorted(d["entries"].items(), key=lambda kv: kv[1].get("updated", 0))
         d["entries"] = dict(items[-1000:])
-        atomic_write(self.path, d)
+        atomic_write(self.path_source(), d)
 
     def record(self, mid, status, reason="", context=None):
         self.record_many([mid], status, reason, context)

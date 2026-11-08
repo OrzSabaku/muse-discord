@@ -23,7 +23,7 @@ class ReplyTracking(unittest.TestCase):
         path = self.directory.name
         self.queue = QueueFiles(os.path.join(path, "queue.json"), os.path.join(path, "lock"), 0)
         self.ledger = MessageLedger(
-            os.path.join(path, "ledger.json"), {}, DirectChannels(), Mock(), Mock()
+            lambda: os.path.join(path, "ledger.json"), {}, DirectChannels(), Mock()
         )
         self.replies = ReplyState(self.ledger, self.queue, Mock(), Mock())
 

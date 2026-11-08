@@ -37,7 +37,7 @@ class DurableState(unittest.TestCase):
             )
             store = StateFile(lambda: os.path.join(path, "state.json"))
             ledger = MessageLedger(
-                os.path.join(path, "ledger.json"), {}, DirectChannels(), Mock(), Mock()
+                lambda: os.path.join(path, "ledger.json"), {}, DirectChannels(), Mock()
             )
             publisher = QueuePublication(queue, store, ledger)
             first, settled, worker, concurrent = [{"message_id": str(mid)} for mid in range(4)]

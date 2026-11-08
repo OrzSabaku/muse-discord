@@ -689,7 +689,7 @@ class Cards(MonitorBase):
         msg = gmsg(OTHER_BOT, "more?", mention=True, bot=True, channel=CH_G2, guild=G2)
         ok, item = self.enqueue(msg, guild=G2)
         self.assertFalse(ok)
-        self.assertEqual(m._ledger_load()["entries"][msg["id"]]["status"], "skipped")
+        self.assertEqual(m._LEDGER.load()["entries"][msg["id"]]["status"], "skipped")
         # No limit (the default) in the other server.
         self.st["history"][CH] = self.st["history"][CH_G2]
         ok, item = self.enqueue(gmsg(OTHER_BOT, "x", mention=True, bot=True))
@@ -729,7 +729,7 @@ class NeverShare(MonitorBase):
         self.assertEqual(ids, [f"mdhold:send:{hid}", f"mdhold:discard:{hid}"])
         # Settled: out of the queue (no worker gets it again) and ledgered.
         self.assertEqual(m.load_queue(), [])
-        self.assertEqual(m._ledger_load()["entries"][item["message_id"]]["status"], "skipped")
+        self.assertEqual(m._LEDGER.load()["entries"][item["message_id"]]["status"], "skipped")
         resp, recs = self.click(hid, "send", uid=U1)  # not an owner
         self.assertEqual(recs, [])
         self.assertEqual(m.api.channel_posts(CH), [])
@@ -741,7 +741,7 @@ class NeverShare(MonitorBase):
         posted = m.api.channel_posts(CH)
         self.assertEqual(len(posted), 1)
         self.assertIn("Project Falcon", posted[0]["content"])
-        self.assertEqual(m._ledger_load()["entries"][item["message_id"]]["status"], "replied")
+        self.assertEqual(m._LEDGER.load()["entries"][item["message_id"]]["status"], "replied")
         resp, recs = self.click(hid, "send")
         self.assertEqual(recs, [])  # sent once only
 
@@ -900,7 +900,7 @@ servers:
         ok, _item = self.enqueue(msg)
         self.assertFalse(ok)
         self.assertFalse(os.path.exists(m.QUARANTINE_FILE))
-        self.assertEqual(m._ledger_load()["entries"][msg["id"]]["status"], "skipped")
+        self.assertEqual(m._LEDGER.load()["entries"][msg["id"]]["status"], "skipped")
 
 
 class Caps(MonitorBase):
@@ -1037,7 +1037,7 @@ class FollowUps(MonitorBase):
             q = []
             m.flush_pending(self.st, q, force=True)
         self.assertFalse(q[0]["follow_up"])
-        self.assertEqual(m._ledger_load()["entries"][first["id"]]["status"], "queued")
+        self.assertEqual(m._LEDGER.load()["entries"][first["id"]]["status"], "queued")
 
     def test_sweep_never_requeues_follow_ups(self):
         m = self.m

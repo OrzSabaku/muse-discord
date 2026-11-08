@@ -64,10 +64,10 @@ class NoSendPermission(unittest.TestCase):
         m = load_monitor(BASE)
         msg = gmsg(U1, mention=True)
         with quiet() as output:
-            m._note_no_send(msg, "#general")
-            m._note_no_send(msg, "#general")
+            m._RECEPTION_AUDIT.no_send(msg, "#general")
+            m._RECEPTION_AUDIT.no_send(msg, "#general")
         self.assertEqual(output.getvalue().count("the bot cannot send"), 1)
-        record = m._ledger_load()["entries"][msg["id"]]
+        record = m._LEDGER.load()["entries"][msg["id"]]
         self.assertEqual(record["status"], "skipped")
         self.assertEqual(record["code"], "no-send")
         self.assertIn("no send permission", record["reason"])
@@ -85,7 +85,7 @@ class Base(unittest.TestCase):
         bump(self.m.cfg_path)
 
     def ledger(self, mid):
-        return self.m._ledger_load()["entries"].get(mid)
+        return self.m._LEDGER.load()["entries"].get(mid)
 
     def stage(self, msg, guild=G1, cname="Lounge #general"):
         """Classify and stage msg the way the poll / gateway do."""

@@ -350,7 +350,7 @@ def test_malformed_items_rejected_without_blocking():
     # the empty item was NOT settled: its mention stays open
     assert [q["message_id"] for q in read(m.QUEUE_FILE)] == [empty]
     assert empty not in st["replied_to"]
-    assert m.ledger_record and m._ledger_load()["entries"].get(empty, {}).get("status") != "skipped"
+    assert m._LEDGER.load()["entries"].get(empty, {}).get("status") != "skipped"
 
 
 def test_corrupt_outbox_file():
