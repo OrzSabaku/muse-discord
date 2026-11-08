@@ -48,7 +48,7 @@ class LockTimeout(unittest.TestCase):
 
     def test_non_contention_lock_error_is_propagated_without_entering_body(self):
         with (
-            patch.object(m.fcntl, "flock", side_effect=OSError(errno.EIO, "lock I/O error")),
+            patch.object(fcntl, "flock", side_effect=OSError(errno.EIO, "lock I/O error")),
             self.assertRaises(OSError) as raised,
             m._queue_files().lock(),
         ):
@@ -197,7 +197,7 @@ class LockTimeout(unittest.TestCase):
             m.stage_trigger(state, incoming, "general", "mention", place=m.MessagePlace("G"))
         inbox, status = object(), {"connected": False}
         with (
-            patch.object(m, "_acquire_singleton"),
+            patch.object(m._PROCESS_LOCK, "acquire"),
             patch.object(m.TM, "start"),
             patch.object(m, "api_get", return_value={"id": "999", "username": "pip"}),
             patch.object(m, "discover_channels", return_value=({}, {})),

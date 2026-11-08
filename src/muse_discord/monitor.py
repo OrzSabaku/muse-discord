@@ -38,7 +38,6 @@ from Discord), both read through muse_settings.py. See
 config.example.yaml for the schema.
 """
 
-import fcntl
 import os
 import queue as pyqueue
 import sys
@@ -101,6 +100,7 @@ from muse_discord.messaging.parts import PartDelivery
 from muse_discord.messaging.sending import MessageSender
 from muse_discord.messaging.typing import TypingIndicators, TypingState
 from muse_discord.monitor_health import MonitorHealth, token_rejected_exit
+from muse_discord.monitor_process import MonitorLock
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
 from muse_discord.outgoing_guard import OutgoingGuard, collect_nonces
 from muse_discord.owner.admin_digest import AdminDigests
@@ -1538,47 +1538,9 @@ def watch_scan(msg, guild_id):
 # -- answering a fire -------------------------------------------------------
 
 
+_PROCESS_LOCK: MonitorLock
+
 PIDFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor.pid")
-
-
-_PIDFILE_LOCK = None  # fd holding the pidfile lock for the process lifetime
-
-
-def _acquire_singleton():
-    """Ensure only one monitor runs. The pidfile is locked with flock for
-    as long as this process lives, so two monitors started at the same
-    moment (say, overlapping watchdog runs) cannot both pass the check;
-    the lock disappears with the process, so there is no stale state.
-    Two monitors would each send everything in the outbox, posting every
-    reply twice. Exits the process if a live peer holds the lock."""
-    global _PIDFILE_LOCK
-    mypid = os.getpid()
-    fd = os.open(PIDFILE, os.O_RDWR | os.O_CREAT, 0o644)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        print("Another monitor holds the pidfile lock; exiting.", flush=True)
-        sys.exit(0)
-    # A monitor from before this lock existed holds no flock, so also
-    # check whether the recorded pid is still a live monitor.
-    try:
-        oldpid = int(os.read(fd, 32).decode().strip() or 0)
-    except ValueError:
-        oldpid = 0
-    if oldpid and oldpid != mypid:
-        try:
-            with open(f"/proc/{oldpid}/cmdline", "rb") as f:
-                alive = "monitor.py" in f.read().decode(errors="replace")
-        except OSError:
-            alive = False
-        if alive:
-            print(f"Another monitor (pid {oldpid}) is already running; exiting.", flush=True)
-            sys.exit(0)
-        print(f"Replacing stale monitor pidfile (pid {oldpid} gone).", flush=True)
-    os.ftruncate(fd, 0)
-    os.lseek(fd, 0, os.SEEK_SET)
-    os.write(fd, str(mypid).encode())
-    _PIDFILE_LOCK = fd  # never closed: the lock lives as long as we do
 
 
 # ---------------------------------------------------------------------------
@@ -1857,7 +1819,7 @@ def _start_monitor_threads(state):
 
 
 def _start_monitor():
-    _acquire_singleton()
+    _PROCESS_LOCK.acquire()
     TM.start()
     touch_heartbeat()
     # Identity first, discovery second: the watchdog's health check waits
@@ -1933,9 +1895,11 @@ def _start_monitor():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
+    global _PROCESS_LOCK
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
     global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTIONS, _INTERACTION_RESPONDER, _INTERACTION_WORKER
+    _PROCESS_LOCK = MonitorLock(lambda: PIDFILE)
     _DIRECTORY = DirectoryState()
     _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _STATE_STORE = StateFile(lambda: STATE_FILE)
