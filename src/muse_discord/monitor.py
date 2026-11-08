@@ -104,7 +104,6 @@ from muse_discord.message_models import (
 )
 from muse_discord.message_queue import QueueFiles, owner_dm_metadata, trigger_of
 from muse_discord.message_queue import answered_id as _answered_id
-from muse_discord.message_queue import keep_last as _keep_last
 from muse_discord.messaging import formatting as reply_formatting
 from muse_discord.messaging.parts import PartDelivery
 from muse_discord.messaging.sending import MessageSender
@@ -131,6 +130,7 @@ from muse_discord.receiving.gateway import GatewayEvents, GatewayIngress
 from muse_discord.receiving.messages import ReceivedMessages, ReceptionEffects
 from muse_discord.receiving.reconciliation import MentionReconciler, RecoveryWindow
 from muse_discord.reply_delivery import OutboxDelivery
+from muse_discord.reply_state import ReplyState
 from muse_discord.response_policy import (
     ResponsePolicy,
 )
@@ -2122,29 +2122,12 @@ def settings_card(scope, here, channel_id, speaker=None):
     return card
 
 
+def _reply_state():
+    return ReplyState(_message_ledger(), _queue_files(), PRO.note_item, TM.latency, time.time)
+
+
 def queued_item_meta(state, qid, index):
-    """Who and where a still-queued item answers (author_id, author,
-    channel_id, kind, dm, bot, guild_id): its item_meta record, else
-    (state.json lost) the queue file's own entry, which only the monitor
-    writes. None when it is not in the queue (index: queue_index()).
-    A schedule action and a "stop messaging me" both bind to it."""
-    if qid not in index["channels"]:
-        return None
-    meta = (state.get("item_meta") or {}).get(qid)
-    if isinstance(meta, dict):
-        return meta
-    q = next(
-        (q for q in load_queue() if isinstance(q, dict) and str(q.get("message_id")) == qid), {}
-    )
-    return {
-        "author_id": q.get("author_id"),
-        "author": q.get("author"),
-        "channel_id": q.get("channel_id"),
-        "kind": q.get("kind"),
-        "dm": q.get("kind") == "dm",
-        "bot": bool(q.get("from_bot")),
-        "guild_id": q.get("guild_id"),
-    }
+    return _reply_state().queued_meta(state, qid, index)
 
 
 def started_item_id(now=None):
@@ -2155,12 +2138,7 @@ def started_item_id(now=None):
 
 
 def note_item_meta(state, mid, **meta):
-    """Remember who a queued item answers (bounded): the send path opens
-    follow-up windows and applies the never_share backstop from it."""
-    m = state.setdefault("item_meta", {})
-    m[mid] = meta
-    PRO.note_item(mid, meta)  # who talked to the bot (proactive.py)
-    _keep_last(m, 300)
+    return _reply_state().note_item(state, mid, **meta)
 
 
 class _MonitorIngestConversation(Conversation):
@@ -2238,61 +2216,15 @@ def enqueue_message(msg, cname, state, queue, context=None):
 
 
 def note_ingested(state, mid):
-    """Remember when the monitor first processed trigger mid (staged
-    it), bounded like queued_at, for the latency log's ingest/hold
-    split."""
-    seen = state.setdefault("ingested_at", {})
-    seen.setdefault(mid, time.time())
-    _keep_last(seen, 200)
+    return _reply_state().note_ingested(state, mid)
 
 
 def note_queued(state, mid):
-    """Remember when mid was queued (bounded), for the latency log even
-    when a worker removes the queue item itself. Returns the time."""
-    now = time.time()
-    queued = state.setdefault("queued_at", {})
-    queued[mid] = now
-    _keep_last(queued, 200)
-    return now
+    return _reply_state().note_queued(state, mid)
 
 
 def _settle(state, item, outcome):
-    """Record an outbox item's outcome under its reply_to AND every other
-    message of the burst it belongs to (reply_aliases): the worker
-    replies under the last fragment, while the ledger and the sweep track
-    the trigger, and a fragment left unsettled would be requeued alone.
-    replied=True also adds all those ids to replied_to (send dedup)."""
-    status = outcome.status
-    reason = outcome.reason
-    replied = outcome.replied
-    detail = outcome.detail
-    reply_to = item.get("reply_to")
-    aliases = state.get("reply_aliases", {})
-    # The queue item it answers (its "item", else reply_to's trigger),
-    # and that item's own messages (its burst fragments) only: a
-    # reply_to under some other message is not this item's to settle
-    # (it may be another item's, still open).
-    trigger = item.get("item") or (aliases.get(reply_to, reply_to) if reply_to else None)
-    if not trigger:
-        return
-    trigger = trigger_of(state, trigger)  # an "item" set to a fragment
-    ids = [trigger] + [f for f, t in aliases.items() if t == trigger]
-    if reply_to and reply_to not in ids and trigger_of(state, reply_to) == trigger:
-        ids.append(reply_to)
-    for mid in ids:
-        if replied and mid not in state["replied_to"]:
-            state["replied_to"].append(mid)
-    ledger_record_many(
-        ids,
-        status,
-        reason,
-        context=LedgerContext(
-            channel_id=item.get("channel_id"),
-            author=item.get("author"),
-            author_id=item.get("author_id"),
-            detail=detail,
-        ),
-    )
+    return _reply_state().settle(state, item, outcome)
 
 
 def _outbox_problem(item):
@@ -2318,33 +2250,7 @@ def _outbox_problem(item):
 
 
 def _log_latency(state, qid, picked, sent):
-    """One line per answered item: where the time went, from the trigger
-    message (its snowflake time) to the monitor first processing it
-    (ingest: the gateway or the poll delivering it, and the main loop
-    getting to it), to queued (hold: the burst coalescing), to the
-    outbox pickup (worker), to sent. An item that was never staged (a
-    sweep recovery) has no hold. Our clock can trail Discord's
-    snowflake time by a fraction of a second, so t0 is clamped to the
-    first local timestamp: ingest shows 0, never negative, and total
-    stays the sum of the parts."""
-    t0 = _snowflake_ts(qid)
-    queued = state.get("queued_at", {}).pop(qid, None)
-    ingested = state.get("ingested_at", {}).pop(qid, None)
-    if not t0:
-        return
-    if queued:
-        ingested = min(ingested or queued, queued)
-        t0 = min(t0, ingested)
-        print(
-            f"Latency {qid}: ingest {ingested - t0:.1f}s, hold "
-            f"{queued - ingested:.1f}s, worker {picked - queued:.1f}s, "
-            f"send {sent - picked:.1f}s, total {sent - t0:.1f}s",
-            flush=True,
-        )
-    else:
-        t0 = min(t0, picked)
-        print(f"Latency {qid}: send {sent - picked:.1f}s, total {sent - t0:.1f}s", flush=True)
-    TM.latency(sent - t0)
+    return _reply_state().log_latency(state, qid, picked, sent)
 
 
 # Progress belongs to this running monitor; outbox_store owns recovery rules.

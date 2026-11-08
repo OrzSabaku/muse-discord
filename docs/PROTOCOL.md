@@ -13,6 +13,7 @@
 | REST・Gateway受信の分類・確認位置・重複排除 | `src/muse_discord/receiving/` |
 | 連投の集約・到着順序・登録失敗の再試行 | `src/muse_discord/bursts.py` |
 | 受信バーストの検証・キュー項目の組み立て | `src/muse_discord/ingest.py` |
+| 依頼のメタデータ・時刻・連投全体の完了記録 | `src/muse_discord/reply_state.py` |
 | 返信の認可・副作用・送信結果の処理順 | `src/muse_discord/reply_delivery.py` |
 | サーバー・DMの応答開始条件と共有サーバー判定 | `src/muse_discord/admission.py` |
 | 応答回数・メディア回数・対象者のポリシー | `src/muse_discord/response_policy.py` |
@@ -121,6 +122,7 @@ RESTとGatewayの受信は `receiving.messages`、Gatewayイベントの振り�
 HTTPの長い制限待ちと認証失敗は `http_runtime`、稼働記録は `monitor_health` が持つ。RESTの完了・失敗時に稼働記録を更新し、匿名のinteraction応答が401になってもBotのトークン拒否として扱わない。
 送信前の検査は `outgoing_guard.OutgoingGuard` が持つ。値の書き換えは行わず、各文字列と結合した内容を検査する。所有者への通知回数はスレッド間で共有し、ロックを解放してから送ることで再帰した検査でも待ち合わない。
 状態ファイルの保存は `durable_state.StateFile`、未反映の依頼を共有キューへ反映する順序は `QueuePublication` が持つ。キュー更新前に復旧可能な状態を保存し、ロック待ちや書き込みの失敗では未反映の依頼を残す。保存済み内容のキャッシュは保存先と組にする。
+依頼のメタデータ・時刻・連投全体の完了記録は `reply_state.ReplyState` が持つ。完了対象はその依頼のトリガーと断片だけに限り、別の連投への参照で処理済みにしない。保存ロックと権限の消費は呼び出し元のoutbox確定処理が担う。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査
