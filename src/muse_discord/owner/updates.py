@@ -92,8 +92,8 @@ def buttons(version):
 
 @dataclass
 class UpdateNotices:
-    check_path: str
-    request_path: str
+    check_path: Callable[[], str]
+    request_path: Callable[[], str]
     messenger: OwnerMessenger
     enabled: Callable[[], bool]
     backing_off: Callable[[], bool]
@@ -108,7 +108,7 @@ class UpdateNotices:
         self.announced["version"] = upd.get("version")
         if not self.enabled():
             return
-        info = _read_json(self.check_path) or {}
+        info = _read_json(self.check_path()) or {}
         version = info.get("latest")
         new = release_version(version)
         last = release_version(upd.get("version"))
@@ -161,10 +161,10 @@ class UpdateNotices:
             return ephemeral(f"{version} is already installed; nothing to do.")
         now = int(time.time())
         if action == "now":
-            if (_read_json(self.request_path) or {}).get("version") != version:
+            if (_read_json(self.request_path()) or {}).get("version") != version:
                 try:
                     atomic_write(
-                        self.request_path, {"version": version, "requested_at": now, "by": uid}
+                        self.request_path(), {"version": version, "requested_at": now, "by": uid}
                     )
                 except OSError as e:
                     print(f"Could not write update_request.json: {e}", flush=True)

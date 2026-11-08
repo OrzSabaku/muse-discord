@@ -268,7 +268,7 @@ def _proactive_context():
         never_share_hit=lambda *args, **kwargs: never_share_hit(*args, **kwargs),
         normalize_parts=lambda *args, **kwargs: normalize_parts(*args, **kwargs),
         notify_owners=lambda *args, **kwargs: notify_owners(*args, **kwargs),
-        owner_check_pending=lambda state, gid: _owner_presence().pending(state, gid),
+        owner_check_pending=lambda state, gid: _OWNER_PRESENCE.pending(state, gid),
         owners_absent=lambda *args, **kwargs: owners_absent(*args, **kwargs),
         queue_edit=lambda *args, **kwargs: queue_edit(*args, **kwargs),
         queued_item_meta=lambda *args, **kwargs: queued_item_meta(*args, **kwargs),
@@ -507,7 +507,7 @@ def _deliver_outbox_item(batch, item):
     policy = ReplyPolicy(
         binding=_reply_binding(),
         owners=_owner_auth(),
-        review=_reply_review(),
+        review=_REVIEW,
         generated=_generated_replies(),
         watches=_watch_delivery(),
         proactive_outbox=PRO.outbox_item,
@@ -680,7 +680,7 @@ _SHARED_MEMBERSHIP: SharedServers
 
 def _admission():
     return AdmissionPolicy(
-        _response_policy(), _owner_presence(), _DIRECTORY.scopes, _SHARED_MEMBERSHIP
+        _response_policy(), _OWNER_PRESENCE, _DIRECTORY.scopes, _SHARED_MEMBERSHIP
     )
 
 
@@ -722,36 +722,17 @@ def retire_overlay_changes():
 # ---------------------------------------------------------------------------
 
 
-def _owner_messenger():
-    return OwnerMessenger(lambda: _SETTINGS.owners, guard_outgoing, api_post)
-
-
-def _update_notices():
-    return UpdateNotices(
-        UPDATE_CHECK_FILE,
-        UPDATE_REQUEST_FILE,
-        _owner_messenger(),
-        updates_enabled,
-        rest_backing_off,
-        _version_installed,
-        _update_announced,
-    )
-
-
-def _admin_digests():
-    return AdminDigests(
-        _directory_name,
-        _USER_NAMES,
-        _DIRECTORY.guilds,
-        _owner_messenger().notify,
-        rest_backing_off,
-        _ADMIN_CHANGES,
-        _ADMIN_LOCK,
-    )
+_OWNER_MESSAGES: OwnerMessenger
+_OWNER_PRESENCE: OwnerPresence
+_REVIEW: ReplyReview
+_UPDATE_NOTICES: UpdateNotices
+_ADMIN_DIGESTS: AdminDigests
+_JOIN_NOTICES: JoinNotices
+_GUILD_LIFECYCLE: GuildLifecycle
 
 
 def notify_owners(text, components=None, flags=None):
-    return _owner_messenger().notify(text, components, flags)
+    return _OWNER_MESSAGES.notify(text, components, flags)
 
 
 # Servers none of the owners is in. A public bot can be
@@ -770,66 +751,28 @@ def notify_owners(text, components=None, flags=None):
 # state.json, so a restart keeps it.
 # state["owner_in_guild"]: {gid: {"in": an owner is a member,
 #   "checked": a check has answered, "next": when to check, "fails": n}}
-# OWNER_IN_GUILD mirrors it: True, False (no owner), None (not checked
+# OwnerPresence.membership mirrors it: True, False (no owner), None (not checked
 # yet; gated like False).
-OWNER_IN_GUILD = {}
-
-
-def _owner_presence():
-    return OwnerPresence(
-        lambda: _SETTINGS.owners,
-        settings,
-        api_get,
-        rest_backing_off,
-        OWNER_IN_GUILD,
-        _OWNER_SPOKE,
-    )
-
-
-def _join_notices():
-    return JoinNotices(_owner_presence(), _owner_messenger(), rest_backing_off, SETTINGS_PREFIX)
 
 
 def mirror_owner_presence(state):
-    return _owner_presence().restore(state)
-
-
-# Servers where an owner spoke since the last check (main loop and the
-# gateway path), folded into state by OwnerPresence.check.
-_OWNER_SPOKE = {}
+    return _OWNER_PRESENCE.restore(state)
 
 
 def owners_absent(gid):
-    return _owner_presence().absent(gid)
-
-
-def _guild_lifecycle():
-    presence = _owner_presence()
-    return GuildLifecycle(
-        _DIRECTORY,
-        _DIRECTORY.channels,
-        presence,
-        JoinNotices(presence, _owner_messenger(), rest_backing_off, SETTINGS_PREFIX),
-        settings,
-        publish_directory,
-        GUILD_ALLOWLIST,
-        _stale_labels,
-    )
+    return _OWNER_PRESENCE.absent(gid)
 
 
 def sync_guilds(state, guilds, channels):
-    return _guild_lifecycle().sync(state, guilds, channels)
-
-
-_stale_labels = set()
+    return _GUILD_LIFECYCLE.sync(state, guilds, channels)
 
 
 def flush_join_notices(state, guilds, channels):
-    return _join_notices().flush(state, guilds, channels)
+    return _JOIN_NOTICES.flush(state, guilds, channels)
 
 
 def on_guild_event(state, ev):
-    if _guild_lifecycle().on_event(state, ev):
+    if _GUILD_LIFECYCLE.on_event(state, ev):
         _DISCOVERY_REFRESH.request()
 
 
@@ -848,9 +791,6 @@ def on_guild_event(state, ev):
 # ---------------------------------------------------------------------------
 UPDATE_CHECK_FILE = os.path.join(BASE_DIR, "update_check.json")
 UPDATE_REQUEST_FILE = os.path.join(BASE_DIR, "update_request.json")
-# The newest announced version, mirrored from state.json for the
-# interaction thread (only the main loop touches state).
-_update_announced = {"version": None}
 
 
 def updates_enabled():
@@ -862,7 +802,7 @@ def _version_installed(tag, timeout=5):
 
 
 def announce_update(state):
-    return _update_notices().announce(state)
+    return _UPDATE_NOTICES.announce(state)
 
 
 def telemetry_notice():
@@ -876,9 +816,9 @@ def telemetry_notice():
 def apply_record(state, rec):
     kind = rec.get("kind")
     if kind == "update_choice":
-        _update_notices().apply_choice(state, rec)
+        _UPDATE_NOTICES.apply_choice(state, rec)
     elif kind == "hold_choice":
-        _reply_review().apply_choice(state, rec)
+        _REVIEW.apply_choice(state, rec)
     elif kind == "proactive_yes":
         PRO.consent.apply_button(rec)
 
@@ -893,10 +833,6 @@ _INTERACTION_RESPONDER: InteractionResponder
 _INTERACTION_WORKER: InteractionWorker
 
 
-def on_update_button(ix, rest, uid, record):
-    return _update_notices().on_button(ix, rest, uid, record)
-
-
 # ---------------------------------------------------------------------------
 # never_share backstop. Before a reply goes anywhere but an owner's own
 # DM, its text is checked against privacy.never_share (case-insensitive,
@@ -908,25 +844,14 @@ def on_update_button(ix, rest, uid, record):
 # it back through the outbox as the original reply; Discard and the
 # 24-hour expiry drop it. The phrase list is never logged.
 # ---------------------------------------------------------------------------
-# hold id -> held at, mirrored from state.json for the interaction thread
-# (only the main loop touches state).
-_holds_live = {}
-
-
-def _reply_review():
-    return ReplyReview(settings, _owner_messenger(), _DIRECT_MESSAGES.users, _settle, _holds_live)
 
 
 def never_share_hit(state, item, qid, parts):
-    return _reply_review().hit(state, item, qid, parts)
+    return _REVIEW.hit(state, item, qid, parts)
 
 
 def expire_holds(state):
-    return _reply_review().expire(state)
-
-
-def on_hold_button(ix, rest, uid, record):
-    return _reply_review().on_button(ix, rest, uid, record)
+    return _REVIEW.expire(state)
 
 
 def on_proactive_button(ix, rest, uid, record):
@@ -960,11 +885,6 @@ def publish_directory():
 _SETTINGS_SESSIONS: SettingsSessions
 
 
-# Pending admin-change digests: guild id -> {"first": t, "changes": []}.
-_ADMIN_CHANGES = {}
-_ADMIN_LOCK = threading.Lock()
-
-
 def settings_context():
     return SettingsContext(
         current=settings,
@@ -979,7 +899,7 @@ def settings_context():
             _DIRECT_MESSAGES,
             lambda: _WATCH_STORE.read()["fired"],
         ),
-        admin_change=_admin_digests().note,
+        admin_change=_ADMIN_DIGESTS.note,
         bot_id=str(BOT_ID or ""),
         now=time.time(),
     )
@@ -990,7 +910,7 @@ def _directory_name(some_id):
 
 
 def flush_admin_digests(force=False):
-    return _admin_digests().flush(force)
+    return _ADMIN_DIGESTS.flush(force)
 
 
 # ---------------------------------------------------------------------------
@@ -1736,7 +1656,7 @@ def _rest_scheduler():
 
 def _settings_upkeep(status):
     register_commands(status)
-    flush_admin_digests()
+    _ADMIN_DIGESTS.flush()
 
 
 def _send_outbox(state):
@@ -1753,8 +1673,8 @@ def _start_monitor_threads(state):
     # the gateway thread: the 3s acknowledgement deadline never waits on
     # the main loop. What they change in state comes back through the
     # gateway inbox ("_record", applied by drain_gateway).
-    _holds_live.update({hid: h.get("at", 0) for hid, h in (state.get("holds") or {}).items()})
-    _update_announced["version"] = (state.get("update_notice") or {}).get("version")
+    _REVIEW.live.update({hid: h.get("at", 0) for hid, h in (state.get("holds") or {}).items()})
+    _UPDATE_NOTICES.announced["version"] = (state.get("update_notice") or {}).get("version")
     threading.Thread(
         target=_INTERACTION_WORKER.run,
         args=(_ix_inbox, lambda rec: _gateway_inbox.put({"_record": rec})),
@@ -1842,6 +1762,8 @@ def _start_monitor():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
+    global _OWNER_MESSAGES, _OWNER_PRESENCE, _REVIEW, _UPDATE_NOTICES
+    global _ADMIN_DIGESTS, _JOIN_NOTICES, _GUILD_LIFECYCLE
     global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
@@ -1872,14 +1794,53 @@ def _initialize_services():
     _DISCORD = DiscordCalls(
         lambda: TOKEN, _BACKOFF, _HEALTH, lambda data, where: guard_outgoing(data, where)
     )
+    _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
+    _DIRECT_MESSAGES = DirectChannels()
+    _OWNER_MESSAGES = OwnerMessenger(
+        lambda: _SETTINGS.owners,
+        lambda data, where: guard_outgoing(data, where),
+        lambda path, body: api_post(path, body),
+    )
+    _OWNER_PRESENCE = OwnerPresence(
+        lambda: _SETTINGS.owners,
+        settings,
+        lambda path: api_get(path),
+        lambda: rest_backing_off(),
+    )
+    _REVIEW = ReplyReview(settings, _OWNER_MESSAGES, _DIRECT_MESSAGES.users, _settle)
+    _UPDATE_NOTICES = UpdateNotices(
+        lambda: UPDATE_CHECK_FILE,
+        lambda: UPDATE_REQUEST_FILE,
+        _OWNER_MESSAGES,
+        updates_enabled,
+        lambda: rest_backing_off(),
+        lambda *args, **kwargs: _version_installed(*args, **kwargs),
+    )
+    _ADMIN_DIGESTS = AdminDigests(
+        _directory_name,
+        _USER_NAMES,
+        _DIRECTORY.guilds,
+        _OWNER_MESSAGES.notify,
+        lambda: rest_backing_off(),
+    )
+    _JOIN_NOTICES = JoinNotices(
+        _OWNER_PRESENCE, _OWNER_MESSAGES, lambda: rest_backing_off(), SETTINGS_PREFIX
+    )
+    _GUILD_LIFECYCLE = GuildLifecycle(
+        _DIRECTORY,
+        _DIRECTORY.channels,
+        _OWNER_PRESENCE,
+        _JOIN_NOTICES,
+        settings,
+        publish_directory,
+        GUILD_ALLOWLIST,
+    )
     _INTERACTIONS = InteractionRouter(lambda: _SETTINGS.owners)
-    _INTERACTIONS.register("mdupd", on_update_button)
-    _INTERACTIONS.register("mdhold", on_hold_button)
+    _INTERACTIONS.register("mdupd", _UPDATE_NOTICES.on_button)
+    _INTERACTIONS.register("mdhold", _REVIEW.on_button)
     _INTERACTIONS.register("mdpro", on_proactive_button, owner_only=False)
     _INTERACTION_RESPONDER = InteractionResponder(_DISCORD)
     _INTERACTION_WORKER = InteractionWorker(_INTERACTIONS, _INTERACTION_RESPONDER)
-    _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
-    _DIRECT_MESSAGES = DirectChannels()
     _ACTIVITY = GatewayActivity()
     _DISCOVERY_REFRESH = DiscoveryRefresh()
     _SHARED_MEMBERSHIP = SharedServers(

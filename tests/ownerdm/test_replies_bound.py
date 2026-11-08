@@ -69,7 +69,7 @@ class GeneralPath(_B):
     def test_made_up_item(self):
         """Into an ownerless server, a paused one, a server where replies
         are off, or the DM of someone the DM settings refuse."""
-        self.mod.OWNER_IN_GUILD[G1] = False
+        self.mod._OWNER_PRESENCE.membership[G1] = False
         self.apply(MS.pause_changes(MS.Place.server(G1)))
         self.config("""all_servers:
   who:

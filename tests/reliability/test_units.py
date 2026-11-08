@@ -107,7 +107,8 @@ class F2BurstLedger(unittest.TestCase):
 class F4GuildAllowlist(unittest.TestCase):
     def test_gateway_message_from_other_guild_ignored(self):
         mod = H.load_monitor()
-        mod.GUILD_ALLOWLIST = {G1}
+        mod.GUILD_ALLOWLIST.clear()
+        mod.GUILD_ALLOWLIST.add(G1)
         st = new_state(mod)
         st["guild_joined"]["G2"] = 0
         mod.api.routes["/channels/C9"] = {"id": "C9", "guild_id": "G2", "name": "x", "type": 0}

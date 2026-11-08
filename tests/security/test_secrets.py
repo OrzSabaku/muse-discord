@@ -77,7 +77,7 @@ class Outbox(tb.Base):
         m = self.mod
         n0 = len(m.api.posts)
         with quiet():
-            self.assertFalse(m._owner_messenger().dm(OWNER, {"content": TOKEN}))
+            self.assertFalse(m._OWNER_MESSAGES.dm(OWNER, {"content": TOKEN}))
         self.assertEqual([p for p, d in m.api.posts[n0:] if TOKEN in json.dumps(d)], [])
         # The real helpers: nothing reaches the network.
         opened = []

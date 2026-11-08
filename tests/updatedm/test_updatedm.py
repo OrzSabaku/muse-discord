@@ -110,7 +110,7 @@ class Announce(unittest.TestCase):
         self.assertEqual([b["type"] for b in btns], [2, 2])
         self.assertEqual([b["custom_id"] for b in btns], ["mdupd:now:v1.7.0", "mdupd:later:v1.7.0"])
         self.assertEqual(state["update_notice"]["version"], "v1.7.0")
-        self.assertEqual(mod._update_announced["version"], "v1.7.0")
+        self.assertEqual(mod._UPDATE_NOTICES.announced["version"], "v1.7.0")
         # Same version again (and after a state round trip): no new DM.
         n = len(mod.api.posts)
         mod.announce_update(state)
@@ -217,7 +217,7 @@ class Announce(unittest.TestCase):
 class Interactions(unittest.TestCase):
     def setUp(self):
         self.mod = load()
-        self.mod._update_announced["version"] = V2
+        self.mod._UPDATE_NOTICES.announced["version"] = V2
         self.recs = []
 
     def dispatch(self, i):

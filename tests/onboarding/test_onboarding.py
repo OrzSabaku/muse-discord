@@ -487,12 +487,12 @@ class OwnerChecks(unittest.TestCase):
         mod.api.members[(good, OWNER)] = []
         with quiet():
             for g in bad:
-                mod._owner_presence().joined(st, g)
-            mod._owner_presence().check(st, guilds)  # the 5 bad ones
-            mod._owner_presence().joined(st, good)
-            mod._owner_presence().check(st, guilds)
-        self.assertIs(mod.OWNER_IN_GUILD[good], True)
-        self.assertTrue(all(mod.OWNER_IN_GUILD[g] is None for g in bad))
+                mod._OWNER_PRESENCE.joined(st, g)
+            mod._OWNER_PRESENCE.check(st, guilds)  # the 5 bad ones
+            mod._OWNER_PRESENCE.joined(st, good)
+            mod._OWNER_PRESENCE.check(st, guilds)
+        self.assertIs(mod._OWNER_PRESENCE.membership[good], True)
+        self.assertTrue(all(mod._OWNER_PRESENCE.membership[g] is None for g in bad))
 
 
 class WatchdogHook(unittest.TestCase):

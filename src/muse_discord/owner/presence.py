@@ -41,7 +41,7 @@ class OwnerPresence:
         return self.owners_source()
 
     def restore(self, state):
-        """Rebuild OWNER_IN_GUILD from state (at boot, and after a check)."""
+        """Rebuild the membership mirror at boot and after a check."""
         seen = state.setdefault("owner_in_guild", {})
         for gid in list(seen):
             e = _owner_entry(seen[gid])

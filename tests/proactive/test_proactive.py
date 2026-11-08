@@ -681,10 +681,10 @@ class Eligibility(Base):
         self.assertNotIn(DM_U1, self.targets(slot))
 
     def test_never_in_ownerless_or_paused_places(self):
-        self.m.OWNER_IN_GUILD[G1] = False  # no owner in G1
+        self.m._OWNER_PRESENCE.membership[G1] = False  # no owner in G1
         slot = self.heartbeat("public")
         self.assertFalse({CH, CH2} & self.targets(slot), self.out)
-        self.m.OWNER_IN_GUILD.pop(G1)
+        self.m._OWNER_PRESENCE.membership.pop(G1)
         self.m.PRO.store.data()["slot"] = None
         self.m.queue_edit(drop=lambda q: True)
         self.apply(MS.pause_changes(MS.Place.server(G1)) + MS.pause_changes(MS.Place.dms()))

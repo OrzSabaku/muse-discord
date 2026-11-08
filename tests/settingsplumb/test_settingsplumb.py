@@ -596,7 +596,7 @@ class AdminDigest(unittest.TestCase):
             self.ctx = self.mod.settings_context()
 
     def age(self, secs):
-        for e in self.mod._ADMIN_CHANGES.values():
+        for e in self.mod._ADMIN_DIGESTS.changes.values():
             e["first"] -= secs
 
     def test_batched_per_guild_per_minute(self):
@@ -635,16 +635,16 @@ class AdminDigest(unittest.TestCase):
         self.mod.api_post = lambda *_: (_ for _ in ()).throw(OSError("offline"))
         with quiet():
             self.assertEqual(self.mod.flush_admin_digests(), 0)
-        self.assertIn(G1, self.mod._ADMIN_CHANGES)
+        self.assertIn(G1, self.mod._ADMIN_DIGESTS.changes)
         self.mod.api_post = original_post
         with quiet():
             self.assertEqual(self.mod.flush_admin_digests(), 1)
-        self.assertEqual(self.mod._ADMIN_CHANGES, {})
+        self.assertEqual(self.mod._ADMIN_DIGESTS.changes, {})
 
     def test_long_digest_capped(self):
         for i in range(80):
             self.ctx.notify_owners_admin_change(G1, U1, "who.ignore", [], [str(10**17 + i)] * 3)
-        text = self.mod._admin_digests().text(G1, self.mod._ADMIN_CHANGES[G1]["changes"])
+        text = self.mod._ADMIN_DIGESTS.text(G1, self.mod._ADMIN_DIGESTS.changes[G1]["changes"])
         self.assertLessEqual(len(text), 1990)
 
 

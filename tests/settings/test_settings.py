@@ -756,7 +756,7 @@ class NeverShare(MonitorBase):
         _item, _out, holds = self.hold("the cat is out")
         hid = next(iter(holds))
         holds[hid]["at"] -= 25 * 3600
-        m._holds_live[hid] -= 25 * 3600
+        m._REVIEW.live[hid] -= 25 * 3600
         _resp, recs = self.click(hid, "send")
         self.assertEqual(recs, [])
         with quiet():
