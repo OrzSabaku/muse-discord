@@ -10,7 +10,7 @@ ROOT = Path(os.environ.get("MUT_DIR", Path(__file__).resolve().parents[2]))
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "tests/_lib")]
 from settings_harness import OWNER, dmsg, load_monitor, quiet  # noqa: E402 (local import path bootstrap)
 
-from muse_discord.external_apps.binding import card  # noqa: E402 (local import path bootstrap)
+from muse_discord.external_apps.binding import DMOrigin, card  # noqa: E402 (local import path bootstrap)
 
 
 class Binding(unittest.TestCase):
@@ -23,7 +23,11 @@ everywhere:
 ''')
         state, queue = module.load_state(), []
         with quiet():
-            self.assertTrue(module.enqueue_message(dmsg(OWNER), "owner DM", state, queue, dm=True))
+            self.assertTrue(
+                module.enqueue_message(
+                    dmsg(OWNER), "owner DM", state, queue, context=module.QueueContext(dm=True)
+                )
+            )
         self.assertEqual(queue[0]["external_apps"], {"eligible": True, "level": "unconditional"})
 
     def test_untrusted_inputs_and_non_dm_context_cannot_grant_apps(self):
@@ -40,20 +44,16 @@ everywhere:
                     card(
                         {**base, field: value},
                         [],
-                        dm=True,
-                        owner=True,
-                        from_bot=False,
                         level="write",
+                        origin=DMOrigin(dm=True, owner=True, from_bot=False),
                     )["eligible"]
                 )
                 self.assertFalse(
                     card(
                         base,
                         [{**base, field: value}],
-                        dm=True,
-                        owner=True,
-                        from_bot=False,
                         level="write",
+                        origin=DMOrigin(dm=True, owner=True, from_bot=False),
                     )["eligible"]
                 )
         for dm, owner, bot, level in [
@@ -63,7 +63,9 @@ everywhere:
             (True, True, False, "off"),
         ]:
             self.assertFalse(
-                card(base, [], dm=dm, owner=owner, from_bot=bot, level=level)["eligible"]
+                card(base, [], level=level, origin=DMOrigin(dm=dm, owner=owner, from_bot=bot))[
+                    "eligible"
+                ]
             )
 
     def test_enqueued_owner_dm_gets_card_and_nonce_with_discord_commands_off(self):
@@ -78,7 +80,11 @@ everywhere:
         state, queue = module.load_state(), []
         msg = dmsg(OWNER, "read my calendar")
         with quiet():
-            self.assertTrue(module.enqueue_message(msg, "owner DM", state, queue, dm=True))
+            self.assertTrue(
+                module.enqueue_message(
+                    msg, "owner DM", state, queue, context=module.QueueContext(dm=True)
+                )
+            )
         self.assertEqual(queue[0]["external_apps"], {"eligible": True, "level": "read-only"})
         self.assertFalse(queue[0]["owner_command"])
         self.assertIn(msg["id"], state["nl_nonces"])
@@ -86,7 +92,9 @@ everywhere:
         forwarded["message_reference"] = {"type": 1, "message_id": "123"}
         forwarded["message_snapshots"] = [{}]
         with quiet():
-            module.enqueue_message(forwarded, "owner DM", state, queue, dm=True)
+            module.enqueue_message(
+                forwarded, "owner DM", state, queue, context=module.QueueContext(dm=True)
+            )
         if any(item["message_id"] == forwarded["id"] for item in queue):
             self.assertFalse(
                 next(item for item in queue if item["message_id"] == forwarded["id"])[

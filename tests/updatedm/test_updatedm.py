@@ -25,7 +25,7 @@ from common import (  # noqa: E402 (local import path bootstrap)
     copy_watchdog,
     scratch,
 )
-from common import (
+from common import (  # noqa: E402 (local import path bootstrap)
     HOOK_RUNTIME as RUNTIME,
 )
 
@@ -333,8 +333,8 @@ class Interactions(unittest.TestCase):
         self.assertEqual(seen["path"], "/interactions/9001/tok-en_1/callback")
         self.assertEqual(seen["method"], "POST")
         self.assertEqual(seen["data"], {"type": 7, "data": {}})
-        self.assertTrue(seen["anonymous"])
-        self.assertLess(seen["timeout"], 3)
+        self.assertTrue(seen["options"].anonymous)
+        self.assertLess(seen["options"].timeout, 3)
 
 
 # ---------------------------------------------------------------- watchdog
@@ -707,7 +707,7 @@ class Hook(unittest.TestCase):
         st["handed"][k] -= 21601
         with open(self.state, "w") as f:
             json.dump(st, f)
-        out, err = self.run_hook()
+        out, _err = self.run_hook()
         self.assertTrue(out.startswith("WAKE:"), out)
         out, _ = self.run_hook()
         self.assertTrue(out.startswith("SILENT:"), out)

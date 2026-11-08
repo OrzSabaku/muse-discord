@@ -19,6 +19,9 @@ import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
+)
 import test_watches as tw
 from common import HOOK_RUNTIME, MUT_DIR, scratch
 from settings_harness import OWNER, U1, U2
@@ -157,7 +160,7 @@ class Web(tw.Base):
         self.assertEqual((entry["result"], entry["summary"]), ("met", "found it on the venue site"))
         self.assertEqual(self.items(), {})  # not "every time"
         self.answer(f, f"It's on sale! <@{U2}>")
-        ((path, data),) = self.new_sends()
+        ((_path, data),) = self.new_sends()
         self.assertEqual(data["message_reference"]["message_id"], msg["id"])
         self.assertEqual(data["allowed_mentions"]["users"], [OWNER])
         self.tick(ahead=10)

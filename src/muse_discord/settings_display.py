@@ -5,8 +5,12 @@ It does not load, resolve or write configuration files.
 """
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 
 from muse_discord.settings_schema import CORE, TOP
+
+MAX_PEOPLE_SHOWN = 10
+PAIR_LENGTH = 2
 
 type Names = Mapping[str, str] | Callable[[str], str | None] | None
 
@@ -109,9 +113,9 @@ def person_name(pid, look):
 
 def people_text(ids, look):
     shown = [person_name(p, look) for p in ids]
-    if len(shown) > 10:
-        shown = shown[:10] + [f"{len(ids) - 10} more"]
-    if len(shown) <= 2:
+    if len(shown) > MAX_PEOPLE_SHOWN:
+        shown = [*shown[:MAX_PEOPLE_SHOWN], f"{len(ids) - MAX_PEOPLE_SHOWN} more"]
+    if len(shown) <= PAIR_LENGTH:
         return " and ".join(shown)
     return ", ".join(shown[:-1]) + " and " + shown[-1]
 
@@ -119,6 +123,20 @@ def people_text(ids, look):
 def clip(text, n):
     text = str(text)
     return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _typed_value_label(t, value, look):
+    if isinstance(value, bool):
+        return "On" if value else "Off"
+    if value is None:
+        return "No limit" if t in ("number", None) else "Not set"
+    if isinstance(value, list):
+        if t == "phrases":
+            return f"{len(value)} phrase{'s' if len(value) != 1 else ''}"
+        return people_text(value, look) if value else "Nobody"
+    if isinstance(value, int):
+        return f"{value:,}"
+    return (f'"{clip(value, 60)}"' if value else "(empty)") if t == "text" else str(value)
 
 
 def value_label(key, value, names=None):
@@ -132,19 +150,7 @@ def value_label(key, value, names=None):
         return "You and " + people_text(value, look)
     if isinstance(value, str) and (key, value) in VALUE_LABELS:
         return VALUE_LABELS[(key, value)]
-    if isinstance(value, bool):
-        return "On" if value else "Off"
-    if value is None:
-        return "No limit" if t in ("number", None) else "Not set"
-    if isinstance(value, list):
-        if t == "phrases":
-            return f"{len(value)} phrase{'s' if len(value) != 1 else ''}"
-        return people_text(value, look) if value else "Nobody"
-    if isinstance(value, int):
-        return f"{value:,}"
-    if t == "text":
-        return f'"{clip(value, 60)}"' if value else "(empty)"
-    return str(value)
+    return _typed_value_label(t, value, look)
 
 
 def place_name(place, names: Names = None) -> str:
@@ -179,11 +185,19 @@ def change_location(place, key, names=None, path=None):
     return "In " + place_name(place, names)
 
 
-def describe_change(place, key, old, new, names=None, path=None):
+@dataclass
+class ValueChange:
+    old: object
+    new: object
+
+
+def describe_change(place, key, values, names=None, path=None):
     """One plain sentence: "In #general, When it answers: Chatty → Only
     when @mentioned". old / new are the values in force before and
     after. names: {id: name} or a callable (raw ids only as a
     fallback)."""
+    old = values.old
+    new = values.new
     head = f"{change_location(place, key, names, path)}, {label(key)}"
     if old == new:
         return f"{head} is already {value_label(key, new, names)}"

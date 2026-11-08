@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
 )
+import contextlib
+
 import discord
 from common import scratch
 
@@ -90,7 +92,7 @@ class Live(unittest.IsolatedAsyncioTestCase):
         await self.sync()
         write(self.cfg, config("second", "listening"))
         await self.sync()
-        MS.set_value(self.cfg, "presence.status", "set in Discord", by="111")
+        MS.set_value(self.cfg, "presence.status", "set in Discord", actor=MS.WriteActor(by="111"))
         await self.sync()
         self.assertEqual(
             [c["activity"]["name"] for c in self.sent()],
@@ -207,10 +209,8 @@ class Live(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client._presence_sent[1], "first")
         task = self.client.presence_watch.get_task()
         await self.client.close()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
         self.assertFalse(self.client.presence_watch.is_running())
 
     async def test_guard_blocks_secrets_before_presence_changes(self):

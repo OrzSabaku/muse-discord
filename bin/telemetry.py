@@ -31,6 +31,8 @@ import secrets
 import sys
 from datetime import UTC, datetime
 
+MAX_DISPLAY_TIMESTAMP = 1e11
+
 PKG = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(PKG, "src"), os.path.join(PKG, "bin")]
 import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
@@ -109,7 +111,7 @@ def cmd_status(args):
             then = ""
         elif (
             isinstance(retry, (int, float))
-            and abs(retry) < 1e11
+            and abs(retry) < MAX_DISPLAY_TIMESTAMP
             and d.get("last_attempt") == T.utc_day()
         ):
             at = datetime.fromtimestamp(retry, UTC)
@@ -152,7 +154,11 @@ def cmd_switch(args, value):
         if all(r.noop for r in rows):
             print(f"Usage stats are already {value}.")
         else:
-            MS.apply(cfg, changes, args.by, group=f"cli-{secrets.token_hex(4)}", role="owner")
+            MS.apply(
+                cfg,
+                changes,
+                actor=MS.WriteActor(by=args.by, group=f"cli-{secrets.token_hex(4)}", role="owner"),
+            )
             print(
                 f"Usage stats are now {value}"
                 + (" (days it was off are never sent)." if value == "off" else ".")

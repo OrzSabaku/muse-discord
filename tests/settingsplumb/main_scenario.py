@@ -101,10 +101,7 @@ def on_alarm(*_):
 signal.signal(signal.SIGALRM, on_alarm)
 signal.setitimer(signal.ITIMER_REAL, 10)
 out = io.StringIO()
-with contextlib.redirect_stdout(out):
-    try:
-        mod.main()
-    except Stop:
-        pass
+with contextlib.redirect_stdout(out), contextlib.suppress(Stop):
+    mod.main()
 res["out"] = out.getvalue()
 print(json.dumps(res))

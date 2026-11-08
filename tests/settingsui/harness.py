@@ -299,16 +299,12 @@ class FakeCtx:
         MS.apply(
             self.cfg,
             [MS.Change(MS.Place.server(G1), "who.replies", "conversational")],
-            OWNER,
-            role="owner",
+            actor=MS.WriteActor(by=OWNER, role="owner"),
         )
         MS.apply(
             self.cfg,
             [MS.Change(MS.Place.server(G1), "who.ignore", [BOB, SPAM])],
-            ADMIN,
-            role="admin",
-            admin_gid=G1,
-            info=self,
+            actor=MS.WriteActor(by=ADMIN, role="admin", admin_gid=G1, info=self),
         )
 
     def refresh(self):
@@ -348,12 +344,18 @@ class FakeCtx:
 
     def apply(self, changes, by, role, group=None, admin_gid=None):
         self.applied.append((list(changes), by, role, admin_gid))
-        return MS.apply(self.cfg, changes, by, group, role=role, admin_gid=admin_gid, info=self)
+        return MS.apply(
+            self.cfg,
+            changes,
+            actor=MS.WriteActor(by=by, group=group, role=role, admin_gid=admin_gid, info=self),
+        )
 
     def undo(self, prefix, by, **kw):
         if kw.get("admin_gid"):
             kw.setdefault("info", self)
-        out = MS.undo_changes(self.cfg, prefix, by, **kw)
+        actor = MS.WriteActor(by, admin_gid=kw.get("admin_gid"), info=kw.get("info"))
+        options = {k: v for k, v in kw.items() if k not in ("admin_gid", "info")}
+        out = MS.undo_changes(self.cfg, prefix, actor, **options)
         self.undos.append((prefix, by, kw, out))
         return out
 

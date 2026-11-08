@@ -54,8 +54,13 @@ class Places(unittest.TestCase):
 
     def cli(self, *args):
         r = subprocess.run(
-            [sys.executable, os.path.join(MUT_DIR, "bin", "settings.py"), "--config", self.cfg]
-            + list(args),
+            [
+                sys.executable,
+                os.path.join(MUT_DIR, "bin", "settings.py"),
+                "--config",
+                self.cfg,
+                *list(args),
+            ],
             capture_output=True,
             text=True,
             timeout=60,

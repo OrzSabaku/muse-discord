@@ -20,6 +20,8 @@ from discord import ui
 from muse_discord import muse_settings as ms
 from muse_discord.settings_display import clip
 
+MAX_CONFIRMATION_WARNINGS = 5
+
 
 def action_row(*children: ui.Item[ui.View | ui.LayoutView]) -> ui.ActionRow[ui.LayoutView]:
     # DynamicItem is typed for either kind of view; these items belong to
@@ -283,9 +285,34 @@ class Screen:
         self.pending = None
 
     def act(self, ctx, role, action, values):
-        """Synchronous engine/file work, called in a worker after deferring."""
+        """Dispatch one deferred UI action without mixing navigation and writes."""
         place = self.place(ctx)
         self.pending = self.pending if action in ("confirm", "back") else None
+        handlers = {
+            "category": self._select_setting,
+            "key": self._select_setting,
+            "scope": self._navigate,
+            "browse": self._navigate,
+            "previous": self._navigate,
+            "next": self._navigate,
+            "preset": self._edit_draft,
+            "set": self._edit_draft,
+            "inherit": self._edit_draft,
+            "people": self._edit_draft,
+            "input": self._edit_draft,
+            "discard": self._edit_draft,
+            "save": self._finish_edit,
+            "confirm": self._finish_edit,
+            "undo": self._finish_edit,
+            "back": self._finish_edit,
+            "why": self._finish_edit,
+        }
+        handler = handlers.get(action)
+        if handler is None:
+            raise ms.SettingsError("この操作は利用できません。/settingsを開き直してください。")
+        return handler(ctx, role, action, values, place)
+
+    def _select_setting(self, ctx, role, action, values, place):
         if action in ("category", "key"):
             if action == "category":
                 if values[0] not in CATEGORIES:
@@ -295,7 +322,10 @@ class Screen:
                 if values[0] not in available(ctx, place, role):
                     raise ms.SettingsError("この設定は選べません。")
                 self.key = values[0]
-        elif action in ("scope", "browse", "previous", "next"):
+        return ""
+
+    def _navigate(self, ctx, role, action, values, place):
+        if action in ("scope", "browse", "previous", "next"):
             if self.draft:
                 raise ms.SettingsError("適用先を変える前に、下書きを保存するか破棄してください。")
             if action == "scope" and values[0] not in ("servers", "channels"):
@@ -312,7 +342,10 @@ class Screen:
             else:
                 self.browse = values[0]
                 self.page = 0
-        elif action == "preset":
+        return ""
+
+    def _edit_draft(self, ctx, role, action, values, place):
+        if action == "preset":
             if role != "owner" or place.kind != "server":
                 raise ms.SettingsError("プリセットは所有者がサーバー全体に設定できます。")
             staged = ms.simulate(ctx.settings, self.changes(ctx))
@@ -332,7 +365,10 @@ class Screen:
         elif action == "discard":
             self.clear()
             return "下書きを破棄しました。"
-        elif action in ("save", "confirm"):
+        return ""
+
+    def _finish_edit(self, ctx, role, action, values, place):
+        if action in ("save", "confirm"):
             return self.save(ctx, role, confirmed=action == "confirm")
         elif action == "undo":
             if self.draft:
@@ -369,35 +405,14 @@ class Screen:
         if confirmed and not self.pending:
             raise ms.SettingsError("確認内容の有効期限が切れました。保存し直してください。")
         pending = self.pending or Pending(warnings=[])
-        if confirmed and len(pending.get("warnings", [])) > 5:
+        if confirmed and len(pending.get("warnings", [])) > MAX_CONFIRMATION_WARNINGS:
             raise ms.SettingsError("変更を少数ずつ保存して、すべての警告を確認してください。")
         if confirmed and "undo" in pending:
-            expected = pending["undo"]
-            kw = {"children": place.kind == "server", "expect": expected}
-            if role == "admin":
-                kw["admin_gid"] = place.guild_id
-            plan = ms.undo_plan(ctx.settings, place, kw["children"], kw.get("admin_gid"))
-            assessment = ms.assess(ctx.settings, plan, ctx) if role == "owner" else None
-            if assessment and assessment.warnings != pending["warnings"]:
-                pending["warnings"] = assessment.warnings
-                return ""
-            planned = ms.plan_changes(ctx.settings, plan, role)
-            ctx.undo(place, self.uid, **kw)
-            self.pending = None
-            notify_admin(ctx, role, place, self.uid, planned)
-            return "直前の変更を取り消しました。"
+            return self.save_undo(ctx, role, pending, place)
         changes = self.changes(ctx)
         if not changes:
             return "変更はありません。"
-        for key, old in self.baseline.items():
-            path = ms.place_path(ctx.settings, place, key)
-            if old != (
-                ctx.settings.layer(path, key),
-                current_value(ctx.settings, place, key),
-            ):
-                raise ms.SettingsError(
-                    "編集中に設定が変更されました。下書きを破棄して最新の値からやり直してください。"
-                )
+        self.check_baseline(ctx, place)
         if role == "admin":
             changes = ms.admin_changes(ctx.settings, place.guild_id, changes, ctx)
         assessment = ms.assess(ctx.settings, changes, ctx) if role == "owner" else None
@@ -416,6 +431,33 @@ class Screen:
         notify_admin(ctx, role, place, self.uid, res.written)
         self.clear()
         return "保存しました。次のメッセージから反映されます。"
+
+    def check_baseline(self, ctx, place):
+        for key, old in self.baseline.items():
+            path = ms.place_path(ctx.settings, place, key)
+            if old != (
+                ctx.settings.layer(path, key),
+                current_value(ctx.settings, place, key),
+            ):
+                raise ms.SettingsError(
+                    "編集中に設定が変更されました。下書きを破棄して最新の値からやり直してください。"
+                )
+
+    def save_undo(self, ctx, role, pending, place):
+        expected = pending["undo"]
+        kw = {"children": place.kind == "server", "expect": expected}
+        if role == "admin":
+            kw["admin_gid"] = place.guild_id
+        plan = ms.undo_plan(ctx.settings, place, kw["children"], kw.get("admin_gid"))
+        assessment = ms.assess(ctx.settings, plan, ctx) if role == "owner" else None
+        if assessment and assessment.warnings != pending["warnings"]:
+            pending["warnings"] = assessment.warnings
+            return ""
+        planned = ms.plan_changes(ctx.settings, plan, role)
+        ctx.undo(place, self.uid, **kw)
+        self.pending = None
+        notify_admin(ctx, role, place, self.uid, planned)
+        return "直前の変更を取り消しました。"
 
 
 def notify_admin(ctx, role, place, uid, planned):
@@ -671,6 +713,59 @@ class Panel(ui.LayoutView):
             for label, val in values
         ]
 
+    def setting_source(self, key, path):
+        st, p, ctx = self.ctx.settings, self.place, self.ctx
+        if key in ms.TOP:
+            current = st.top(key)
+            source = "設定ファイル / Discord" if st.layer(path, key)[0] else "組み込みの初期値"
+        else:
+            current, trace = st.trace(p.scope(key), key)
+            source_path = next(
+                (path_ for _, path_, supplied, _, _ in reversed(trace) if supplied),
+                ("builtin",),
+            )
+            source_place = ms.place_of_path(source_path)
+            source = (
+                ms.place_name(source_place, ctx.names)
+                if source_place
+                else "組み込み / サーバー共通の初期値"
+            )
+        return current, source
+
+    def edit_footer(self):
+        s, ctx, p = self.screen, self.ctx, self.place
+        st = ctx.settings
+        if s.draft:
+            lines = [
+                f"• {TITLES[k]} → {'継承' if v == 'inherit' else value_text(v)}"
+                for k, v in s.draft.items()
+            ]
+            self.body.add_item(
+                ui.TextDisplay(f"**未保存の変更：{len(lines)}件**\n" + clip("\n".join(lines), 700))
+            )
+        _, s.undo_id = ms.undo_preview(
+            st,
+            p,
+            include_children=p.kind == "server",
+            admin_gid=p.guild_id if self.role == "admin" else None,
+        )
+        self.body.add_item(
+            action_row(
+                self.button(
+                    f"保存（{len(s.draft)}件）",
+                    "save",
+                    disabled=not s.draft or bool(st.overlay_error),
+                    style=discord.ButtonStyle.success,
+                ),
+                self.button("下書きを破棄", "discard", disabled=not s.draft),
+                self.button(
+                    "直前の変更を取り消す",
+                    "undo",
+                    disabled=not s.undo_id or bool(s.draft) or bool(st.overlay_error),
+                ),
+            )
+        )
+
     def editor(self):
         s, ctx, p = self.screen, self.ctx, self.place
         scopes = [("全体の初期設定", "defaults"), ("DM", "dms")]
@@ -720,21 +815,7 @@ class Panel(ui.LayoutView):
             )
         key, st = s.key, ctx.settings
         path = ms.place_path(st, p, key)
-        if key in ms.TOP:
-            current = st.top(key)
-            source = "設定ファイル / Discord" if st.layer(path, key)[0] else "組み込みの初期値"
-        else:
-            current, trace = st.trace(p.scope(key), key)
-            source_path = next(
-                (path_ for _, path_, supplied, _, _ in reversed(trace) if supplied),
-                ("builtin",),
-            )
-            source_place = ms.place_of_path(source_path)
-            source = (
-                ms.place_name(source_place, ctx.names)
-                if source_place
-                else "組み込み / サーバー共通の初期値"
-            )
+        current, source = self.setting_source(key, path)
         inherited = st.value_without(p.scope(key), key, path)
         if path == ("all_servers",):
             self.body.add_item(
@@ -755,36 +836,7 @@ class Panel(ui.LayoutView):
         if p.kind != "defaults":
             buttons.append(self.button("返信しなかった理由", "why"))
         self.body.add_item(action_row(*buttons))
-        if s.draft:
-            lines = [
-                f"• {TITLES[k]} → {'継承' if v == 'inherit' else value_text(v)}"
-                for k, v in s.draft.items()
-            ]
-            self.body.add_item(
-                ui.TextDisplay(f"**未保存の変更：{len(lines)}件**\n" + clip("\n".join(lines), 700))
-            )
-        _, s.undo_id = ms.undo_preview(
-            st,
-            p,
-            include_children=p.kind == "server",
-            admin_gid=p.guild_id if self.role == "admin" else None,
-        )
-        self.body.add_item(
-            action_row(
-                self.button(
-                    f"保存（{len(s.draft)}件）",
-                    "save",
-                    disabled=not s.draft or bool(st.overlay_error),
-                    style=discord.ButtonStyle.success,
-                ),
-                self.button("下書きを破棄", "discard", disabled=not s.draft),
-                self.button(
-                    "直前の変更を取り消す",
-                    "undo",
-                    disabled=not s.undo_id or bool(s.draft) or bool(st.overlay_error),
-                ),
-            )
-        )
+        self.edit_footer()
 
     def control(self, key):
         spec = self.ctx.settings.spec(key)
@@ -857,14 +909,14 @@ class Panel(ui.LayoutView):
         warnings = s.pending.get("warnings", [])
         for warning in warnings[:5]:
             self.body.add_item(ui.TextDisplay("⚠ " + text(warning, 350)))
-        if len(warnings) > 5:
+        if len(warnings) > MAX_CONFIRMATION_WARNINGS:
             self.body.add_item(ui.TextDisplay("警告が多いため、変更を少数ずつ保存してください。"))
         self.body.add_item(
             action_row(
                 self.button(
                     "確認して適用",
                     "confirm",
-                    disabled=len(warnings) > 5,
+                    disabled=len(warnings) > MAX_CONFIRMATION_WARNINGS,
                     style=discord.ButtonStyle.danger,
                 ),
                 self.button("編集に戻る", "back"),
@@ -879,7 +931,7 @@ class Panel(ui.LayoutView):
             entries = [
                 ("#" + c["name"], f"channel:{p.guild_id}:{c['id']}")
                 for c in self.ctx.channels(p.guild_id)
-                if c.get("type") != 4 and c.get("readable", True)
+                if c.get("type") != ms.CATEGORY_TYPE and c.get("readable", True)
             ]
         entries.sort(key=lambda x: (x[0], x[1]))
         pages = max(1, (len(entries) + 24) // 25)

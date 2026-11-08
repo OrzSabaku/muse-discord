@@ -29,7 +29,7 @@ def churn_aliases(mod, st, n=501):
     """Other people's bursts: alias_fragments keeps only the newest 500
     fragment -> trigger aliases (state["reply_aliases"])."""
     for i in range(n):
-        mod.alias_fragments(st, "7%017d" % i, [{"id": "8%017d" % i}])
+        mod.alias_fragments(st, f"7{i:017d}", [{"id": f"8{i:017d}"}])
 
 
 class BurstFragments(Base):
@@ -137,7 +137,7 @@ class ForgottenChannels(Base):
     def forget(self):
         self.mod.DM_CHANNEL_USER.clear()
         for i in range(301):
-            self.mod.note_item_meta(self.st, "6%017d" % i, channel_id=CH, dm=False, owner_dm=False)
+            self.mod.note_item_meta(self.st, f"6{i:017d}", channel_id=CH, dm=False, owner_dm=False)
 
     def test_owner_dm_channel_forgotten(self):
         m = self.owner_dm()
@@ -194,7 +194,7 @@ class RejectedCopies(Base):
             json.dump({"items": [self.reply(m, owner_dm_nonce=real)]}, f)
         self.process()
         with open(self.mod.OUTBOX_FILE, "w") as f:
-            f.write('[{"owner_dm_nonce": "%s", "text": ' % real)
+            f.write(f'[{{"owner_dm_nonce": "{real}", "text": ')
         os.utime(self.mod.OUTBOX_FILE, (1, 1))  # not mid-write
         self.process()
         with open(self.mod.OUTBOX_REJECTED_FILE) as f:

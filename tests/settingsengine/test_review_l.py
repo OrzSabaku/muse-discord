@@ -33,7 +33,7 @@ class Fold(unittest.TestCase):
         cfg = config(self, TWO_SPELLINGS)
         sc = MS.Scope.server(G1)
         self.assertEqual(load(cfg).get("who.ignore", sc), [SPAM])
-        MS.apply(cfg, [C(S1, "limits.per_day", 5)], OWNER, role="owner")
+        MS.apply(cfg, [C(S1, "limits.per_day", 5)], actor=MS.WriteActor(by=OWNER, role="owner"))
         MS.fold(cfg)
         st = load(cfg)
         self.assertEqual(st.get("limits.per_day", sc), 5)

@@ -472,7 +472,7 @@ class OwnerChecks(unittest.TestCase):
         mod = load_monitor(f'version: 1\nowners: ["{OWNER}"]\n')
         bad = [str(610000000000000000 + i) for i in range(5)]
         good = "690000000000000001"
-        guilds = {g: {"name": g} for g in bad + [good]}
+        guilds = {g: {"name": g} for g in [*bad, good]}
         st = mod.load_state()
         real_get = mod.api_get
 

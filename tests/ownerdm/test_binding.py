@@ -80,9 +80,7 @@ class Base(unittest.TestCase):
                 "DM" if dm else "#general",
                 self.st,
                 q,
-                dm=dm,
-                guild_id=guild,
-                fragments=fragments,
+                context=self.mod.QueueContext(dm=dm, fragments=fragments, guild_id=guild),
             )
         self.assertTrue(ok)
         self.mod.queue_edit(add=q)

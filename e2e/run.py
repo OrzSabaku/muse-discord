@@ -49,8 +49,11 @@ import subprocess
 import sys
 import tempfile
 import time
+from http import HTTPStatus
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import contextlib
 
 import checks
 import discord_rest
@@ -397,7 +400,7 @@ class Runner:
         """The channel plus every thread this scenario started, as one
         list sorted by id."""
         msgs = {}
-        for cid in [channel_id] + list(self.threads.values()):
+        for cid in [channel_id, *list(self.threads.values())]:
             for m in self.history(cid):
                 msgs[m["id"]] = m
         return sorted(msgs.values(), key=lambda m: int(m["id"]))
@@ -443,10 +446,8 @@ class Runner:
         else:
             log("restarting the monitor for this scenario's config")
         self.sut.stop()
-        try:
+        with contextlib.suppress(FileNotFoundError):
             os.unlink(self.overlay_path())
-        except FileNotFoundError:
-            pass
         mark = self.sut.log_size() if hasattr(self.sut, "log_size") else None
         self.sut.start(gateway=True, config=cfg)
         self.starts += 1
@@ -465,7 +466,7 @@ class Runner:
         try:
             log_mark = self.ensure_config(cfg)
         except sut.SUTError as e:
-            raise MonitorDown(f"monitor could not be (re)started: {e}")
+            raise MonitorDown(f"monitor could not be (re)started: {e}") from e
         if log_mark is None and hasattr(self.sut, "log_size"):
             log_mark = self.sut.log_size()
         self.notes = []
@@ -555,7 +556,7 @@ class Runner:
                 files=files,
             )
         except discord_rest.DiscordError as e:
-            if arg.get("in") and e.status == 403:
+            if arg.get("in") and e.status == HTTPStatus.FORBIDDEN:
                 raise Flake(
                     missing_thread_permission(
                         arg["as"], "Send Messages in Threads", f"posting in thread {arg['in']!r}"
@@ -590,7 +591,7 @@ class Runner:
         try:
             th = self.drivers[who].start_thread(channel_id, labels[src], arg["name"])
         except discord_rest.DiscordError as e:
-            if e.status == 403:
+            if e.status == HTTPStatus.FORBIDDEN:
                 raise Flake(
                     missing_thread_permission(
                         who, "Create Public Threads", f"starting a thread on {src!r}"
@@ -643,14 +644,14 @@ class Runner:
         mark = self.sut.log_size()
         if op == "set":
             key = ms.format_key(path, arg["set"])
-            ms.set_value(config_path, key, arg["value"], by)
+            ms.set_value(config_path, key, arg["value"], ms.WriteActor(by))
             what = f"set {key} = {arg['value']!r}"
         elif op == "reset":
             key = ms.format_key(path, arg["reset"])
             ms.reset(config_path, key, by)
             what = f"reset {key}"
         else:
-            key = ms.undo(config_path, ms.scope_prefix(path), by)
+            key = ms.undo(config_path, ms.scope_prefix(path), ms.WriteActor(by))
             if key is None:
                 note = f"settings undo at {scope}: nothing to undo"
                 log(note)
@@ -891,8 +892,7 @@ def start_worker(kind, pkg_dir, log_path):
     }
     if kind != "claude":
         env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
-    f = open(log_path, "a")
-    try:
+    with open(log_path, "a") as f:
         return subprocess.Popen(
             [sys.executable, script, "--pkg", pkg_dir],
             stdout=f,
@@ -901,8 +901,6 @@ def start_worker(kind, pkg_dir, log_path):
             env=env,
             start_new_session=True,
         )
-    finally:
-        f.close()
 
 
 def stop_worker(proc):
@@ -912,10 +910,8 @@ def stop_worker(proc):
         os.killpg(proc.pid, signal.SIGTERM)
         proc.wait(timeout=20)
     except ProcessLookupError, subprocess.TimeoutExpired:
-        try:
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
 
 
 def copy_logs(run_dir, out_dir):
@@ -990,7 +986,7 @@ def live_run(args, scenarios):
         try:
             me_sut, me_a, me_b = sut_bot.me(), bot_a.me(), bot_b.me()
         except discord_rest.DiscordError as e:
-            raise Flake(f"identity lookup failed: {e}")
+            raise Flake(f"identity lookup failed: {e}") from e
         ids = {
             "SUT": me_sut["id"],
             "A": me_a["id"],

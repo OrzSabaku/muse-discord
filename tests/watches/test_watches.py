@@ -126,7 +126,13 @@ class Base(unittest.TestCase):
         self.alive.add(msg["id"])
         q = []
         with quiet():
-            ok = self.mod.enqueue_message(msg, "x", self.st, q, dm=dm, guild_id=None if dm else G1)
+            ok = self.mod.enqueue_message(
+                msg,
+                "x",
+                self.st,
+                q,
+                context=self.mod.QueueContext(dm=dm, guild_id=None if dm else G1),
+            )
         self.assertTrue(ok)
         self.mod.queue_edit(add=q)
         return msg, q[0]
@@ -311,7 +317,7 @@ class Reminders(Base):
         self.tick(ahead=61)
         f = self.fires()[0]
         self.outbox(self.held({"item": f["message_id"], "channel_id": CH, "text": "Reminder!"}))
-        ((path, data),) = self.new_sends()
+        ((_path, data),) = self.new_sends()
         self.assertNotIn("message_reference", data)
         self.assertTrue(data["content"].startswith(f"<@{U1}>"))
         self.assertEqual(data["allowed_mentions"]["users"], [U1])
@@ -499,7 +505,7 @@ class Forgery(Base):
         m = gmsg("333000000000000001", "<@bot> remind me", mention=True, bot=True)
         q = []
         with quiet():
-            self.mod.enqueue_message(m, "x", self.st, q, guild_id=G1)
+            self.mod.enqueue_message(m, "x", self.st, q, context=self.mod.QueueContext(guild_id=G1))
         self.mod.queue_edit(add=q)
         self.outbox(self.reply(m, [{"op": "add", "kind": "remind", "after": 120}]))
         self.assertEqual(self.items(), {})
@@ -652,7 +658,7 @@ class Caps(Base):
         self.tick(ahead=121 + 601)
         fires = self.fires()
         self.assertEqual(len(fires), 2, self.out)
-        later = [f for f in fires if f["message_id"] == fid][0]
+        later = next(f for f in fires if f["message_id"] == fid)
         self.assertTrue(later["reminder"]["late"])
         self.assertEqual(self.mod.watch_store().read()["held"], {})
 

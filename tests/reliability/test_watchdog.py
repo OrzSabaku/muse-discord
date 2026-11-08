@@ -101,7 +101,7 @@ class Watchdog(unittest.TestCase):
         self.assertNotIn("OK monitor restarted", out)
 
     def test_log_rotated_not_truncated(self):
-        out, d = _results["log_rotated"]
+        _out, d = _results["log_rotated"]
         with open(os.path.join(d, "monitor.log.1")) as f:
             self.assertIn("the crash we need", f.read())
 

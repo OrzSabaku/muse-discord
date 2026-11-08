@@ -45,8 +45,11 @@ import re
 import secrets
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Annotated, Literal
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC as UTC_ZONE
+from datetime import datetime, timedelta
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     AfterValidator,
@@ -59,6 +62,11 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+MAX_TIME_STRING_LENGTH = 40
+UTC_YEAR_2100 = 4102444800
+MAX_COMPILED_PATTERNS = 2000
+FIRST_PRINTABLE_CHARACTER = 32
 
 VERSION = 1
 KINDS = ("remind", "watch")  # an `add`'s kind (a web watch is a
@@ -144,7 +152,7 @@ def parse_utc(value):
     """Epoch seconds for an ISO-8601 UTC time ("...Z" or "+00:00"), else
     None. Times in another offset, or with none, are refused: the
     worker converts, the protocol only takes UTC."""
-    if not isinstance(value, str) or len(value) > 40:
+    if not isinstance(value, str) or len(value) > MAX_TIME_STRING_LENGTH:
         return None
     v = value.strip()
     if v.endswith("Z") or v.endswith("z"):
@@ -157,12 +165,12 @@ def parse_utc(value):
     except ValueError, OverflowError, OSError, TypeError:
         return None
     # Only times the protocol could ever take (decide checks the range).
-    return ts if 0 < ts < 4102444800 else None  # before 2100
+    return ts if 0 < ts < UTC_YEAR_2100 else None  # before 2100
 
 
 def iso(ts):
     """Epoch seconds as ISO-8601 UTC, to the second ("...Z")."""
-    return datetime.fromtimestamp(int(ts), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.fromtimestamp(int(ts), UTC_ZONE).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def known_tz(name):
@@ -482,40 +490,137 @@ class Refused(Exception):
         self.detail = detail
 
 
+@dataclass
 class Request:
-    """Who asked, where, and what the monitor knows about it. Built by
-    the monitor from its own record of the queue item, never from the
-    outbox item's fields. resolve(in_value) -> (scope dict, where text)
-    or raises Refused (place checks need Discord: membership and
-    channel permissions)."""
+    """Monitor-authored identity and permissions for one schedule request."""
 
-    def __init__(
-        self,
-        requester,
-        name,
-        owner,
-        guild_id,
-        channel_id,
-        dm,
-        message_id,
-        message_time,
-        can_set,
-        where,
-        resolve,
-        can_web=False,
-    ):
-        self.requester = str(requester)
-        self.name = name
-        self.owner = bool(owner)
-        self.guild_id = guild_id
-        self.channel_id = str(channel_id)
-        self.dm = bool(dm)
-        self.message_id = str(message_id)
-        self.message_time = message_time
-        self.can_set = can_set
-        self.where = where
-        self.resolve = resolve
-        self.can_web = can_web
+    requester: str
+    name: str
+    owner: bool
+    guild_id: str | None
+    channel_id: str
+    dm: bool
+    message_id: str
+    message_time: float
+    can_set: bool
+    where: str
+    resolve: Callable[[str], tuple[dict[str, Any], str]]
+    can_web: bool = False
+
+    def __post_init__(self):
+        self.requester = str(self.requester)
+        self.channel_id = str(self.channel_id)
+        self.message_id = str(self.message_id)
+        self.owner = bool(self.owner)
+        self.dm = bool(self.dm)
+
+    def new_record(self, c, now):
+        kind = "watch-web" if c.get("check") == "web" else c["kind"]
+        rec = {
+            "kind": kind,
+            "requester": self.requester,
+            "name": self.name,
+            "guild_id": None if self.dm else self.guild_id,
+            "channel_id": self.channel_id,
+            "dm": self.dm,
+            "message_id": self.message_id,
+            "created": now,
+            "where": self.where,
+            "note": (c.get("note") or "").strip()[:NOTE_MAX],
+        }
+        if kind == "remind":
+            fields = self.reminder_fields(c, now)
+        elif kind == "watch-web":
+            fields = self.web_fields(c, now)
+        else:
+            fields = self.watch_fields(c, now)
+        rec.update(fields)
+        return rec
+
+    def reminder_fields(self, c, now):
+        due = parse_utc(c["at"]) if "at" in c else self.message_time + c["after"]
+        if due is None:
+            raise Refused(LINES["time"])
+        delay = due - self.message_time
+        if delay < REMIND_MIN_SECS or delay > REMIND_MAX_SECS or due - now > REMIND_MAX_SECS:
+            raise Refused(LINES["time"])
+        return {"due": due}
+
+    def web_fields(self, c, now):
+        until = parse_utc(c["until"]) if "until" in c else now + WATCH_DEFAULT_SECS
+        if until is None or until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
+            raise Refused(LINES["watch-time"])
+        return {
+            "until": until,
+            "what": " ".join(c["what"].split()),
+            "every": c["every"],
+            "repeat": bool(c.get("repeat")),
+            "owner": self.owner,
+            "next_check": now,
+            "check": None,
+            "fails": 0,
+            "checks": 0,
+        }
+
+    def watch_fields(self, c, now):
+        m = c["match"]
+        until = parse_utc(c["until"]) if "until" in c else now + WATCH_DEFAULT_SECS
+        if until is None or until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
+            raise Refused(LINES["watch-time"])
+        scope, scope_name = self.resolve(m["in"])
+        return {
+            "until": until,
+            "scope": scope,
+            "scope_name": scope_name,
+            "words": [w.strip() for w in m["words"]],
+            "every": bool(m.get("every")),
+            "last_fired": 0,
+            "fired": 0,
+        }
+
+    def cancel_ids(self, items, live, change):
+        # Web watches can only be changed from the requesting owner's DM.
+        def permitted(record):
+            return self.can_web or record.get("kind") != "watch-web"
+
+        if change.get("all"):
+            return [
+                i
+                for i, record in items.items()
+                if record.get("requester") == self.requester and i in live and permitted(record)
+            ]
+        record = items.get(change["id"])
+        if (
+            record is None
+            or change["id"] not in live
+            or not permitted(record)
+            or not (self.owner or record.get("requester") == self.requester)
+        ):
+            raise Refused(LINES["cancel"])
+        return [change["id"]]
+
+    def set_timezone(self, tz, change):
+        if change["tz"] is None:
+            tz.pop(self.requester, None)
+        elif not known_tz(change["tz"]):
+            raise Refused(LINES["tz"])
+        else:
+            tz[self.requester] = change["tz"]
+
+
+def _check_schedule_caps(req, live, kind):
+    if not req.owner:
+        mine = sum(1 for r in live.values() if r.get("requester") == req.requester)
+        if mine >= PER_PERSON_MAX:
+            raise Refused(
+                LINES["cap-person"].format(cap=PER_PERSON_MAX),
+                REASON_CAP,
+                {"kind": kind, "cap": PER_PERSON_MAX, "per": "person"},
+            )
+        if len(live) >= TOTAL_MAX:
+            raise Refused(
+                LINES["cap-total"], REASON_CAP, {"kind": kind, "cap": TOTAL_MAX, "per": "total"}
+            )
 
 
 def decide(data, req, changes, now=None):
@@ -535,107 +640,19 @@ def decide(data, req, changes, now=None):
     for c in changes:
         op = c["op"]
         if op == "tz":
-            if c["tz"] is None:
-                tz.pop(req.requester, None)
-            elif not known_tz(c["tz"]):
-                raise Refused(LINES["tz"])
-            else:
-                tz[req.requester] = c["tz"]
+            req.set_timezone(tz, c)
             done.append(("tz", c["tz"]))
             continue
         if op == "cancel":
-            # Web watches change only where they are set (req.can_web).
-            def ok(r):
-                return req.can_web or r.get("kind") != "watch-web"
-
-            if c.get("all"):
-                ids = [
-                    i
-                    for i, r in items.items()
-                    if r.get("requester") == req.requester and i in live and ok(r)
-                ]
-            else:
-                r = items.get(c["id"])
-                if (
-                    r is None
-                    or c["id"] not in live
-                    or not ok(r)
-                    or not (req.owner or r.get("requester") == req.requester)
-                ):
-                    raise Refused(LINES["cancel"])
-                ids = [c["id"]]
+            ids = req.cancel_ids(items, live, c)
             for i in ids:
                 items.pop(i, None)
                 live.pop(i, None)
                 done.append(("cancel", i))
             continue
-        kind = "watch-web" if c.get("check") == "web" else c["kind"]
-        rec = {
-            "kind": kind,
-            "requester": req.requester,
-            "name": req.name,
-            "guild_id": None if req.dm else req.guild_id,
-            "channel_id": req.channel_id,
-            "dm": req.dm,
-            "message_id": req.message_id,
-            "created": now,
-            "where": req.where,
-            "note": (c.get("note") or "").strip()[:NOTE_MAX],
-        }
-        if kind == "remind":
-            due = parse_utc(c["at"]) if "at" in c else req.message_time + c["after"]
-            if due is None:
-                raise Refused(LINES["time"])
-            delay = due - req.message_time
-            if delay < REMIND_MIN_SECS or delay > REMIND_MAX_SECS or due - now > REMIND_MAX_SECS:
-                raise Refused(LINES["time"])
-            rec["due"] = due
-        elif kind == "watch-web":
-            until = parse_utc(c["until"]) if "until" in c else now + WATCH_DEFAULT_SECS
-            if until is None or until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
-                raise Refused(LINES["watch-time"])
-            rec.update(
-                {
-                    "until": until,
-                    "what": " ".join(c["what"].split()),
-                    "every": c["every"],
-                    "repeat": bool(c.get("repeat")),
-                    "owner": req.owner,
-                    "next_check": now,
-                    "check": None,
-                    "fails": 0,
-                    "checks": 0,
-                }
-            )
-        else:
-            m = c["match"]
-            until = parse_utc(c["until"]) if "until" in c else now + WATCH_DEFAULT_SECS
-            if until is None or until - now < WATCH_MIN_SECS or until - now > WATCH_MAX_SECS:
-                raise Refused(LINES["watch-time"])
-            scope, scope_name = req.resolve(m["in"])
-            rec.update(
-                {
-                    "until": until,
-                    "scope": scope,
-                    "scope_name": scope_name,
-                    "words": [w.strip() for w in m["words"]],
-                    "every": bool(m.get("every")),
-                    "last_fired": 0,
-                    "fired": 0,
-                }
-            )
-        if not req.owner:
-            mine = sum(1 for r in live.values() if r.get("requester") == req.requester)
-            if mine >= PER_PERSON_MAX:
-                raise Refused(
-                    LINES["cap-person"].format(cap=PER_PERSON_MAX),
-                    REASON_CAP,
-                    {"kind": kind, "cap": PER_PERSON_MAX, "per": "person"},
-                )
-            if len(live) >= TOTAL_MAX:
-                raise Refused(
-                    LINES["cap-total"], REASON_CAP, {"kind": kind, "cap": TOTAL_MAX, "per": "total"}
-                )
+        rec = req.new_record(c, now)
+        kind = rec["kind"]
+        _check_schedule_caps(req, live, kind)
         rid = new_id({"items": items}, kind)
         items[rid] = rec
         live[rid] = rec
@@ -699,13 +716,28 @@ def _entry(i, r, show_for=False):
     return e
 
 
-def card(data, uid, guild_id=None, dm=False, owner_dm=False, can_set=True, now=None, can_web=False):
+@dataclass
+class CardContext:
+    guild_id: str | None = None
+    dm: bool = False
+    owner_dm: bool = False
+    can_set: bool = True
+    can_web: bool = False
+
+
+def card(data, uid, now=None, context=None):
     """The `watches` field of a queue item: the author's reminders and
     watches that may be shown where they asked (all of them in a DM,
     those set in this server in a server, with a count of the rest),
     their time zone if they told it, and whether they may set new ones
     (can_set; can_web for web watches).
     In an owner's own DM: everyone's, marked with whose."""
+    context = context or CardContext()
+    guild_id = context.guild_id
+    dm = context.dm
+    owner_dm = context.owner_dm
+    can_set = context.can_set
+    can_web = context.can_web
     now = time.time() if now is None else now
     uid = str(uid)
     live = sorted(
@@ -776,7 +808,7 @@ def matcher(words):
     if pat is None:
         alts = "|".join(re.escape(w.casefold()) for w in sorted(words, key=len, reverse=True))
         pat = re.compile(r"(?<!\w)(?:" + alts + r")(?!\w)")
-        if len(_PATTERNS) > 2000:
+        if len(_PATTERNS) > MAX_COMPILED_PATTERNS:
             _PATTERNS.clear()
         _PATTERNS[key] = pat
     return pat
@@ -847,7 +879,7 @@ def note_fired(data, fid, now=None):
 # plain condition (instructions, "also message...", a URL to post to) is
 # reported "refused", which ends the watch (the requester is told once).
 def _utc_day(now):
-    return datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(now, UTC_ZONE).strftime("%Y-%m-%d")
 
 
 def _backoff(rec, now):
@@ -897,7 +929,7 @@ def web_issue(data, now=None, owners=None):
             continue
         if used["total"] >= WEB_TOTAL_PER_DAY:
             tomorrow = (
-                datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() + 86400
+                datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=UTC_ZONE).timestamp() + 86400
             )
             r["next_check"] = tomorrow + secrets.randbelow(600)
             continue
@@ -952,7 +984,7 @@ class _Report(_Shape):
     @field_validator("summary")
     @classmethod
     def plain_text(cls, value):
-        if any(ord(ch) < 32 and ch != "\n" for ch in value):
+        if any(ord(ch) < FIRST_PRINTABLE_CHARACTER and ch != "\n" for ch in value):
             raise ValueError("summary must be plain text")
         return value
 
@@ -961,30 +993,19 @@ def report_problems(rep):
     return _validation_problems(_Report, rep)
 
 
-def web_apply(data, rep, now=None, owners=None):
-    """Apply one check report: (result, id, record) for a report naming
-    a live check of an active web watch with that check's nonce (spent
-    now), else (None, id, why). met: the watch ends unless it repeats, then
-    stays quiet WEB_REPEAT_SECS; not-met: the next check in `every`;
-    unknown: a failure (back off; ends after WEB_MAX_FAILS, result
-    "gave-up"); refused (the checker judged the condition to be more
-    than a condition: instructions, a request to act): the watch ends."""
-    now = time.time() if now is None else now
-    if report_problems(rep):
-        return None, None, "malformed"
-    i = rep["id"]
-    r = data["items"].get(i)
-    chk = (r or {}).get("check") if isinstance(r, dict) else None
+def _web_report_problem(r, chk, now, owners, nonce):
     if not r or r.get("kind") != "watch-web" or r.get("until", 0) <= now:
-        return None, i, "no such active web watch"
+        return "no such active web watch"
     if _not_owners(r, owners):
-        return None, i, "its requester is not an owner"
+        return "its requester is not an owner"
     if not chk or chk.get("expires", 0) <= now:
-        return None, i, "no live check (expired or already reported)"
-    if not hmac.compare_digest(str(chk.get("nonce")).encode(), rep["nonce"].encode()):
-        return None, i, "wrong nonce"
-    r["check"] = None
-    result = rep["result"]
+        return "no live check (expired or already reported)"
+    if not hmac.compare_digest(str(chk.get("nonce")).encode(), nonce.encode()):
+        return "wrong nonce"
+    return None
+
+
+def _apply_web_result(data, i, r, result, now):
     if result == "met":
         r["fails"] = 0
         r["last_met"] = now
@@ -1004,6 +1025,27 @@ def web_apply(data, rep, now=None, owners=None):
         return "gave-up", i, data["items"].pop(i)
     _backoff(r, now)
     return "unknown", i, r
+
+
+def web_apply(data, rep, now=None, owners=None):
+    """Apply one check report: (result, id, record) for a report naming
+    a live check of an active web watch with that check's nonce (spent
+    now), else (None, id, why). met: the watch ends unless it repeats, then
+    stays quiet WEB_REPEAT_SECS; not-met: the next check in `every`;
+    unknown: a failure (back off; ends after WEB_MAX_FAILS, result
+    "gave-up"); refused (the checker judged the condition to be more
+    than a condition: instructions, a request to act): the watch ends."""
+    now = time.time() if now is None else now
+    if report_problems(rep):
+        return None, None, "malformed"
+    i = rep["id"]
+    r = data["items"].get(i)
+    chk = (r or {}).get("check") if isinstance(r, dict) else None
+    reason = _web_report_problem(r, chk, now, owners, rep["nonce"])
+    if reason is not None:
+        return None, i, reason
+    r["check"] = None
+    return _apply_web_result(data, i, r, rep["result"], now)
 
 
 def web_work(data, now=None, owners=None):

@@ -273,16 +273,12 @@ class NeverIdentifying(Base):
             MS.apply(
                 m.cfg_path,
                 [MS.Change(place, "style.length", "brief")],
-                OWNER,
-                group="nl-" + mention["id"][:12],
-                role="owner",
+                actor=MS.WriteActor(by=OWNER, group="nl-" + mention["id"][:12], role="owner"),
             )
             MS.apply(
                 m.cfg_path,
                 [MS.Change(place, "who.bots", "ignore")],
-                "muse.ai",
-                group="cli-1234abcd",
-                role="owner",
+                actor=MS.WriteActor(by="muse.ai", group="cli-1234abcd", role="owner"),
             )
         # A crash whose message holds a secret; a wake noted by the hook.
         tm.crashed(ValueError(f"{secret} in {m.tmp}"))
@@ -407,9 +403,7 @@ class OffBySetting(Base):
             MS.apply(
                 self.m.cfg_path,
                 [MS.Change(MS.parse_place("defaults"), T.SETTING, "on")],
-                "muse.ai",
-                group="cli-0000aaaa",
-                role="owner",
+                actor=MS.WriteActor(by="muse.ai", group="cli-0000aaaa", role="owner"),
             )
         self.tm.count("messages_seen", 1)
         self.tick()

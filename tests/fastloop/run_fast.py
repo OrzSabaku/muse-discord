@@ -73,9 +73,9 @@ mod.load_state = load_state_live
 _orig_stage = mod.stage_trigger
 
 
-def stage(state, m, *a, **kw):
-    rec["staged"].append([m["id"], rel(time.time())])
-    return _orig_stage(state, m, *a, **kw)
+def stage(state, msg, *a, **kw):
+    rec["staged"].append([msg["id"], rel(time.time())])
+    return _orig_stage(state, msg, *a, **kw)
 
 
 mod.stage_trigger = stage

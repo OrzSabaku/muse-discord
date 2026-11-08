@@ -162,7 +162,7 @@ class Registration(unittest.TestCase):
 
     def test_created_once_and_unchanged_when_equal(self):
         api = FakeCommands(self.mod)
-        r, out = self.run_reg()
+        r, _out = self.run_reg()
         self.assertEqual(r, "created")
         posts = [x for x in api.log if x[0] == "POST"]
         self.assertEqual(len(posts), 2)
@@ -180,7 +180,7 @@ class Registration(unittest.TestCase):
             self.mod,
             [discord_copy(self.mod), why_copy(self.mod), {"id": "x", "name": "other", "type": 1}],
         )
-        r, out = self.run_reg()
+        r, _out = self.run_reg()
         self.assertEqual(r, "unchanged")
         self.assertEqual([x[0] for x in api.log], ["GET", "GET"])
 
@@ -223,7 +223,7 @@ class Registration(unittest.TestCase):
             return post(path, data)
 
         self.mod.api_post = picky
-        r, out = self.run_reg()
+        r, _out = self.run_reg()
         self.assertEqual(r, "created")
         self.assertIn("Why no reply", [c["name"] for c in api.cmds])
         # A later run finds it under the fallback name: nothing to do.
@@ -237,7 +237,7 @@ class Registration(unittest.TestCase):
     def test_retry_on_failure_never_fatal(self):
         api = FakeCommands(self.mod)
         api.fail = 2
-        r, out = self.run_reg()
+        r, _out = self.run_reg()
         self.assertIsNone(r)
         self.assertFalse(self.mod._COMMAND_REG["done"])
         # Not before the retry delay.
@@ -265,7 +265,7 @@ class MainLoop(unittest.TestCase):
         try:
             r = json.loads(p.stdout.strip().splitlines()[-1])
         except ValueError, IndexError:
-            raise AssertionError(p.stdout + p.stderr)
+            raise AssertionError(p.stdout + p.stderr) from None
         acks = {a["id"]: a for a in r["acks"]}
         self.assertEqual(sorted(acks), ["900", "901", "902"], r["out"])
         for a in acks.values():
@@ -315,8 +315,8 @@ class Ctx(unittest.TestCase):
         c = self.ctx()
         seen = []
 
-        def fake_undo(config_path, prefix, by):
-            seen.append((config_path, prefix, by, self.mod._OVERLAY_LOCK._is_owned()))
+        def fake_undo(config_path, prefix, actor):
+            seen.append((config_path, prefix, actor.by, self.mod._OVERLAY_LOCK._is_owned()))
             return f"{prefix}.style.length"
 
         had = getattr(self.mod.MS, "undo", None)
@@ -464,26 +464,36 @@ class UIData(unittest.TestCase):
         with quiet():
             m.publish_directory()
         m.ledger_record(
-            "2001", "skipped", "settings: who.replies is off here", CH, "sam", author_id=U1
+            "2001",
+            "skipped",
+            "settings: who.replies is off here",
+            context=m.LedgerContext(channel_id=CH, author="sam", author_id=U1),
         )
         m.ledger_record(
             "2002",
             "skipped",
             "daily cap reached",
-            thread,
-            "kai",
-            author_id="222000000000000009",
-            detail={"key": "limits.per_day", "counter": f"server:{G1}", "cap": 5},
+            context=m.LedgerContext(
+                channel_id=thread,
+                author="kai",
+                author_id="222000000000000009",
+                detail={"key": "limits.per_day", "counter": f"server:{G1}", "cap": 5},
+            ),
         )
         m.ledger_record(
             "2003",
             "skipped",
             "settings: who.dms_from is owners",
-            "400000000000000077",
-            "ann",
-            author_id="222000000000000008",
+            context=m.LedgerContext(
+                channel_id="400000000000000077", author="ann", author_id="222000000000000008"
+            ),
         )
-        m.ledger_record("2004", "replied", "", "704000000000000001", "x")
+        m.ledger_record(
+            "2004",
+            "replied",
+            "",
+            context=m.LedgerContext(channel_id="704000000000000001", author="x"),
+        )
         ch = MS.Place.channel(G1, CH)
         got = self.ctx.recent_outcomes(ch, 10)
         self.assertEqual([o["message_id"] for o in got], ["2002", "2001"])
@@ -522,7 +532,10 @@ class UIData(unittest.TestCase):
         with quiet():
             m.publish_directory()
         m.ledger_record(
-            "3001", "skipped", "settings: who.replies is off here", new, "sam", author_id=U1
+            "3001",
+            "skipped",
+            "settings: who.replies is off here",
+            context=m.LedgerContext(channel_id=new, author="sam", author_id=U1),
         )
         e = m._ledger_load()["entries"]["3001"]
         self.assertEqual((e["guild_id"], e["parent_id"]), (G1, None))
@@ -553,9 +566,7 @@ class UIData(unittest.TestCase):
             "3003",
             "skipped",
             "settings: who.replies is off for DMs",
-            "400000000000000077",
-            "o",
-            author_id=U1,
+            context=m.LedgerContext(channel_id="400000000000000077", author="o", author_id=U1),
         )
         self.assertTrue(m._ledger_load()["entries"]["3003"]["dm"])
         self.assertEqual(

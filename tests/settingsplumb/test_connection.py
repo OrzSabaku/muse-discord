@@ -174,11 +174,7 @@ class Connection(unittest.IsolatedAsyncioTestCase):
             with patch.object(DC.Connection, "start", new=AsyncMock(side_effect=failure)):
                 await DC.run(
                     "dummy",
-                    self.inbox,
-                    status,
-                    lambda: self.ctx,
-                    lambda *a: None,
-                    33281,
+                    DC.Connection(self.inbox, status, lambda: self.ctx, lambda *a: None, 33281),
                 )
             self.assertFalse(status["connected"])
             self.assertTrue(status["wake"].is_set())

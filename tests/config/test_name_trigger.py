@@ -61,7 +61,9 @@ def run(cfg_text):
         f.write(cfg_text)
     env = dict(os.environ, MUSE_DISCORD_CONFIG=cfg, TMPD=d)
     code = (
-        "import sys; sys.argv_repo = %r\n" % os.path.join(REPO, "src/muse_discord/monitor.py")
+        "import sys; sys.argv_repo = {!r}\n".format(
+            os.path.join(REPO, "src/muse_discord/monitor.py")
+        )
         + PROBE
     )
     r = subprocess.run(

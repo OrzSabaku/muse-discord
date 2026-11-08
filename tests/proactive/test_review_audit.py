@@ -27,7 +27,7 @@ def dmc(i):
 class Audit(tp.Base):
     def people(self, n, age):
         for i in range(n):
-            self.m.DM_CHANNELS[dmc(i)] = "p%d" % i
+            self.m.DM_CHANNELS[dmc(i)] = f"p{int(i)}"
             self.dmed(uid(i), dmc(i), age=age)
 
     def test_blocked_person_is_not_dmed_again(self):

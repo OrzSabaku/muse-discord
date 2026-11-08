@@ -15,8 +15,18 @@ class Held(tw.Base):
     def test_folding_into_a_held_notice_drops_nothing(self):
         data = {"held": {}}
         es = [({"message_id": "1"}, {"id": f"r{i}", "kind": "remind"}) for i in range(40)]
-        hid = self.mod._watch_hold(data, "f1", "u", "c", es[:1], "reminder", 0, 0)
-        self.mod._watch_hold(data, "f2", "u", "c", es[1:], "reminder", 0, 0)
+        hid = self.mod._watch_hold(
+            data,
+            pending=self.mod.PendingFire(
+                fid="f1", uid="u", cid="c", entries=es[:1], kind="reminder", now=0, next_at=0
+            ),
+        )
+        self.mod._watch_hold(
+            data,
+            pending=self.mod.PendingFire(
+                fid="f2", uid="u", cid="c", entries=es[1:], kind="reminder", now=0, next_at=0
+            ),
+        )
         self.assertEqual(len(data["held"][hid]["es"]), 40)
 
 

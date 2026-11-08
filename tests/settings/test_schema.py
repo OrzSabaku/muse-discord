@@ -91,7 +91,12 @@ servers:
         self.assertEqual(st.get("proactive.frequency", scope), "often")
         self.assertTrue(st.get("proactive.enabled", scope))
         self.assertNotIn((("servers", G1), "proactive.per_channel_per_day"), st.file_values)
-        MS.set_value(config, f'servers."{G1}".proactive.per_channel_per_day', 0, OWNER)
+        MS.set_value(
+            config,
+            f'servers."{G1}".proactive.per_channel_per_day',
+            0,
+            actor=MS.WriteActor(by=OWNER),
+        )
         self.assertEqual(MS.load(config).get("proactive.per_channel_per_day", scope), 0)
 
 

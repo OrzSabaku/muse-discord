@@ -53,7 +53,7 @@ class _B(tb.Base):
         bump(self.mod.cfg_path)
 
     def apply(self, changes):
-        MS.apply(self.mod.cfg_path, changes, OWNER, role="owner")
+        MS.apply(self.mod.cfg_path, changes, actor=MS.WriteActor(by=OWNER, role="owner"))
         bump(os.path.join(self.mod.tmp, "config.discord.yaml"))
 
     def assert_refused_here(self, cid):
