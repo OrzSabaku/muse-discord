@@ -72,6 +72,7 @@ from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord import secret_scan as SCAN
 from muse_discord.channel_access import ChannelAccess
+from muse_discord.conversation import THREAD_TYPES as _THREAD_TYPES
 from muse_discord.conversation import (
     Conversation,
     channel_display,
@@ -84,16 +85,23 @@ from muse_discord.message_models import (
     LEDGER_TERMINAL,
     DeliveryOptions,
     LedgerContext,
-    OwnerCommand,
     QueueContext,
     SecretBlocked,
     Settlement,
     Speaker,
 )
-from muse_discord.message_queue import QueueFiles, owner_dm_metadata
+from muse_discord.message_models import (
+    PROACTIVE_KIND as PRO_KIND,
+)
+from muse_discord.message_queue import QueueFiles, owner_dm_metadata, trigger_of
 from muse_discord.message_queue import answered_id as _answered_id
+from muse_discord.message_queue import keep_last as _keep_last
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
 from muse_discord.outbox_store import redact_nonces as redact_nonces
+from muse_discord.owner.authorization import OwnerAuthorization
+from muse_discord.owner.capabilities import CapabilityFiles, CapabilityIssuer
+from muse_discord.owner.memory import OwnerMemory
+from muse_discord.owner.targets import CommandTargets
 from muse_discord.paths import project_root
 from muse_discord.reply_delivery import OutboxDelivery
 from muse_discord.reply_protocol import is_snowflake as _is_snowflake
@@ -103,7 +111,8 @@ from muse_discord.response_policy import (
     predates_join,
 )
 from muse_discord.response_policy import _iso_ts as _iso_ts
-from muse_discord.storage import SharedLockTimeout, atomic_write
+from muse_discord.storage import PrivateFile, SharedLockTimeout, atomic_write
+from muse_discord.storage import publish_private as _publish
 from muse_discord.storage import read_json as _read_json
 from muse_discord.watches.audience import WatchAudience
 from muse_discord.watches.delivery import WatchDelivery
@@ -119,7 +128,6 @@ APPLICATION_COMMAND_TYPE = 2
 HEARTBEAT_INTERVAL_SECS = 30
 MEMBER_CACHE_LIMIT = 2000
 DIRECTORY_PREVIEW_LIMIT = 40
-MIN_BARE_TRIGGER_LENGTH = 3
 ACTIVITY_CACHE_LIMIT = 1000
 PENDING_MESSAGE_ATTEMPTS = 3
 TYPING_CACHE_TTL_SECS = 60
@@ -216,7 +224,6 @@ def _import_telemetry():
 # "Unprompted messages"). Off by default; when proactive.py cannot be
 # loaded the bot only replies.
 PROACTIVE_FILE = os.path.join(BASE_DIR, "proactive.json")
-PRO_KIND = "proactive"  # a heartbeat slot's queue item kind
 # The live heartbeat slot's nonce, for the wake hook only (mode 600).
 PROACTIVE_NONCE_FILE = os.path.join(BASE_DIR, "proactive_nonce.json")
 
@@ -241,7 +248,7 @@ def _proactive_context():
         dm_channels=lambda: DM_CHANNELS,
         dm_users=lambda: DM_CHANNEL_USER,
         user_names=lambda: _USER_NAMES,
-        write_private=lambda *args, **kwargs: _write_private(*args, **kwargs),
+        write_private=lambda path, body: atomic_write(path, body, 0o600),
         ledger=lambda *args, **kwargs: _ledger_load(*args, **kwargs),
         api_get=lambda *args, **kwargs: api_get(*args, **kwargs),
         api_post=lambda *args, **kwargs: api_post(*args, **kwargs),
@@ -1046,12 +1053,6 @@ def api_patch(path, data):
 # Bound contention without bypassing mutual exclusion. The main loop retries
 # deferred work after the holder releases the lock.
 LOCK_WAIT_SECS = 20
-
-
-def _keep_last(d, n):
-    """Bound a dict to its n newest keys (insertion order)."""
-    for k in list(d)[:-n]:
-        del d[k]
 
 
 def shared_lock():
@@ -2807,65 +2808,30 @@ def flush_admin_digests(force=False):
 # ---------------------------------------------------------------------------
 OWNER_DM_NONCES_FILE = os.path.join(BASE_DIR, "owner_dm_nonces.json")
 _OWNER_DM_NONCES_WRITTEN: dict[str, dict[str, str] | None] = {"body": None}
-OWNER_DM_NONCE_MAX_AGE = 24 * 3600
 
 
-def _write_private(path, obj):
-    """atomic_write, mode 600 whatever the file had."""
-    atomic_write(path, obj, 0o600)
-
-
-def _publish(path, body, cache, check=False, create=True):
-    """Write body to path (mode 600: the wake hook's private files) when
-    it differs from the last write (cache: {"body"}), or (check) the file
-    was lost or mangled. create=False: an empty body never creates the
-    file. False when the write failed (logged)."""
-    if (
-        body == cache.get("body")
-        and cache.get("path", path) == path
-        and not (check and not _private_file_ok(path, body))
-    ):
-        return True
-    if create or body or os.path.exists(path):
-        try:
-            _write_private(path, body)
-        except OSError as e:
-            print(f"Could not write {os.path.basename(path)}: {e}", flush=True)
-            return False
-    cache.update(body=body, path=path)
-    return True
+def _capabilities():
+    return CapabilityIssuer(
+        files=CapabilityFiles(
+            PrivateFile(OWNER_DM_NONCES_FILE, _OWNER_DM_NONCES_WRITTEN),
+            PrivateFile(OWNER_ITEMS_FILE, _OWNER_ITEMS_WRITTEN),
+            PrivateFile(ITEM_NONCES_FILE, _ITEM_NONCES_WRITTEN),
+        ),
+        auth=_owner_auth(),
+        targets=_owner_targets(),
+        queue=_queue_files(),
+        notify=notify_owners,
+        upkeep_clock=_OWNER_DM_UPKEEP,
+        reply_alert=_ITEM_NONCES_ALERT,
+    )
 
 
 def owner_dm_mint_nonce(state, mid, channel_id=None, fragments=()):
-    """A capability for one owner-DM queue item (see owner_dm_gate and
-    its wake): 128 random bits, kept in state and the hook's private
-    file, never in reply_queue.json. channel_id and fragments (its burst
-    fragments' ids): so the gate knows the DM's channel and fragments
-    after item_meta and reply_aliases (both bounded, fed by everyone's
-    messages) have moved on."""
-    n = state.setdefault("nl_nonces", {})
-    n[str(mid)] = {"nonce": secrets.token_hex(16), "at": time.time()}
-    if channel_id:
-        n[str(mid)]["channel_id"] = str(channel_id)
-    if fragments:
-        n[str(mid)]["fragments"] = [str(f) for f in fragments]
-    _keep_last(n, 300)
-    owner_dm_write_nonces(state)
+    return _capabilities().mint_owner_dm(state, mid, channel_id, fragments)
 
 
 def owner_dm_write_nonces(state):
-    """owner_dm_nonces.json = the nonces of open owner-DM items (written
-    only when that changed; expired ones dropped)."""
-    n = state.get("nl_nonces") or {}
-    now = time.time()
-    for k in [
-        k
-        for k, v in n.items()
-        if not isinstance(v, dict) or now - v.get("at", 0) > OWNER_DM_NONCE_MAX_AGE
-    ]:
-        del n[k]
-    owner_items_write(state)  # an owner DM's command uses its nonce
-    _publish(OWNER_DM_NONCES_FILE, {k: v["nonce"] for k, v in n.items()}, _OWNER_DM_NONCES_WRITTEN)
+    return _capabilities().write_owner_dms(state)
 
 
 # ---------------------------------------------------------------------------
@@ -2881,9 +2847,32 @@ def owner_dm_write_nonces(state):
 # item stays open for the owner-DM-only wake that really holds it.
 # Other items are untouched.
 # ---------------------------------------------------------------------------
-OWNER_DM_NONCE_FIELD = "owner_dm_nonce"
-OWNER_DM_UPKEEP_SECS = 15
 _OWNER_DM_UPKEEP = {"next": 0.0}
+
+
+def _owner_auth():
+    return OwnerAuthorization(
+        lambda: OWNER_USER_IDS,
+        CHANNELS,
+        _GUILD_CHANNELS,
+        DM_CHANNEL_USER,
+        api_get,
+        _CHANNEL_LOOKUP,
+    )
+
+
+def _owner_targets():
+    return CommandTargets(CHANNELS, _GUILD_CHANNELS)
+
+
+def _owner_memory():
+    return OwnerMemory(
+        MEMORY_FILE,
+        _owner_auth(),
+        lambda: bool(settings().top("memory.save_dms")),
+        secret_in,
+        _MEMORY_MISSING,
+    )
 
 
 def _meta_owner_dm(meta):
@@ -2891,81 +2880,15 @@ def _meta_owner_dm(meta):
 
 
 def is_owner_dm_item(state, mid):
-    """True when queue item mid (a trigger's message id) is an owner's
-    DM: the monitor minted it a nonce, or its record says so."""
-    if not mid:
-        return False
-    mid = str(mid)
-    if mid in (state.get("nl_nonces") or {}):
-        return True
-    return _meta_owner_dm((state.get("item_meta") or {}).get(mid))
+    return _owner_auth().is_owner_dm_item(state, mid)
 
 
 def owner_dm_channels(state):
-    """The owners' DM channels: resolved ones, and those of owner-DM
-    items the monitor recorded."""
-    out = {c for c, u in DM_CHANNEL_USER.items() if u in OWNER_USER_IDS}
-    for meta in (state.get("item_meta") or {}).values():
-        if _meta_owner_dm(meta) and meta.get("channel_id"):
-            out.add(str(meta["channel_id"]))
-    for e in (state.get("nl_nonces") or {}).values():
-        if isinstance(e, dict) and e.get("channel_id"):
-            out.add(str(e["channel_id"]))
-    return out
-
-
-def _owner_dm_channel_of(state, qid):
-    meta = (state.get("item_meta") or {}).get(qid) or {}
-    e = (state.get("nl_nonces") or {}).get(qid) or {}
-    cid = meta.get("channel_id") or (e.get("channel_id") if isinstance(e, dict) else None)
-    return str(cid) if cid else None
-
-
-def item_nonce(item):
-    """The owner-DM capability explicitly attached to this outbox item."""
-    nonce = item.get(OWNER_DM_NONCE_FIELD)
-    if nonce is not None and not isinstance(nonce, str):
-        return None, f"{OWNER_DM_NONCE_FIELD} is not a string"
-    return nonce, None
+    return _owner_auth().dm_channels(state)
 
 
 def queue_index(state):
-    """What the queue file says, read once per outbox pass: "frags"
-    {fragment id: trigger id} for every queued burst, "channels"
-    {message id: channel id} for every queued item, and "owners" the
-    same for every queued owner DM. The queue is the
-    one record of a queued item that nothing else evicts (item_meta and
-    reply_aliases are bounded, and lost with state.json)."""
-    try:
-        queue = load_queue()
-    except OSError, ValueError:
-        queue = []
-    frags, owners, channels = {}, {}, {}
-    for q in queue:
-        if not isinstance(q, dict) or not q.get("message_id"):
-            continue
-        mid = str(q["message_id"])
-        channels[mid] = str(q.get("channel_id") or "")
-        for f in q.get("burst_fragments") or []:
-            if isinstance(f, dict) and f.get("message_id"):
-                frags[str(f["message_id"])] = mid
-        if _queued_owner_dm(state, q):
-            owners[mid] = str(q.get("channel_id") or "")
-    return {"frags": frags, "owners": owners, "channels": channels}
-
-
-def trigger_of(state, mid, frags=None):
-    """The queue item (trigger) a message id belongs to: a burst fragment
-    maps to its trigger (reply_aliases, the queue's bursts, an owner
-    DM's nonce entry), anything else to itself."""
-    mid = str(mid)
-    t = (state.get("reply_aliases") or {}).get(mid) or (frags or {}).get(mid)
-    if t:
-        return str(t)
-    for k, e in (state.get("nl_nonces") or {}).items():
-        if isinstance(e, dict) and mid in (e.get("fragments") or ()):
-            return str(k)
-    return mid
+    return _queue_files().index(state, OWNER_USER_IDS)
 
 
 # Channels looked up from the API (owner_dm_gate): channel id -> (is a
@@ -2973,110 +2896,8 @@ def trigger_of(state, mid, frags=None):
 _CHANNEL_LOOKUP = {}
 
 
-def channel_kind(cid):
-    """What the API says channel cid is: "owner_dm", "dm" or "guild", or
-    None when it cannot tell. A DM with no recipients listed counts as
-    an owner's (fail closed)."""
-    if cid not in _CHANNEL_LOOKUP:
-        try:
-            ch = api_get(f"/channels/{cid}")
-        except Exception as e:
-            print(f"Could not look up channel {cid}: {e}", flush=True)
-            return None
-        if not isinstance(ch, dict):
-            return None
-        _CHANNEL_LOOKUP[cid] = (
-            ch.get("type") in (1, 3),
-            frozenset(str((r or {}).get("id")) for r in ch.get("recipients") or []),
-        )
-    dm, recips = _CHANNEL_LOOKUP[cid]
-    if not dm:
-        return "guild"
-    return "owner_dm" if not recips or recips & OWNER_USER_IDS else "dm"
-
-
-def _unknown_channel_problem(state, triggers, cid, index):
-    """An outbox item that touches no owner DM, in a channel that is not
-    a known owner DM channel: fine in a guild channel the bot reads, in
-    the channel of the (non-owner) item it answers, or in a known
-    non-owner DM. Anything else is looked up (the monitor's records of
-    the owners' DM channels are best effort), failing closed."""
-    if cid in CHANNELS or any(
-        str(c.get("id")) == cid for cs in _GUILD_CHANNELS.values() for c in cs
-    ):
-        return None
-    if len(triggers) == 1:
-        t = next(iter(triggers))
-        meta = (state.get("item_meta") or {}).get(t) or {}
-        if cid in (str(meta.get("channel_id")), index["channels"].get(t)):
-            return None
-    if cid in DM_CHANNEL_USER:
-        return None  # a listed person's DM (owners' were caught above)
-    kind = channel_kind(cid)
-    if kind in ("guild", "dm"):
-        return None
-    if kind == "owner_dm":
-        return "owner DM channel: the item names no owner DM that holds a live nonce"
-    return f"channel {cid}: unknown, and could not be looked up"
-
-
-def _owner_nonce_problem(state, item, qid):
-    got, problem = item_nonce(item)
-    if problem:
-        return f"owner DM {qid}: bad nonce ({problem})"
-    want = ((state.get("nl_nonces") or {}).get(qid) or {}).get("nonce")
-    if not want:
-        return f"owner DM {qid}: bad nonce (none live: answered already, or not handed out yet)"
-    if not got:
-        return (
-            f"owner DM {qid}: bad nonce (missing: copy the item's "
-            f"{OWNER_DM_NONCE_FIELD} from the wake payload)"
-        )
-    if not hmac.compare_digest(str(want).encode(), got.encode("utf-8", "replace")):
-        return f"owner DM {qid}: bad nonce (wrong)"
-    return None
-
-
-def _owner_channel_problem(state, triggers, cid, index):
-    if cid not in owner_dm_channels(state) and cid not in index["owners"].values():
-        return _unknown_channel_problem(state, triggers, cid, index)
-    # An item may always answer in its own channel: one queued in
-    # this DM before its author became an owner. (Nobody else's
-    # item lives in an owner's 1:1 DM.)
-    meta = (state.get("item_meta") or {}).get(next(iter(triggers))) if len(triggers) == 1 else None
-    if meta and str(meta.get("channel_id")) == cid:
-        return None
-    return "owner DM channel: the item names no owner DM that holds a live nonce"
-
-
 def owner_dm_gate(state, item, index=None):
-    """None when this (well-formed) outbox item may go on; else why it is
-    refused. It must carry the nonce when it touches an owner's DM: its
-    item, or its reply_to (or that fragment's trigger), is an owner-DM
-    item, or its channel_id is an owner's DM channel. Then item and
-    reply_to must all name that one owner DM (item exactly; reply_to it
-    or one of its fragments), channel_id must be its channel, and the
-    nonce must match (constant time). Never consumes the nonce: settling
-    the item does (process_outbox), so retries and resends keep it.
-    index: queue_index(), read once per pass."""
-    index = index or {"frags": {}, "owners": {}, "channels": {}}
-    named = [str(item[f]) for f in ("item", "reply_to") if item.get(f)]
-    triggers = {trigger_of(state, m, index["frags"]) for m in named}
-    owner = {t for t in triggers if is_owner_dm_item(state, t) or t in index["owners"]}
-    cid = str(item.get("channel_id") or "")
-    if not owner:
-        return _owner_channel_problem(state, triggers, cid, index)
-    if len(owner) != 1 or len(triggers) != 1:
-        return (
-            "owner DM: the item must answer exactly one owner DM, "
-            "named by item and reply_to, in its own channel"
-        )
-    qid = owner.pop()
-    if item.get("item") and str(item["item"]) != qid:
-        return "owner DM: item must be the DM's own message_id"
-    if cid != (_owner_dm_channel_of(state, qid) or index["owners"].get(qid)):
-        return f"owner DM {qid}: wrong channel"
-    return _owner_nonce_problem(state, item, qid)
+    return _owner_auth().gate(state, item, index)
 
 
 # ---------------------------------------------------------------------------
@@ -3090,178 +2911,19 @@ def owner_dm_gate(state, item, index=None):
 # memory.save_dms: off turns it off.
 # ---------------------------------------------------------------------------
 MEMORY_FILE = os.environ.get("MUSE_MEMORY_FILE") or os.path.expanduser("~/MEMORY.md")
-MEMORY_FACTS_PER_ITEM = 5
-MEMORY_FACT_MAX = 300
-MEMORY_PER_DAY = 20
 _MEMORY_MISSING = {"logged": False}
 
 
-def memory_line(text):
-    """One fact as one plain line: whitespace collapsed, no leading
-    markdown (a heading, quote or list mark), at most MEMORY_FACT_MAX."""
-    line = " ".join(str(text).split()).lstrip("#>-*+|`= ").strip()
-    return line[:MEMORY_FACT_MAX]
-
-
 def remember_check(state, item, qid, index):
-    """(why the item is refused, or None; the owner DM whose facts to
-    save once the reply settles, or None). remember is refused unless
-    the item answers an owner's own DM with its live nonce; it is
-    skipped (logged) for a DM that is not the owner's own words: a
-    reminder or watch notice, a forward, attachments or a reply to
-    another message, or an author who is no longer an owner."""
-    if not item.get("remember"):
-        return None, None
-    t = trigger_of(state, qid, index["frags"]) if qid else None
-    if not t or not (is_owner_dm_item(state, t) or t in index["owners"]):
-        return "remember: only in an owner's own DM", None
-    want = ((state.get("nl_nonces") or {}).get(t) or {}).get("nonce")
-    got, _problem = item_nonce(item)
-    if (
-        not want
-        or not got
-        or not hmac.compare_digest(str(want).encode(), got.encode("utf-8", "replace"))
-    ):
-        return "remember: needs the owner DM's live nonce", None
-    meta = (state.get("item_meta") or {}).get(t) or {}
-    if (
-        meta.get("kind") != "dm"
-        or not meta.get("owner_dm")
-        or str(meta.get("author_id")) not in OWNER_USER_IDS
-        or meta.get("forwarded")
-        or meta.get("has_inputs")
-    ):
-        print(
-            f"Not saving facts from owner DM {t} to memory: not the "
-            f"owner's own words (a notice, forward, attachment or "
-            f"reply), or not an owner now.",
-            flush=True,
-        )
-        return None, None
-    return None, t
-
-
-def _append_memory_facts(lines):
-    try:
-        with open(MEMORY_FILE, "rb") as f:
-            end = f.seek(0, os.SEEK_END)
-            if end:
-                f.seek(end - 1)
-            gap = b"\n" if end and f.read(1) != b"\n" else b""
-        with open(MEMORY_FILE, "ab") as f:  # appended: one write
-            f.write(gap + "".join(lines).encode("utf-8", "replace"))
-    except OSError as e:
-        print(f"Could not save facts to memory: {e}", flush=True)
-        return False
-    return True
-
-
-def _memory_fact_lines(item, today, n):
-    lines = []
-    for fact in item["remember"][:MEMORY_FACTS_PER_ITEM]:
-        flat = " ".join(str(fact).split())
-        if secret_in(flat):
-            print("Not saving a fact to memory: it looks like a secret.", flush=True)
-            continue
-        line = memory_line(flat)
-        if not line or n + len(lines) >= MEMORY_PER_DAY:
-            continue
-        lines.append(f"- {today} (told me in a Discord DM): {line}\n")
-    return lines
+    return _owner_memory().check(state, item, qid, index)
 
 
 def save_facts(state, item, t):
-    """Append item's remember facts (owner DM t, from remember_check)
-    to MEMORY_FILE, once per owner DM. Never raises."""
-    if not t or not item.get("remember"):
-        return
-    done = state.setdefault("remembered", {})
-    if t in done:
-        return  # a resend of an item already saved
-    if not settings().top("memory.save_dms"):
-        print("Not saving facts to memory: memory.save_dms is off.", flush=True)
-        return
-    if not os.path.isfile(MEMORY_FILE):
-        if not _MEMORY_MISSING["logged"]:
-            _MEMORY_MISSING["logged"] = True
-            print(
-                f"Not saving facts to memory: no {MEMORY_FILE} (set "
-                f"MUSE_MEMORY_FILE to the Muse's memory file).",
-                flush=True,
-            )
-        return
-    today = time.strftime("%Y-%m-%d", time.gmtime())
-    used = state.get("remembered_day") or {}
-    n = used.get("n", 0) if used.get("day") == today else 0
-    lines = _memory_fact_lines(item, today, n)
-    if lines:
-        if not _append_memory_facts(lines):
-            return
-        print(f"Saved {len(lines)} fact(s) from owner DM {t} to {MEMORY_FILE}.", flush=True)
-    done[t] = int(time.time())
-    _keep_last(done, 300)
-    state["remembered_day"] = {"day": today, "n": n + len(lines)}
-
-
-def _queued_owner_dm(state, q):
-    """A queue item that is an owner's own DM: from the monitor's record
-    of it, else (state.json lost) from the item the monitor wrote, the
-    same test the wake hook uses to hand it out alone."""
-    mid = str(q.get("message_id") or "")
-    meta = (state.get("item_meta") or {}).get(mid)
-    if meta is not None:
-        return _meta_owner_dm(meta)
-    card = q.get("settings") if isinstance(q.get("settings"), dict) else {}
-    # (A reminder or web watch firing in an owner's DM is one too.)
-    dm = q.get("kind") == "dm" or (
-        q.get("kind") in ("reminder", "watch-met") and card.get("where") == "dm"
-    )
-    return dm and card.get("speaker") == "owner" and str(q.get("author_id")) in OWNER_USER_IDS
+    return _owner_memory().save(state, item, t)
 
 
 def owner_dm_upkeep(state, force=False):
-    """Main loop (every OWNER_DM_UPKEEP_SECS): every owner DM still in
-    the queue holds a live nonce. Kept fresh while it is queued (the
-    24-hour prune is for spent ones), and minted again when it is
-    missing (state.json lost, or an item queued before nonces existed),
-    so an owner DM never sits unanswerable: its next owner-DM-only wake
-    carries the new one."""
-    now = time.time()
-    if not force and now < _OWNER_DM_UPKEEP["next"]:
-        return
-    _OWNER_DM_UPKEEP["next"] = now + OWNER_DM_UPKEEP_SECS
-    try:
-        queue = load_queue()
-    except OSError, ValueError:
-        return
-    n = state.setdefault("nl_nonces", {})
-    for q in queue:
-        if not isinstance(q, dict) or not q.get("message_id") or not _queued_owner_dm(state, q):
-            continue
-        mid = str(q["message_id"])
-        frags = [
-            str(f["message_id"])
-            for f in q.get("burst_fragments") or []
-            if isinstance(f, dict) and f.get("message_id")
-        ]
-        e = n.get(mid)
-        if isinstance(e, dict) and e.get("nonce"):
-            e["at"] = now
-            if not e.get("channel_id") and q.get("channel_id"):
-                e["channel_id"] = str(q["channel_id"])
-            if frags and not e.get("fragments"):
-                e["fragments"] = frags
-            continue
-        n[mid] = {
-            "nonce": secrets.token_hex(16),
-            "at": now,
-            "channel_id": str(q.get("channel_id") or ""),
-        }
-        if frags:
-            n[mid]["fragments"] = frags
-        print(f"Owner DM {mid} had no nonce; minted one for its next wake.", flush=True)
-    owner_items_upkeep(state, queue, now)
-    owner_dm_write_nonces(state)
+    return _capabilities().upkeep(state, force)
 
 
 # ---------------------------------------------------------------------------
@@ -3281,203 +2943,25 @@ OWNER_ITEMS_FILE = os.path.join(BASE_DIR, "owner_items.json")
 _OWNER_ITEMS_WRITTEN = {"body": None}
 # A new owner item is kept this long even before the queue file shows
 # it (it is noted before the queue write).
-OWNER_ITEM_GRACE_SECS = 120
-
-
-def owner_own_words(content):
-    """The owner's own words in a message: without quoted lines ("> ...")
-    and code (``` blocks and `inline`), which may be someone else's
-    text pasted in."""
-    text = content if isinstance(content, str) else ""
-    text = re.sub(r"```.*?(```|$)", " ", text, flags=re.DOTALL)
-    text = re.sub(r"`[^`\n]*`", " ", text)
-    return "\n".join(ln for ln in text.split("\n") if not ln.lstrip().startswith(">"))
-
-
-def _norm_name(text):
-    """Lowercased, "-" and "_" read as spaces, whitespace collapsed."""
-    return " ".join(re.sub(r"[-_]", " ", str(text).lower()).split())
 
 
 # Bare channel names ("post this in announcements") that are never one.
-BARE_NAME_STOPWORDS = frozenset(
-    [
-        "the",
-        "a",
-        "an",
-        "to",
-        "in",
-        "into",
-        "on",
-        "of",
-        "for",
-        "and",
-        "or",
-        "but",
-        "this",
-        "that",
-        "these",
-        "those",
-        "it",
-        "its",
-        "here",
-        "there",
-        "me",
-        "you",
-        "him",
-        "her",
-        "us",
-        "them",
-        "my",
-        "your",
-        "our",
-        "their",
-        "all",
-        "any",
-        "some",
-        "channel",
-        "server",
-        "thread",
-    ]
-)
-_THREAD_TYPES = (10, 11, 12)
-
-
-def _server_channels(gid):
-    """{id: name} of a server's channels the bot knows (no threads, no
-    categories)."""
-    out = {}
-    for c in _GUILD_CHANNELS.get(str(gid)) or []:
-        if isinstance(c, dict) and c.get("type") not in (4, *_THREAD_TYPES):
-            out[str(c.get("id"))] = str(c.get("name") or "")
-    for cid, info in CHANNELS.items():
-        if str(info.get("guild_id")) == str(gid) and not info.get("thread") and str(cid) not in out:
-            out[str(cid)] = str(info.get("name") or "")
-    return out
 
 
 def owner_targets(content, guild_id=None):
-    """Where an owner's own words point, as channel ids resolved now, at
-    queue time: (channels, post_channels). channels: <#id> mentions (the
-    only way to name a thread) and #names, resolved among the command's
-    own server's channels (an owner DM: in the one server that has a
-    channel of that name). post_channels, for `post` only: a channel of
-    the command's own server whose whole name (3+ characters, not a
-    common word; "-", "_" and spaces alike) follows "in", "to" or
-    "into" ("post this in announcements"). Quotes and code are not the
-    owner's words (owner_own_words)."""
-    text = owner_own_words(content)
-    ids = set(re.findall(r"<#([1-9][0-9]{16,19})>", text))
-    names = {
-        n.lower() for n in re.findall(r"(?<![\w&<#])#([^\s#<>@:,;!?()\[\]{}'\"`*~|]{1,100})", text)
-    }
-    if guild_id:
-        pools = [_server_channels(guild_id)]
-    else:
-        pools = [
-            _server_channels(g)
-            for g in {str(i.get("guild_id")) for i in CHANNELS.values()} | set(_GUILD_CHANNELS)
-        ]
-    for name in names:
-        hits = {cid for pool in pools for cid, n in pool.items() if n.lower() == name}
-        if guild_id or len(hits) == 1:
-            ids |= hits
-    post = set()
-    if guild_id:
-        words = _norm_name(text)
-        for cid, n in _server_channels(guild_id).items():
-            bare = _norm_name(n)
-            if (
-                len(bare) >= MIN_BARE_TRIGGER_LENGTH
-                and bare not in BARE_NAME_STOPWORDS
-                and re.search(
-                    r"(?<!\w)(?:in|to|into) (?:the )?" + re.escape(bare) + r"(?!\w)", words
-                )
-            ):
-                post.add(cid)
-    return sorted(ids), sorted(post - ids)
+    return _owner_targets().resolve(content, guild_id)
 
 
 def note_owner_item(state, mid, dm=False, command=None):
-    """Queue item mid is an owner's command: mint its nonce (an owner
-    DM's is its owner_dm_nonce), resolve where the owner's own words
-    point (owner_targets, ids only), and write owner_items.json."""
-    command = command or OwnerCommand()
-    channel_id = command.channel_id
-    content = command.content
-    guild_id = command.guild_id
-    e = state.setdefault("owner_items", {})
-    ids, post = owner_targets(content, guild_id)
-    e[str(mid)] = {
-        "at": time.time(),
-        "channel_id": str(channel_id or ""),
-        "dm": bool(dm),
-        "channels": ids,
-        "post_channels": post,
-    }
-    if not dm:
-        e[str(mid)]["nonce"] = secrets.token_hex(16)
-    _keep_last(e, 300)
-    owner_items_write(state)
-
-
-def _private_file_ok(path, body):
-    """The file still holds body (it was not lost or mangled)."""
-    return os.path.exists(path) and _read_json(path) == body
+    return _capabilities().note_command(state, mid, dm, command)
 
 
 def owner_items_write(state, check=False):
-    """owner_items.json = {message_id: {nonce, channel_id, dm, channels,
-    post_channels}} for the open owner-command items (written only when that
-    changed; check: also when the file was lost or mangled)."""
-    nl = state.get("nl_nonces") or {}
-    body = {}
-    for mid, e in (state.get("owner_items") or {}).items():
-        if not isinstance(e, dict):
-            continue
-        n = e.get("nonce") or (nl.get(mid) or {}).get("nonce")
-        if n:
-            body[mid] = {
-                "nonce": n,
-                "channel_id": e.get("channel_id"),
-                "dm": bool(e.get("dm")),
-                "channels": e.get("channels") or [],
-                "post_channels": e.get("post_channels") or [],
-            }
-    _publish(OWNER_ITEMS_FILE, body, _OWNER_ITEMS_WRITTEN, check)
+    return _capabilities().write_commands(state, check)
 
 
 def owner_items_upkeep(state, queue, now):
-    """(owner_dm_upkeep) Drop owner items no longer queued; mint one for
-    a queued owner command that has none (state.json lost); rewrite a
-    lost or mangled owner_items.json. Then the same for reply nonces."""
-    e = state.setdefault("owner_items", {})
-    queued = {str(q["message_id"]): q for q in queue if isinstance(q, dict) and q.get("message_id")}
-    for mid in [
-        m
-        for m, v in e.items()
-        if m not in queued
-        and (not isinstance(v, dict) or now - v.get("at", 0) > OWNER_ITEM_GRACE_SECS)
-    ]:
-        del e[mid]
-    for mid, q in queued.items():
-        if (
-            mid not in e
-            and q.get("owner_command") is True
-            and str(q.get("author_id")) in OWNER_USER_IDS
-        ):
-            note_owner_item(
-                state,
-                mid,
-                dm=_queued_owner_dm(state, q),
-                command=OwnerCommand(
-                    channel_id=q.get("channel_id"),
-                    content=q.get("content") or "",
-                    guild_id=q.get("guild_id"),
-                ),
-            )
-    owner_items_write(state, check=True)
-    reply_nonces_upkeep(state, queued, now)
+    return _capabilities().upkeep_commands(state, queue, now)
 
 
 # ---------------------------------------------------------------------------
@@ -3497,53 +2981,15 @@ _ITEM_NONCES_ALERT: dict[str, str | None] = {"day": None}
 
 
 def reply_nonce_mint(state, mid):
-    """Queue item mid's reply_nonce (minted when it has none), written to
-    item_nonces.json before the item reaches the queue file."""
-    n = state.setdefault("reply_nonces", {})
-    e = n.get(str(mid))
-    if not (isinstance(e, dict) and e.get("nonce")):
-        n[str(mid)] = e = {"nonce": secrets.token_hex(16), "at": time.time()}
-        _keep_last(n, 1000)
-    reply_nonces_write(state)
-    return e["nonce"]
+    return _capabilities().mint_reply(state, mid)
 
 
 def reply_nonces_write(state, check=False):
-    body = {
-        k: v["nonce"]
-        for k, v in (state.get("reply_nonces") or {}).items()
-        if isinstance(v, dict) and v.get("nonce")
-    }
-    if not _publish(ITEM_NONCES_FILE, body, _ITEM_NONCES_WRITTEN, check):
-        # The wake hook cannot hand out nonces it cannot read, so no
-        # reply can be sent: say so (not "the prompt is out of date").
-        day = time.strftime("%Y-%m-%d")
-        if _ITEM_NONCES_ALERT["day"] != day:
-            _ITEM_NONCES_ALERT["day"] = day
-            notify_owners(
-                "I can't save files in my folder, so I can't "
-                "send replies right now. The disk may be full, "
-                "or the folder's permissions changed."
-            )
+    return _capabilities().write_replies(state, check)
 
 
 def reply_nonces_upkeep(state, queued, now):
-    """Every queued item holds a live reply_nonce (minted again when
-    state.json was lost); ones no longer queued are dropped."""
-    n = state.setdefault("reply_nonces", {})
-    for mid in [
-        m
-        for m, v in n.items()
-        if m not in queued
-        and (not isinstance(v, dict) or now - v.get("at", 0) > OWNER_ITEM_GRACE_SECS)
-    ]:
-        del n[mid]
-    for mid, q in queued.items():
-        if q.get("kind") == PRO_KIND:
-            continue  # a heartbeat slot: its slot nonce binds it
-        if not (n.get(mid) or {}).get("nonce"):
-            n[mid] = {"nonce": secrets.token_hex(16), "at": now}
-    reply_nonces_write(state, check=True)
+    return _capabilities().upkeep_replies(state, queued, now)
 
 
 # Registering the command: a global application command, checked once per

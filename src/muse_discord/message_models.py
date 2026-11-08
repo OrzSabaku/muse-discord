@@ -107,3 +107,6 @@ class Settlement:
 
 
 LEDGER_TERMINAL = ("replied", "quarantined", "skipped")
+
+
+PROACTIVE_KIND = "proactive"

@@ -23,6 +23,8 @@ from test_binding import (
     HTTPErr,
 )
 
+from muse_discord.owner.memory import MEMORY_PER_DAY
+
 
 class OwnerMemory(Base):
     def setUp(self):
@@ -108,7 +110,7 @@ class OwnerMemory(Base):
         for i in range(5):
             m = self.owner_dm(f"fact {i}")
             self.remembered(m, [f"Fact {i}.{j}" for j in range(5)])
-        self.assertEqual(self.memory().count("(told me in a Discord DM)"), self.mod.MEMORY_PER_DAY)
+        self.assertEqual(self.memory().count("(told me in a Discord DM)"), MEMORY_PER_DAY)
         cfg = os.environ["MUSE_DISCORD_CONFIG"]
         with open(cfg, "w") as f:
             f.write(CFG + "memory:\n  save_dms: off\n")

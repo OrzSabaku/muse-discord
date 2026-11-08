@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 
 FOLLOW_UP_WINDOW_SECS = 120
+THREAD_TYPES = (10, 11, 12)
 HISTORY_ATTACHED = 8
 HISTORY_PER_CHANNEL = 12
 HISTORY_TEXT_CHARS = 300
