@@ -414,7 +414,7 @@ class OwnerlessServer(unittest.TestCase):
         self.assertIsNone(mod._admission().trigger_verdict(stranger, G2)[0])
         with quiet():
             mod.sync_guilds(st, mod.GUILDS, mod.CHANNELS)
-        kind, why = mod.trigger_verdict(stranger, G2)
+        kind, why = mod._admission().trigger_verdict(stranger, G2)
         self.assertIsNone(kind)
         self.assertEqual(ledger_code("skipped", f"settings: {why}"), "ownerless")
         # Not a shared server for DMs (who.dms_from: shared-servers).
