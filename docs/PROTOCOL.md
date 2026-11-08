@@ -30,7 +30,7 @@ outboxの処理中項目・失敗回数・新規返信の到着検知は `Outbox
 | ワーカー向けの返信先・文脈・設定カードの作成 | `src/muse_discord/worker_context.py` |
 | チャンネル・サーバー・探索メタデータの共有状態 | `src/muse_discord/directory/state.py` |
 | チャンネル・スレッド探索結果の採用と公開 | `src/muse_discord/directory/refresh.py` |
-| 設定の再読み込み・所有者状態・スレッド間の変更引き渡し | `src/muse_discord/settings_watch.py` |
+| 設定の再読み込み・古い上書きの整理・所有者状態・スレッド間の変更引き渡し | `src/muse_discord/settings_watch.py` |
 | メッセージの処理結果・診断理由の永続化と観測した名前のキャッシュ | `src/muse_discord/message_ledger.py` |
 | 受信拒否・送信権限不足の記録と重複ログの抑制 | `src/muse_discord/receiving/audit.py` |
 | 受信バーストのキュー登録・再起動時の未登録項目の復旧 | `src/muse_discord/receiving/staging.py` |
@@ -73,6 +73,7 @@ outboxの処理中項目・失敗回数・新規返信の到着検知は `Outbox
 | 設定変更による応答対象・公開範囲・費用の評価 | `src/muse_discord/settings_assessment.py` |
 | プリセットの定義・変更案への変換・一致判定 | `src/muse_discord/settings_presets.py` |
 | 設定の公開API | `src/muse_discord/muse_settings.py` |
+| 設定CLIの引数解析・表示・変更操作・保存済み情報の参照 | `src/muse_discord/settings_cli/` |
 | 設定のキー・適用範囲・変更データ型 | `src/muse_discord/settings/values.py`・`places.py`・`changes.py` |
 | 設定の読み込み・再検証・継承の解決 | `src/muse_discord/settings/loading.py`・`resolution.py` |
 | 設定の変更計画・管理者権限の確認 | `src/muse_discord/settings/planning.py`・`permissions.py` |
