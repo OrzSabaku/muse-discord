@@ -4,14 +4,13 @@ Existing configuration is validated and backed up before replacement. Only the
 shipped persona placeholder is replaced; private token files use atomic writes.
 """
 
-import contextlib
 import hashlib
 import os
 import re
-import tempfile
 
 from muse_discord.setup import support as C
 from muse_discord.setup.credentials import DEFAULT_TOKEN_FILE
+from muse_discord.storage import atomic_write
 
 PKG = C.PKG_DIR
 
@@ -49,16 +48,7 @@ def write_private(path, text):
     """Write text to path, mode 600 from the start, atomically."""
     d = os.path.dirname(path)
     os.makedirs(d, mode=0o700, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=d, prefix=".bot_token.", suffix=".tmp")
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    atomic_write(path, None, 0o600, text=text)
 
 
 def fresh_config_text(owner_id):
