@@ -67,7 +67,7 @@ except ImportError:
     print("PyYAML and Pydantic v2 are required: run uv sync", file=sys.stderr)
     sys.exit(1)
 
-from muse_discord import media_ingest, reply_protocol, storage
+from muse_discord import generated_media, media_ingest, reply_protocol, storage
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord import secret_scan as SCAN
@@ -352,12 +352,10 @@ BOT_USER_ID = None
 # item (media_permission), the worker may write generated files into
 # GENERATED_DIR/<the item's message_id>/; the send path attaches a reply's
 # files from its own item's directory only (validated in
-# _validate_gen_paths), so one item's image can never ride on another
+# generated_media.validate_paths), so one item's image can never ride on another
 # item's reply. Generation approvals are single-use, keyed by the
 # triggering message id and bound to its channel, because the worker's
 # outbox item does not carry the permission flag.
-GENERATED_TTL_SECS = 3600
-DISCORD_MAX_BYTES = 8 * 1024 * 1024  # unboosted server upload cap
 
 # Conversation history: rolling window of recent messages kept per
 # channel/DM so the reply worker drafts with context. Stored in state.json,
@@ -4525,99 +4523,12 @@ def send_reply_with_files(channel_id, text, files, reply_to=None, delivery=None)
     )
 
 
-def fit_for_discord(path):
-    """Return (send_path, filename) with the file under Discord's upload cap,
-    compressing with ffmpeg if needed. Returns (None, None) when it can't
-    be made to fit."""
-    if os.path.getsize(path) <= DISCORD_MAX_BYTES:
-        return path, os.path.basename(path)
-    ext = os.path.splitext(path)[1].lower()
-    if ext in (".png", ".jpg", ".jpeg", ".webp"):
-        out = path + ".fit.jpg"
-        cmd = [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-i",
-            path,
-            "-vf",
-            "scale='min(1600,iw)':-2",
-            "-q:v",
-            "5",
-            "-y",
-            out,
-        ]
-    elif ext in (".mp4", ".mov", ".webm"):
-        out = path + ".fit.mp4"
-        cmd = [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-i",
-            path,
-            "-vf",
-            "scale='min(1280,iw)':-2",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-crf",
-            "28",
-            "-preset",
-            "veryfast",
-            "-c:a",
-            "aac",
-            "-y",
-            out,
-        ]
-    else:
-        return None, None
-    try:
-        subprocess.run(cmd, capture_output=True, timeout=120)
-    except Exception as e:
-        print(f"Compression failed for {path}: {e}", flush=True)
-        return None, None
-    if os.path.exists(out) and os.path.getsize(out) <= DISCORD_MAX_BYTES:
-        return out, os.path.basename(out)
-    with contextlib.suppress(OSError):
-        os.remove(out)
-    return None, None
-
-
 def sweep_generated():
-    """Delete generated files older than GENERATED_TTL_SECS (already sent),
-    including those in the per-item generated/<message_id>/ dirs, then
-    item dirs left empty for that long."""
-    if os.path.isdir(GENERATED_DIR):
-        now = time.time()
-        for fname in os.listdir(GENERATED_DIR):
-            fpath = os.path.join(GENERATED_DIR, fname)
-            try:
-                if os.path.isdir(fpath) and not os.path.islink(fpath):
-                    removed = False
-                    for sub in os.listdir(fpath):
-                        spath = os.path.join(fpath, sub)
-                        try:
-                            if now - os.lstat(spath).st_mtime > GENERATED_TTL_SECS:
-                                os.remove(spath)
-                                removed = True
-                        except OSError:
-                            pass
-                    # An empty dir only goes once it held expired files
-                    # or is old itself: the worker may have just created
-                    # it and not written its file yet.
-                    if not os.listdir(fpath) and (
-                        removed or now - os.path.getmtime(fpath) > GENERATED_TTL_SECS
-                    ):
-                        os.rmdir(fpath)
-                elif now - os.path.getmtime(fpath) > GENERATED_TTL_SECS:
-                    os.remove(fpath)
-            except OSError:
-                pass
+    generated_media.sweep_generated(GENERATED_DIR)
 
 
 def sweep_gen_state(state):
-    """Drop generation approvals older than GENERATED_TTL_SECS (they are
+    """Drop generation approvals older than generated_media.TTL_SECS (they are
     single-use and short-lived by design) and bound the sent-file record.
     Approvals from before channel binding (a bare timestamp) go too."""
     approved = state.get("gen_approved", {})
@@ -4625,7 +4536,7 @@ def sweep_gen_state(state):
     for mid in [
         m
         for m, a in approved.items()
-        if not isinstance(a, dict) or now - a.get("ts", 0) > GENERATED_TTL_SECS
+        if not isinstance(a, dict) or now - a.get("ts", 0) > generated_media.TTL_SECS
     ]:
         approved.pop(mid, None)
     if len(state.get("gen_sent", [])) > GENERATED_SEND_HISTORY_LIMIT:
@@ -4684,64 +4595,6 @@ def _media_counts(state):
     return g
 
 
-def _gen_item_dir(item_id):
-    """generated/<item_id>/, the only place a queue item's generated files
-    may come from, or None for anything but a plain message id (no path
-    tricks). Only the generated/ root is realpath'd: an item dir that is
-    a symlink to another item's dir must fail the containment check."""
-    if not isinstance(item_id, str) or not re.fullmatch(r"[0-9]+", item_id):
-        return None
-    return os.path.join(os.path.realpath(GENERATED_DIR), item_id)
-
-
-def _validate_gen_paths(paths, item_id):
-    """Keep only paths that exist and resolve inside generated/<item_id>/."""
-    item_root = _gen_item_dir(item_id)
-    candidates = []
-    for p in paths or []:
-        if not isinstance(p, str):
-            continue
-        # Workers sometimes hand over paths relative to $HOME.
-        ap = p if os.path.isabs(p) else os.path.join(os.path.expanduser("~"), p)
-        rp = os.path.realpath(ap)
-        if item_root is None or not rp.startswith(item_root + os.sep):
-            print(f"Dropping attachment outside generated/{item_id}/: {p}", flush=True)
-            continue
-        if not os.path.isfile(rp):
-            print(f"Dropping missing attachment: {p}", flush=True)
-            continue
-        candidates.append(rp)
-    return candidates
-
-
-def _discover_generated(state, item_id):
-    """Find the newest unsent generated file in generated/<item_id>/. The
-    worker often isn't told the local filename (the media tool returns a
-    remote URL/handle), so the monitor matches the file itself, but only
-    in the item's own directory: a file made for another item (a DM, say)
-    is never a candidate. Returns a local path or None."""
-    item_root = _gen_item_dir(item_id)
-    if item_root is None or not os.path.isdir(item_root):
-        return None
-    sent = set(state.get("gen_sent", []))
-    best = None
-    for fname in os.listdir(item_root):
-        if fname.endswith(".json") or ".fit." in fname:
-            continue  # sidecars and compressed copies, not originals
-        fpath = os.path.realpath(os.path.join(item_root, fname))
-        if not fpath.startswith(item_root + os.sep):
-            continue  # a symlink out of the item dir
-        if fpath in sent or not os.path.isfile(fpath):
-            continue
-        try:
-            mt = os.path.getmtime(fpath)
-        except OSError:
-            continue
-        if best is None or mt > best[1]:
-            best = (fpath, mt)
-    return best[0] if best else None
-
-
 def _gen_item_id(state, item):
     """The queue item an outbox item answers, as its trigger message id:
     reply_to, resolved through reply_aliases (the worker replies under
@@ -4769,7 +4622,7 @@ def _gen_approval(state, item_id):
     """The live generation approval for a queue item ({"ts",
     "channel_id"}), or None."""
     a = state.get("gen_approved", {}).get(item_id) if item_id else None
-    if not isinstance(a, dict) or time.time() - a.get("ts", 0) > GENERATED_TTL_SECS:
+    if not isinstance(a, dict) or time.time() - a.get("ts", 0) > generated_media.TTL_SECS:
         return None
     return a
 
@@ -6056,11 +5909,11 @@ def own_channel_problem(state, item, index):
 
 def _new_reply_attachments(state, item, gen_id):
     attachments, gen_files = [], []
-    candidates = _validate_gen_paths(item.get("attachments"), gen_id)
+    candidates = generated_media.validate_paths(GENERATED_DIR, item.get("attachments"), gen_id)
     if not candidates:
         # The media tool usually returns a remote URL or handle, not
         # the local filename, so the worker can't name the file.
-        found = _discover_generated(state, gen_id)
+        found = generated_media.discover_generated(GENERATED_DIR, state.get("gen_sent", []), gen_id)
         if found:
             print(f"Attaching discovered generated file: {found}", flush=True)
             candidates.append(found)
@@ -6070,7 +5923,7 @@ def _new_reply_attachments(state, item, gen_id):
                 flush=True,
             )
     for rp in candidates:
-        send_path, fname = fit_for_discord(rp)
+        send_path, fname = generated_media.fit_for_discord(rp)
         if send_path:
             attachments.append((send_path, fname))
             gen_files.append([send_path, rp])
@@ -6106,7 +5959,8 @@ def _reply_attachments(state, item, retry):
             if (
                 isinstance(pair, list)
                 and len(pair) == GENERATED_PATH_PAIR_LENGTH
-                and len(_validate_gen_paths(pair, gen_id)) == GENERATED_PATH_PAIR_LENGTH
+                and len(generated_media.validate_paths(GENERATED_DIR, pair, gen_id))
+                == GENERATED_PATH_PAIR_LENGTH
             ):
                 attachments.append((pair[0], os.path.basename(pair[0])))
                 gen_files.append(pair)
