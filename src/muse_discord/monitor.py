@@ -121,7 +121,7 @@ from muse_discord.watches.delivery import WatchDelivery
 from muse_discord.watches.fires import WatchFireBuilder
 from muse_discord.watches.queue import WatchQueue
 from muse_discord.watches.requests import WatchRequests
-from muse_discord.watches.runtime import WatchRuntime, WatchState
+from muse_discord.watches.runtime import WatchRuntime
 from muse_discord.watches.web import WebWatchWork
 from muse_discord.work_wait import WorkWait
 from muse_discord.worker_context import WorkerContext
@@ -336,7 +336,7 @@ _OUTPUT: OutgoingGuard
 def _live_nonces():
     return _CAPABILITIES.published_nonces() | collect_nonces(
         (),
-        (_WATCH_STATE.web_cache.get("body"),),
+        (_WATCHES.web.cache.get("body"),),
         lambda: PRO.store.secret_nonces(),
     )
 
@@ -518,7 +518,7 @@ def settings_context():
             _LEDGER,
             _DIRECTORY_VIEW,
             _DIRECT_MESSAGES,
-            lambda: _WATCH_STORE.read()["fired"],
+            lambda: _WATCHES.store.read()["fired"],
         ),
         admin_change=_ADMIN_DIGESTS.note,
         bot_id=str(_IDENTITY.user_id or ""),
@@ -621,7 +621,7 @@ def _receiver(state):
         _bursts(state),
         api_get,
         ReceptionEffects(
-            watch_scan,
+            _WATCHES.scan,
             TM.count,
             _RECEPTION_AUDIT.refused,
             _RECEPTION_AUDIT.no_send,
@@ -718,8 +718,7 @@ def _reply_binding():
 
 _ACCESS: ChannelAccess
 _AUTHOR_ROLES: AuthorRoles
-_WATCH_STORE: W.Store
-_WATCH_STATE: WatchState
+_WATCHES: WatchRuntime
 
 WATCHES_FILE = os.path.join(BASE_DIR, "watches.json")
 # Web watches: the live checks for hooks/watch-due.sh (mode 600), and
@@ -731,20 +730,9 @@ WEB_RESULTS_FILE = os.path.join(BASE_DIR, "web_watch_results.json")
 # -- asking for one ---------------------------------------------------------
 
 
-def _watch_audience():
-    return WatchAudience(
-        _response_policy(),
-        _ACCESS,
-        _DIRECTORY.guilds,
-        _LEDGER.names,
-        _OWNER_PRESENCE.absent,
-        dm_refusal,
-    )
-
-
 def _watch_requests():
     return WatchRequests(
-        _WATCH_STORE, _watch_audience(), _REPLIES.queued_meta, _note_watch_timezone
+        _WATCHES.store, _WATCHES.audience, _REPLIES.queued_meta, _note_watch_timezone
     )
 
 
@@ -761,41 +749,42 @@ def _note_watch_timezone(uid, fresh):
 
 
 def _watch_delivery():
-    return WatchDelivery(_WATCH_STORE, api_get, normalize_parts)
+    return WatchDelivery(_WATCHES.store, api_get, normalize_parts)
 
 
-def _watch_runtime():
-    audience = _watch_audience()
+def _create_watches():
+    audience = WatchAudience(
+        _response_policy,
+        _ACCESS,
+        _DIRECTORY.guilds,
+        _LEDGER.names,
+        _OWNER_PRESENCE.absent,
+        dm_refusal,
+    )
     return WatchRuntime(
-        store=_WATCH_STORE,
+        store=W.Store(lambda: WATCHES_FILE),
         audience=audience,
-        fires=WatchFireBuilder(audience, _LEDGER.record, _worker_context().settings_card),
+        fires=WatchFireBuilder(
+            audience,
+            _LEDGER.record,
+            lambda *args, **kwargs: _worker_context().settings_card(*args, **kwargs),
+        ),
         queue=WatchQueue(
-            _queue_files(),
+            _queue_files,
             _REPLIES,
             _CAPABILITIES,
             lambda: _SETTINGS.owners,
             _CAPABILITIES.write_owner_dms,
         ),
         web=WebWatchWork(
-            WEB_RESULTS_FILE,
-            WEB_DUE_FILE,
+            lambda: WEB_RESULTS_FILE,
+            lambda: WEB_DUE_FILE,
             _publish,
             lambda: _SETTINGS.owners,
             is_suspicious,
-            _WATCH_STATE.web_cache,
         ),
         entries=lambda: _LEDGER.load()["entries"],
-        state=_WATCH_STATE,
     )
-
-
-def watch_tick(state, now=None):
-    return _watch_runtime().tick(state, now)
-
-
-def watch_scan(msg, guild_id):
-    return _watch_runtime().scan(msg, guild_id)
 
 
 # -- answering a fire -------------------------------------------------------
@@ -1031,7 +1020,7 @@ def _initialize_services():
     global _REPLIES, _QUEUE_STAGING, _LEDGER, _RECEPTION_AUDIT
     global _IDENTITY, _OUTBOX, _WORK_WAIT
     global _SENDER, _PARTS, _TYPING
-    global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
+    global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCHES
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
     global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTIONS, _INTERACTION_RESPONDER, _INTERACTION_WORKER
@@ -1051,8 +1040,6 @@ def _initialize_services():
     _DIRECTORY = DirectoryState()
     _ACCESS = ChannelAccess(_DIRECTORY.channels, lambda path: api_get(path), _BACKOFF.active)
     _AUTHOR_ROLES = AuthorRoles(lambda path: api_get(path), _BACKOFF.active)
-    _WATCH_STORE = W.Store(lambda: WATCHES_FILE)
-    _WATCH_STATE = WatchState()
     _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _OUTPUT = OutgoingGuard(
         lambda: TOKEN,
@@ -1131,6 +1118,7 @@ def _initialize_services():
         backing_off=_BACKOFF.active,
         now=lambda: time.time(),
     )
+    _WATCHES = _create_watches()
     TM = _import_telemetry()
     PRO = _import_proactive()
 
@@ -1206,7 +1194,7 @@ def main():
         )
         _run_phase("/settings upkeep", _settings_upkeep, status)
         _run_phase("Owner DM upkeep", _CAPABILITIES.upkeep, state)
-        _run_phase("Reminders and watches", watch_tick, state)
+        _run_phase("Reminders and watches", _WATCHES.tick, state)
         _run_phase("Proactive", PRO.tick, state)
         poll_turn, rest_spent = scheduler.poll_slice(state, now, backing, dm_items)
         queue = _run_phase("Queue/staging", _QUEUE_STAGING.stage, state, dm_items)

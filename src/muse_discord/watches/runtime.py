@@ -1,8 +1,8 @@
 """Coordinate watch matching, fire creation and restart recovery.
 
 Permission checks precede store edits; queue publication follows them. Mutable
-candidate matches and timers belong to this coordinator (or an explicit shared
-state supplied by the application), not to an imported monitor namespace.
+candidate matches and timers belong to this long-lived coordinator, not to an
+imported monitor namespace. Policies and file locations are resolved when used.
 """
 
 import time
@@ -34,13 +34,6 @@ def _restored_item(state, f):
 
 
 @dataclass
-class WatchState:
-    matches: list = field(default_factory=list)
-    clock: dict = field(default_factory=lambda: {"next": 0.0, "upkeep": 0.0})
-    web_cache: dict = field(default_factory=lambda: {"body": None, "path": None})
-
-
-@dataclass
 class WatchRuntime:
     store: W.Store
     audience: WatchAudience
@@ -48,7 +41,9 @@ class WatchRuntime:
     queue: WatchQueue
     web: WebWatchWork
     entries: Callable[[], dict]
-    state: WatchState = field(default_factory=WatchState)
+    matches: list = field(default_factory=list, init=False)
+    next_tick: float = field(default=0.0, init=False)
+    next_upkeep: float = field(default=0.0, init=False)
 
     def tick(self, state, now=None):
         """Main loop: fire due reminders and watch matches (grouped per
@@ -64,13 +59,13 @@ class WatchRuntime:
         is fired. A fire whose place was not checked in the first phase is
         held until the next tick."""
         now = time.time() if now is None else now
-        if now < self.state.clock["next"] and not self.state.matches:
+        if now < self.next_tick and not self.matches:
             return
-        self.state.clock["next"] = now + WATCH_TICK_SECS
+        self.next_tick = now + WATCH_TICK_SECS
         store = self.store
         data = store.read()
-        cands = list(self.state.matches)
-        del self.state.matches[:]
+        cands = list(self.matches)
+        del self.matches[:]
         matches = [(wid, m) for wid, m, ctx in cands if self.match_ok(data, wid, ctx)]
         verdicts = {}
         for key, name in self.places_due(data, matches, now).items():
@@ -97,14 +92,14 @@ class WatchRuntime:
         self.web.write_due(store.read(), now)
         for q in queued:
             self.queue.enqueue(state, q)
-        if now >= self.state.clock["upkeep"]:
-            self.state.clock["upkeep"] = now + WATCH_UPKEEP_SECS
+        if now >= self.next_upkeep:
+            self.next_upkeep = now + WATCH_UPKEEP_SECS
             self.upkeep(state, now)
 
     def places_due(self, data, matches, now):
         """{(requester, channel, guild, dm): name} of every place that has
         something to fire this tick (reminders due, matches, held fires
-        due), for watch_tick's first phase."""
+        due), for tick's first phase."""
         out = {}
         recs = [r for _, r in W.due_reminders(data, now)]
         recs += [data["items"][w] for w, _ in matches if w in data["items"]]
@@ -211,7 +206,7 @@ class WatchRuntime:
         the watch was set, while the watch has not fired within
         DEBOUNCE_SECS, in the watch's scope, with one of its words. Whether
         the requester can read that channel, and whether the notice may go
-        where they asked, watch_tick checks before firing
+        where they asked, tick checks before firing
         (match_ok). The notice links the message; it never quotes
         it."""
         if not guild_id:
@@ -231,7 +226,7 @@ class WatchRuntime:
         parent = info.get("parent_id") if info.get("thread") else None
         ts = _snowflake_ts(msg.get("id"))
         now = time.time()
-        pending = {c[0] for c in self.state.matches}
+        pending = {c[0] for c in self.matches}
         for wid, r in items.items():
             if (
                 not isinstance(r, dict)
@@ -247,9 +242,9 @@ class WatchRuntime:
             hit = W.match_text(r.get("words") or [], text)
             if not hit:
                 continue
-            if len(self.state.matches) >= WATCH_MATCH_QUEUE_LIMIT:
+            if len(self.matches) >= WATCH_MATCH_QUEUE_LIMIT:
                 return  # a flood: the rest of this tick's matches wait
-            self.state.matches.append(
+            self.matches.append(
                 (
                     wid,
                     {

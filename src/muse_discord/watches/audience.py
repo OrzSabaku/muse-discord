@@ -36,12 +36,16 @@ def _place_ids(value, gid, cid, dm):
 
 @dataclass
 class WatchAudience:
-    response: ResponsePolicy
+    response_source: Callable[[], ResponsePolicy]
     access: ChannelAccess
     guilds: dict
     names: dict
     owners_absent: Callable[..., bool]
     dm_refusal: Callable[[dict], str | None]
+
+    @property
+    def response(self) -> ResponsePolicy:
+        return self.response_source()
 
     def can_set(self, uid, from_bot, here, matches):
         """abilities.reminders allows uid here (owners always; bots never).

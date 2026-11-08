@@ -66,7 +66,7 @@ class Services(unittest.TestCase):
                 Mock(),
             )
             audience = WatchAudience(
-                response,
+                lambda: response,
                 ChannelAccess({}, no_network, lambda: False),
                 {},
                 {},

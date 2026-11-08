@@ -8,7 +8,7 @@ Discord watches never see a channel the requester cannot read, never
 their own messages, and debounce; caps, the who setting, cancel,
 expiry, and owner-DM nonce binding.
 
-Drives enqueue_message, process_outbox and watch_tick with the queue
+Drives message ingestion, outbox delivery and watch ticks with the queue
 file, watches.json and the stubbed API; two tests run the real wake
 hook.
 
@@ -168,9 +168,9 @@ class Base(unittest.TestCase):
         self.out += buf.getvalue()
 
     def tick(self, ahead=0.0):
-        self.mod._WATCH_STATE.clock.update(next=0.0, upkeep=0.0)
+        self.mod._WATCHES.next_tick = self.mod._WATCHES.next_upkeep = 0.0
         with quiet() as buf:
-            self.mod.watch_tick(self.st, now=time.time() + ahead)
+            self.mod._WATCHES.tick(self.st, now=time.time() + ahead)
         self.out += buf.getvalue()
 
     def scan(self, msg):
@@ -179,7 +179,7 @@ class Base(unittest.TestCase):
 
     # -- looking --------------------------------------------------------------
     def items(self):
-        return self.mod._WATCH_STORE.read()["items"]
+        return self.mod._WATCHES.store.read()["items"]
 
     def fires(self):
         return [
@@ -280,7 +280,7 @@ class Reminders(Base):
         )
         self.assertEqual(self.fires(), [])
         self.tick(ahead=140)  # upkeep: settled
-        self.assertEqual(self.mod._WATCH_STORE.read()["fires"], {})
+        self.assertEqual(self.mod._WATCHES.store.read()["fires"], {})
         self.assertEqual(self.fires(), [])
         # A second answer to it is never sent.
         self.outbox(self.held({"item": f["message_id"], "channel_id": CH, "text": "again"}))
@@ -656,7 +656,7 @@ class Caps(Base):
         self.assertEqual(len(self.fires()), 1)
         self.tick(ahead=121)  # over it: held
         self.assertEqual(len(self.fires()), 1)
-        held = self.mod._WATCH_STORE.read()["held"]
+        held = self.mod._WATCHES.store.read()["held"]
         (fid,) = held
         self.assertEqual(self.ledger(fid)["code"], "watch-held")
         self.assertEqual(self.items(), {})  # not lost: held
@@ -666,7 +666,7 @@ class Caps(Base):
         self.assertEqual(len(fires), 2, self.out)
         later = next(f for f in fires if f["message_id"] == fid)
         self.assertTrue(later["reminder"]["late"])
-        self.assertEqual(self.mod._WATCH_STORE.read()["held"], {})
+        self.assertEqual(self.mod._WATCHES.store.read()["held"], {})
 
     def test_held_every_time_notices_fold_into_one(self):
         self.cfg = CFG + "everywhere:\n  limits:\n    per_person_per_day: 1\n"
@@ -675,10 +675,10 @@ class Caps(Base):
         for k in range(3):  # 3 matches, 15 min
             self.scan(gmsg(U2, "pizza!"))  # apart, all capped
             self.tick(ahead=k * (W.DEBOUNCE_SECS + 1))
-            with self.mod._WATCH_STORE.edit() as d:  # (debounce passes)
+            with self.mod._WATCHES.store.edit() as d:  # (debounce passes)
                 for r in d["items"].values():
                     r["last_fired"] = 0
-        held = list(self.mod._WATCH_STORE.read()["held"].values())
+        held = list(self.mod._WATCHES.store.read()["held"].values())
         self.assertEqual(len(held), 1)
         ((_, e),) = held[0]["es"]
         self.assertEqual(e["more"], 2)
@@ -813,6 +813,27 @@ class OwnerDMs(Base):
         r = subprocess.run(["bash", HOOK], env=env, capture_output=True, text=True, timeout=30)
         items = json.loads(r.stdout.splitlines()[1])["items"]
         self.assertEqual([i["message_id"] for i in items], ["7"])
+
+
+class Lifetime(Base):
+    def test_identity_recovered_after_creation_is_ignored_but_other_matches_still_fire(self):
+        self.watch(OWNER, ["deploy"], every=True)
+        self.mod._IDENTITY.user_id = U2
+        self.mod._WATCHES.scan(gmsg(U2, "deploy"), G1)
+        self.assertEqual(self.mod._WATCHES.matches, [])
+        self.mod._WATCHES.scan(gmsg(U1, "deploy"), G1)
+        self.tick()
+        self.assertEqual(len(self.fires()), 1)
+        self.assertEqual(self.mod._WATCHES.matches, [])
+
+    def test_pending_reminder_uses_the_current_queue_destination(self):
+        self.remind()
+        original = self.mod.QUEUE_FILE
+        self.mod.QUEUE_FILE = os.path.join(self.mod.tmp, "other_queue.json")
+        self.tick(ahead=121)
+        self.assertEqual(len(self.fires()), 1)
+        with open(original) as stream:
+            self.assertEqual(json.load(stream), [])
 
 
 if __name__ == "__main__":

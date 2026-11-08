@@ -10,14 +10,14 @@ from muse_discord.reply_state import ReplyState
 
 @dataclass
 class WatchQueue:
-    queue: QueueFiles
+    queue_source: Callable[[], QueueFiles]
     replies: ReplyState
     capabilities: CapabilityIssuer
     owners_source: Callable[[], set[str]]
     publish_nonces: Callable[[dict], None]
 
     def queued_ids(self) -> set[str]:
-        return {str(q.get("message_id")) for q in self.queue.load() if isinstance(q, dict)}
+        return {str(q.get("message_id")) for q in self.queue_source().load() if isinstance(q, dict)}
 
     def enqueue(self, state, q):
         """Queue a fire: its record (item_meta: the owner-DM gate and the
@@ -42,7 +42,7 @@ class WatchQueue:
         if owner_dm and fid not in (state.get("nl_nonces") or {}):
             self.capabilities.mint_owner_dm(state, fid, q["channel_id"])
         self.capabilities.mint_reply(state, fid)
-        self.queue.edit(add=[q])
+        self.queue_source().edit(add=[q])
         items = (q.get("reminder") or {}).get("items") or []
         print(
             f"Queued a reminder for {q.get('author')} in "
@@ -53,7 +53,7 @@ class WatchQueue:
 
     def drop_stale(self, state, stale):
         if stale:
-            self.queue.edit(drop=lambda q: str(q.get("message_id")) in stale)
+            self.queue_source().edit(drop=lambda q: str(q.get("message_id")) in stale)
             nonces = state.get("nl_nonces") or {}
             for fid in stale:
                 nonces.pop(fid, None)

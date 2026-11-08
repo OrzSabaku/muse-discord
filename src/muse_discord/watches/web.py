@@ -12,12 +12,16 @@ from muse_discord.watches.fires import FirePolicy, WatchFireBuilder
 
 @dataclass
 class WebWatchWork:
-    results_path: str
-    due_path: str
+    results_path_source: Callable[[], str]
+    due_path_source: Callable[[], str]
     publish: Callable[..., bool]
     owners_source: Callable[[], set[str]]
     suspicious: Callable[[str], str | bool]
     cache: dict = field(default_factory=lambda: {"body": None, "path": None})
+
+    @property
+    def results_path(self) -> str:
+        return self.results_path_source()
 
     def has_work(self, data, now):
         return os.path.exists(self.results_path) or W.web_work(data, now, self.owners_source())
@@ -27,8 +31,9 @@ class WebWatchWork:
     ):
         """The checker's reports (bin/watch-report.py), emptied; the caller
         holds the store's lock, which the tool appends under."""
+        path = self.results_path
         try:
-            with open(self.results_path) as f:
+            with open(path) as f:
                 reps = json.load(f)
         except FileNotFoundError:
             return []
@@ -36,7 +41,7 @@ class WebWatchWork:
             print(f"web_watch_results.json unreadable ({e}); dropped", flush=True)
             reps = []
         with contextlib.suppress(OSError):
-            os.remove(self.results_path)
+            os.remove(path)
         return reps if isinstance(reps, list) else []
 
     def tick(self, state, data, now, verdicts, fires: WatchFireBuilder):
@@ -95,4 +100,4 @@ class WebWatchWork:
     def write_due(self, data, now=None):
         """web_watches_due.json: the live checks (muse_watches.web_due), for
         hooks/watch-due.sh; written (mode 600) only when it changes."""
-        self.publish(self.due_path, W.web_due(data, now), self.cache, create=False)
+        self.publish(self.due_path_source(), W.web_due(data, now), self.cache, create=False)
