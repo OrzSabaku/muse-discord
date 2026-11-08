@@ -70,3 +70,37 @@ class PreparedReply:
     attachments: list
     gen_files: list
     mentions: dict | None = None
+
+
+@dataclass
+class LedgerContext:
+    channel_id: str | None = None
+    author: str | None = None
+    recoveries: int | None = None
+    author_id: str | None = None
+    detail: dict | None = None
+
+
+@dataclass
+class OwnerCommand:
+    channel_id: str | None = None
+    content: str = ""
+    guild_id: str | None = None
+
+
+@dataclass
+class QueueContext:
+    """Origin and coalesced fragments of one incoming conversation turn."""
+
+    dm: bool = False
+    fragments: list | None = None
+    guild_id: str | None = None
+    follow_up: bool = False
+
+
+@dataclass
+class Settlement:
+    status: str
+    reason: str = ""
+    replied: bool = False
+    detail: dict | None = None

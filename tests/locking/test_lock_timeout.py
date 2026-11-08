@@ -16,6 +16,8 @@ from common import signed
 from harness import ARGV, capture, fresh_pkg, msg, new_state, read, sent_texts, snowflake, write
 from harness import monitor as m
 
+from muse_discord.reply_delivery import SEND_RETRY_SECS
+
 
 @contextmanager
 def held_lock():
@@ -127,7 +129,7 @@ class LockTimeout(unittest.TestCase):
                     self.assertEqual(read(m.OUTBOX_FILE)[0]["_retry"], retry)
                     self.assertNotIn("outbox_retries", read(m.STATE_FILE))
                     clock[0] = retry["next"] + 0.1
-                clock[0] = first + m.SEND_RETRY_SECS + 1
+                clock[0] = first + SEND_RETRY_SECS + 1
                 m.outbox_pass(state)
                 self.assertEqual(send.call_count, 2)  # expired replies are never sent again
         self.assertEqual(read(m.OUTBOX_FILE), [])

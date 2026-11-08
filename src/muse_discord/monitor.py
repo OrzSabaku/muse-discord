@@ -71,18 +71,23 @@ from muse_discord import generated_media, media_ingest, reply_protocol, storage
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord import secret_scan as SCAN
+from muse_discord.conversation import Conversation, is_forwarded
+from muse_discord.conversation import _snowflake_ts as _snowflake_ts
+from muse_discord.conversation import _who as _who
+from muse_discord.ingest import HISTORY_ATTACHED, MessageEnqueuer
 from muse_discord.message_models import (
     DISCORD_MAX_CHARS,
-    AuthorizedReply,
     DeliveryOptions,
-    MessageMedia,
-    MessageTurn,
-    PreparedReply,
-    ReplyActions,
+    LedgerContext,
+    OwnerCommand,
+    QueueContext,
     SecretBlocked,
+    Settlement,
     Speaker,
 )
 from muse_discord.paths import project_root
+from muse_discord.reply_delivery import OutboxDelivery
+from muse_discord.reply_delivery import _outbox_key as _outbox_key
 from muse_discord.reply_protocol import is_snowflake as _is_snowflake
 from muse_discord.storage import SharedLockTimeout, atomic_write
 from muse_discord.storage import read_json as _read_json
@@ -299,22 +304,17 @@ def _on_settings_changed(prev, cur):
 # --- Read once at import: identity and engine internals ---
 RESPOND_TO = {"mention", "reply_to_bot"}
 # The conversational follow-up window (who.replies: conversational).
-FOLLOW_UP_WINDOW_SECS = 120
 # Test-only (the e2e harness's driver bots stand in for people): these
 # author ids count as human everywhere the monitor checks author.bot
 # (see is_bot_author). Absent or empty = no effect.
 
 
-def _who(msg):
-    """A message's author object ({} when it has none)."""
-    return msg.get("author") or {}
+def _conversation():
+    return Conversation(BOT_ID, BOT_NAME, TREAT_AS_HUMAN, frozenset(RESPOND_TO))
 
 
 def is_bot_author(author):
-    """True when a message author is a bot (Discord's author.bot), unless
-    testing.treat_as_human lists its id."""
-    author = author or {}
-    return bool(author.get("bot")) and str(author.get("id")) not in TREAT_AS_HUMAN
+    return _conversation().is_bot_author(author)
 
 
 # Operational defaults and normalization are owned by EngineSettings.
@@ -360,9 +360,6 @@ BOT_USER_ID = None
 # Conversation history: rolling window of recent messages kept per
 # channel/DM so the reply worker drafts with context. Stored in state.json,
 # attached to queue items (minus the triggering message itself).
-HISTORY_PER_CHANNEL = 12
-HISTORY_TEXT_CHARS = 300
-HISTORY_ATTACHED = 8
 
 # Channels and guilds are discovered live at startup and refreshed
 # periodically: every channel/thread the bot can read, across every
@@ -1217,15 +1214,6 @@ def ledger_record(mid, status, reason="", context=None):
     ledger_record_many([mid], status, reason, context)
 
 
-@dataclass
-class LedgerContext:
-    channel_id: str | None = None
-    author: str | None = None
-    recoveries: int | None = None
-    author_id: str | None = None
-    detail: dict | None = None
-
-
 def ledger_record_many(mids, status, reason="", context=None):
     """ledger_record for several ids in one write: a burst's trigger and
     its fragments always share one outcome. Each entry also keeps the
@@ -1355,13 +1343,6 @@ def _quarantine_ids():
                 fr.get("message_id") for fr in e.get("fragments") or [] if isinstance(fr, dict)
             )
     return ids
-
-
-def _snowflake_ts(mid):
-    try:
-        return ((int(mid) >> 22) + 1420070400000) / 1000.0
-    except Exception:
-        return 0.0
 
 
 def rate_block(state, user_id, channel_id=None, scope=None):
@@ -1679,57 +1660,19 @@ def dms_enabled():
 # state["follow_up"]: {"<channel>:<user>": time the window opened}
 # ---------------------------------------------------------------------------
 def open_follow_up(state, channel_id, user_id):
-    fu = state.setdefault("follow_up", {})
-    now = time.time()
-    fu[f"{channel_id}:{user_id}"] = now
-    for k in [k for k, t in fu.items() if now - t > FOLLOW_UP_WINDOW_SECS]:
-        del fu[k]
+    return _conversation().open_follow_up(state, channel_id, user_id)
 
 
 def addresses_someone_else(msg):
-    """A Discord reply to someone else's message, or an @mention of
-    another user or a role (the bot's own mention is direct address)."""
-    if msg.get("message_reference"):
-        rm = msg.get("referenced_message") or {}
-        if _who(rm).get("id") != BOT_ID:
-            return True
-    if any((m or {}).get("id") != BOT_ID for m in msg.get("mentions") or []):
-        return True
-    return bool(msg.get("mention_roles") or msg.get("mention_everyone"))
+    return _conversation().addresses_someone_else(msg)
 
 
 def follow_up_open(state, msg):
-    """True when msg falls in its author's open follow-up window in its
-    channel (and does not address someone else, which closes it)."""
-    fu = (state or {}).get("follow_up") or {}
-    author = _who(msg)
-    key = f"{msg.get('channel_id')}:{author.get('id')}"
-    opened = fu.get(key)
-    if opened is None or is_bot_author(author):
-        return False
-    ts = _snowflake_ts(msg.get("id")) or time.time()
-    if ts > opened + FOLLOW_UP_WINDOW_SECS:
-        fu.pop(key, None)
-        return False
-    if ts < opened - 2:
-        return False  # written before the bot's reply landed
-    if addresses_someone_else(msg):
-        fu.pop(key, None)
-        return False
-    return True
+    return _conversation().follow_up_open(state, msg)
 
 
 def own_replies_in_run(history, msg):
-    """How many of the bot's own messages are in the run of bot messages
-    that ends just before msg (since a human last spoke in the channel):
-    the bot's consecutive replies in a bot-to-bot exchange."""
-    n = 0
-    for h in reversed([h for h in history if int(h["id"]) < int(msg["id"])]):
-        if not h.get("bot"):
-            break
-        if h.get("author_id") == BOT_ID:
-            n += 1
-    return n
+    return _conversation().own_replies_in_run(history, msg)
 
 
 def notify_owners(text, components=None, flags=None):
@@ -3568,13 +3511,6 @@ def owner_targets(content, guild_id=None):
     return sorted(ids), sorted(post - ids)
 
 
-@dataclass
-class OwnerCommand:
-    channel_id: str | None = None
-    content: str = ""
-    guild_id: str | None = None
-
-
 def note_owner_item(state, mid, dm=False, command=None):
     """Queue item mid is an owner's command: mint its nonce (an owner
     DM's is its owner_dm_nonce), resolve where the owner's own words
@@ -3723,13 +3659,6 @@ def reply_nonces_upkeep(state, queued, now):
     reply_nonces_write(state, check=True)
 
 
-def is_forwarded(msg):
-    """A forwarded message (Discord's message_reference type 1, with the
-    forwarded content in message_snapshots)."""
-    ref = msg.get("message_reference") or {}
-    return ref.get("type") == 1 or bool(msg.get("message_snapshots"))
-
-
 # Registering the command: a global application command, checked once per
 # run (GET, then POST when missing or PATCH when it differs; never a bulk
 # PUT, which would delete any other command). A failure is retried on a
@@ -3836,14 +3765,7 @@ def register_commands(gateway_status=None):
 
 
 def is_mention(msg):
-    """True when the message @mentions the bot on the platform. Plain
-    text containing the bot's name is NOT a mention: in a server whose
-    topic shares the bot's name, that made every casual "my muse ..." a
-    summons. Whether a bot author may trigger is trigger_kind's call."""
-    author = _who(msg)
-    if author.get("id") == BOT_ID:
-        return False
-    return any(m.get("id") == BOT_ID for m in msg.get("mentions", []))
+    return _conversation().is_mention(msg)
 
 
 def trigger_kind(msg, guild_id=None, state=None):
@@ -3859,11 +3781,7 @@ def trigger_kind(msg, guild_id=None, state=None):
 
 
 def addresses_bot(msg):
-    """Direct address as bot.respond_to defines it: a platform @mention
-    or a Discord reply to the bot."""
-    return ("mention" in RESPOND_TO and is_mention(msg)) or (
-        "reply_to_bot" in RESPOND_TO and is_reply_to_bot(msg)
-    )
+    return _conversation().addresses_bot(msg)
 
 
 def _trigger_policy_problem(author, gid, here):
@@ -3933,15 +3851,7 @@ def note_refused(msg, cname, reason):
 
 
 def is_reply_to_bot(msg):
-    """True when the message is a Discord reply to one of the bot's own
-    messages. Replying to the bot is addressing the bot, even with no
-    @mention, so it counts as a mention trigger. Uses the embedded
-    referenced_message only (no extra API call); the mention check still
-    catches @mentions."""
-    rm = msg.get("referenced_message")
-    if not rm:
-        return False
-    return _who(rm).get("id") == BOT_ID
+    return _conversation().is_reply_to_bot(msg)
 
 
 def get_reply_context(msg):
@@ -4637,41 +4547,7 @@ def sweep_media():
 
 
 def record_history(state, channel_id, messages):
-    """Keep a rolling window of recent messages per channel/DM so the reply
-    worker can draft with conversational context instead of starting cold.
-    The triggering message itself is recorded here too; enqueue_message
-    excludes it when attaching history to a queue item."""
-    hist = state.setdefault("history", {}).setdefault(channel_id, [])
-    seen_ids = {h["id"] for h in hist}
-    for m in sorted(messages, key=lambda x: int(x["id"])):
-        if m["id"] in seen_ids:
-            continue
-        author = _who(m)
-        text = (m.get("content") or "")[:HISTORY_TEXT_CHARS]
-        if not text and not (m.get("attachments") or m.get("embeds")):
-            continue
-        entry = {
-            "id": m["id"],
-            "author": author.get("username", "?"),
-            "author_id": author.get("id"),
-            "bot": is_bot_author(author),
-            "text": text or "[shared media]",
-            "ts": m.get("timestamp"),
-        }
-        # The name people see (server nickname or global display name),
-        # when it differs from the username: what someone typing "@Name"
-        # by hand is most likely to use.
-        if m.get("webhook_id"):
-            entry["webhook"] = True  # not a person (proactive.py)
-        display = (m.get("member") or {}).get("nick") or author.get("global_name")
-        if display and display != entry["author"]:
-            entry["display"] = display
-        hist.append(entry)
-        seen_ids.add(m["id"])
-    # Sorted: the poll re-reads messages the gateway already recorded,
-    # and an old one re-added must not land after newer ones.
-    hist.sort(key=lambda h: int(h["id"]))
-    state["history"][channel_id] = hist[-HISTORY_PER_CHANNEL:]
+    return _conversation().record_history(state, channel_id, messages)
 
 
 # ---------------------------------------------------------------------------
@@ -4930,71 +4806,15 @@ def note_dm_refused(msg):
 
 
 def bot_run_length(history, msg):
-    """How many consecutive bot-authored messages (any bot, this one
-    included) end at msg in this channel's history, with no human in
-    between. 0 when msg is from a human."""
-    run = 0
-    older = [h for h in history if int(h["id"]) < int(msg["id"])]
-    for h in reversed([*older, {"bot": is_bot_author(msg.get("author"))}]):
-        if not h.get("bot"):
-            break
-        run += 1
-    return run
+    return _conversation().bot_run_length(history, msg)
 
 
 def conversation_participants(history, msg, reply_ctx):
-    """Everyone visible in the conversation, as [{name, display?, id, bot,
-    you?}], so the worker can address them with <@id>: a bare "@Name" in
-    Discord text notifies nobody."""
-    people = {}
-
-    def add(pid, name, bot, display=None):
-        if not pid or pid in people:
-            return
-        p = {"name": name or "?", "id": pid, "bot": bool(bot)}
-        if display:
-            p["display"] = display
-        if pid == BOT_ID:
-            p["you"] = True
-        people[pid] = p
-
-    author = _who(msg)
-    add(
-        author.get("id"),
-        author.get("username"),
-        is_bot_author(author),
-        (msg.get("member") or {}).get("nick") or author.get("global_name"),
-    )
-    for h in reversed(history):
-        add(h.get("author_id"), h.get("author"), h.get("bot"), h.get("display"))
-    if reply_ctx:  # only when not already known from history
-        add(reply_ctx.get("author_id"), reply_ctx.get("author"), reply_ctx.get("is_bot"))
-    add(BOT_ID, BOT_NAME, True)
-    return list(people.values())
+    return _conversation().conversation_participants(history, msg, reply_ctx)
 
 
 def link_mentions(text, channel_id, state):
-    """Safety net for addressing: turn a bare "@Name" for someone in this
-    channel's recent history into a real <@id> mention, so the person or
-    agent the reply addresses actually gets notified. Matches usernames
-    and display names, case-insensitively, longest first."""
-    names = {}
-    for h in state.get("history", {}).get(channel_id, []):
-        pid = h.get("author_id")
-        if not pid or pid == BOT_ID:
-            continue
-        for n in (h.get("author"), h.get("display")):
-            if n and n.lower() not in ("everyone", "here"):
-                names[n.lower()] = pid
-    if not names or "@" not in text:
-        return text
-    pattern = re.compile(
-        r"(?<![\w<])@("
-        + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
-        + r")(?![\w])",
-        re.IGNORECASE,
-    )
-    return pattern.sub(lambda m: f"<@{names[m.group(1).lower()]}>", text)
+    return _conversation().link_mentions(text, channel_id, state)
 
 
 def settings_card(scope, here, channel_id, speaker=None):
@@ -5069,374 +4889,140 @@ def note_item_meta(state, mid, **meta):
     _keep_last(m, 300)
 
 
-@dataclass
-class QueueContext:
-    """Origin and coalesced fragments of one incoming conversation turn."""
-
-    dm: bool = False
-    fragments: list | None = None
-    guild_id: str | None = None
-    follow_up: bool = False
-
-
-@dataclass
-class MessageEnqueuer:
-    msg: dict
-    cname: str
-    state: dict
-    queue: list
-    context: QueueContext
-
+class _MonitorIngestPolicy:
     @property
-    def author_id(self):
-        return (self.msg.get("author") or {}).get("id")
+    def owners(self) -> set[str]:
+        return OWNER_USER_IDS
 
-    @property
-    def author_name(self):
-        return (self.msg.get("author") or {}).get("username")
+    @staticmethod
+    def predates_join(state, msg, gid):
+        return predates_join(state, msg, gid)
 
-    def enqueue(self):
-        turn = self.prepare()
-        if turn is None:
-            return False
-        media = self.load_context(turn)
-        if media is None:
-            return False
-        item = self.build_item(turn, media)
-        return self.record_item(turn, item)
+    @staticmethod
+    def is_bot_author(author):
+        return is_bot_author(author)
 
-    def prepare(self) -> MessageTurn | None:
-        fragments = [f for f in (self.context.fragments or []) if f["id"] != self.msg["id"]]
-        if any(q["message_id"] == self.msg["id"] for q in self.queue):
-            return None
-        author_id = self.msg.get("author", {}).get("id")
-        author_name = self.msg.get("author", {}).get("username")
-        # Every outcome below is recorded for the trigger AND each fragment:
-        # a fragment can be a mention too, and one with no ledger entry would
-        # be requeued alone by the sweep.
-        burst_ids = [self.msg["id"]] + [f["id"] for f in fragments]
+    @staticmethod
+    def own_replies_in_run(history, msg):
+        return own_replies_in_run(history, msg)
 
-        # 0. Hard gates, re-checked here because every path (poll, gateway,
-        #    restart flush, sweep) funnels through this function.
-        if predates_join(self.state, self.msg, self.context.guild_id):
-            ledger_record_many(
-                burst_ids,
-                "skipped",
-                "predates bot join",
-                context=LedgerContext(
-                    channel_id=self.msg.get("channel_id"),
-                    author=author_name,
-                    author_id=author_id,
-                ),
-            )
-            return None
-        chan_hist = self.state.get("history", {}).get(self.msg["channel_id"], [])
-        from_bot = is_bot_author(self.msg.get("author"))
-        bot_turns = bot_run_length(chan_hist, self.msg)
-        scope = scope_for(self.context.guild_id, self.msg["channel_id"], self.context.dm)
-        here = settings().resolve(scope)
-        # who.bot_exchange_limit: the bot's consecutive replies to bots in
-        # this channel since a human spoke.
-        exchange = own_replies_in_run(chan_hist, self.msg) if from_bot else 0
-        limit = here["who.bot_exchange_limit"]
-        if from_bot and limit is not None and exchange >= limit:
-            ledger_record_many(
-                burst_ids,
-                "skipped",
-                f"bot exchange limit ({limit}) reached",
-                context=LedgerContext(
-                    channel_id=self.msg.get("channel_id"),
-                    author=author_name,
-                    author_id=author_id,
-                    detail={"limit": limit},
-                ),
-            )
-            print(
-                f"Not answering bot {author_name} in {self.cname}: the bot "
-                f"exchange limit ({limit}) is reached.",
-                flush=True,
-            )
-            return None
-        suspicious = here["privacy.suspicious"]
+    @staticmethod
+    def scope_for(guild_id=None, channel_id=None, dm=False):
+        return scope_for(guild_id, channel_id, dm)
 
-        # The worker sees the whole burst as one message: fragments joined in
-        # order under the trigger's text.
-        parts = [self.msg.get("content", "")]
-        parts += [f.get("content", "") for f in fragments]
-        content = "\n".join(p for p in parts if p)
+    @staticmethod
+    def settings():
+        return settings()
 
-        # 1. Injection pre-filter -> quarantine (privacy.suspicious:
-        #    hold-for-review) or drop (ignore), no auto-reply (combined text).
-        if suspicious != "answer":
-            matched = is_suspicious(content)
-            if matched:
-                self.hold_suspicious(suspicious, fragments, matched)
-                return None
+    @staticmethod
+    def rate_block(state, user_id, channel_id=None, scope=None):
+        return rate_block(state, user_id, channel_id, scope)
 
-        # 2. Rate limits (also bound token spend), one charge per burst. A
-        #    capped burst is ledgered as skipped (terminal), so flush_pending
-        #    drops it and the author's later messages are judged on their own.
-        capped = rate_block(self.state, author_id, self.msg["channel_id"], scope)
-        if capped:
-            ledger_record_many(
-                burst_ids,
-                "skipped",
-                "daily cap reached",
-                context=LedgerContext(
-                    channel_id=self.msg.get("channel_id"),
-                    author=author_name,
-                    author_id=author_id,
-                    detail=capped,
-                ),
-            )
-            return None
-        rate_record(self.state, author_id, scope)
+    @staticmethod
+    def rate_record(state, user_id, scope=None):
+        return rate_record(state, user_id, scope)
 
-        return MessageTurn(
-            fragments=fragments,
-            burst_ids=burst_ids,
-            chan_hist=chan_hist,
-            from_bot=from_bot,
-            bot_turns=bot_turns,
-            scope=scope,
-            here=here,
-            exchange=exchange,
-            content=content,
-        )
+    @staticmethod
+    def media_permission(state, scope, here, author_matches):
+        return media_permission(state, scope, here, author_matches)
 
-    def load_context(self, turn: MessageTurn) -> MessageMedia | None:
-        # 3. Media and document text, for the worker to see and read.
-        media, documents, unviewable = [], [], []
-        for m in [self.msg, *turn.fragments]:
-            md, dc, uv = collect_media(m)
-            media += md
-            documents += dc
-            unviewable += uv
+    @staticmethod
+    def people_match(value, user_id, roles=lambda: set()):
+        return people_match(value, user_id, roles)
 
-        # 3b. Whose message the trigger replies to, if anyone's.
-        reply_ctx = get_reply_context(self.msg)
+    @staticmethod
+    def member_roles(guild_id, user_id):
+        return member_roles(guild_id, user_id)
 
-        # 3c. The worker reads extracted document text and the replied-to
-        #     message as well as the message itself, so they get the same
-        #     injection pre-filter. The bot's own replied-to message is
-        #     skipped: everyday phrasing in it ("you are now set up") would
-        #     quarantine every reply to it.
-        if turn.here["privacy.suspicious"] != "answer":
-            extra_texts = [(f"document {d.get('name')}", d.get("text") or "") for d in documents]
-            if reply_ctx and not reply_ctx.get("is_bot"):
-                extra_texts.append(("replied-to message", reply_ctx.get("content") or ""))
-            for where, text in extra_texts:
-                matched = is_suspicious(text)
-                if matched:
-                    self.hold_suspicious(
-                        turn.here["privacy.suspicious"], turn.fragments, f"{matched} (in {where})"
-                    )
-                    return None
 
-        return MessageMedia(media, documents, unviewable, reply_ctx)
+class _MonitorIngestConversation:
+    @staticmethod
+    def bot_run_length(history, msg):
+        return bot_run_length(history, msg)
 
-    def build_item(self, turn: MessageTurn, media: MessageMedia):
-        # 4. Recent history, without the burst itself.
-        history = [h for h in turn.chan_hist if h["id"] not in turn.burst_ids][-HISTORY_ATTACHED:]
+    @staticmethod
+    def collect_media(msg):
+        return collect_media(msg)
 
-        # 5. Generation permission (media.*). may_generate
-        #    is permission, not a decision: the worker judges whether
-        #    generation is wanted. Queue time records it, plus the single-use
-        #    approval below (keyed by message id: the worker's outbox item
-        #    does not carry the flag).
-        may_generate = media_permission(self.state, turn.scope, turn.here, self.author_matches)
-        if may_generate:
-            # Bound to the channel too: the file may only go back where the
-            # request came from (an image made in a DM never posts publicly).
-            self.state.setdefault("gen_approved", {})[self.msg["id"]] = {
-                "ts": time.time(),
-                "channel_id": self.msg["channel_id"],
-            }
+    @staticmethod
+    def get_reply_context(msg):
+        return get_reply_context(msg)
 
-        # 6. Owner commands: stamped from the verified author id only; the
-        #    worker decides whether the message asks the bot to do something.
-        owner_command = self.author_id in OWNER_USER_IDS and bool(
-            turn.here["abilities.owner_commands"]
-        )
-        # The worker replies under the LAST fragment, but the ledger and the
-        # sweep track the trigger: remember which trigger each fragment
-        # belongs to so a reply (or a silent pass) settles the whole burst.
-        alias_fragments(self.state, self.msg["id"], turn.fragments)
+    @staticmethod
+    def conversation_participants(history, msg, reply_ctx):
+        return conversation_participants(history, msg, reply_ctx)
 
-        item = {
-            "message_id": self.msg["id"],
-            "channel_id": self.msg["channel_id"],
-            "channel_name": self.cname,
-            "guild_id": self.context.guild_id,
-            "kind": "dm" if self.context.dm else "mention",
-            "author": self.msg["author"].get("username"),
-            "author_id": self.author_id,
-            "content": turn.content,
-            "timestamp": self.msg.get("timestamp"),
-            "media": media.media,
-            "documents": media.documents,
-            "unviewable": media.unviewable,
-            "history": history,
-            "may_generate": may_generate,
-            "owner_command": owner_command,
-            "burst": len(turn.fragments) > 0,
-            "burst_fragments": [
-                {
-                    "message_id": f["id"],
-                    "content": f.get("content", ""),
-                    "timestamp": f.get("timestamp"),
-                }
-                for f in turn.fragments
-            ],
-            "reply_to": media.reply_ctx,
-            # Another agent addressed the bot. bot_turns counts consecutive
-            # bot messages (this one included) since a human last spoke.
-            "from_bot": turn.from_bot,
-            "bot_turns": turn.bot_turns,
-            "participants": conversation_participants(turn.chan_hist, self.msg, media.reply_ctx),
-            # When the monitor queued it: the typing cap and the latency log
-            # measure from here.
-            "queued_at": note_queued(self.state, self.msg["id"]),
-            # Triggered only by the conversational follow-up window.
-            "follow_up": self.context.follow_up
-            and not any(is_mention(m) or is_reply_to_bot(m) for m in [self.msg, *turn.fragments]),
-            "settings": settings_card(
-                turn.scope,
-                turn.here,
-                self.msg["channel_id"],
-                speaker=Speaker(
-                    author_id=self.author_id, from_bot=turn.from_bot, exchange=turn.exchange
-                ),
-            ),
-        }
-        # External-app capabilities are stamped from verified
-        # original owner DMs only. A reply/forward/attachment cannot grant them.
-        item["external_apps"] = {"eligible": False, "level": "off"}
-        if turn.here["abilities.external_apps"] != "off":
-            from muse_discord.external_apps.binding import DMOrigin
-            from muse_discord.external_apps.binding import card as external_app_card
+    @staticmethod
+    def is_mention(msg):
+        return is_mention(msg)
 
-            item["external_apps"] = external_app_card(
-                self.msg,
-                turn.fragments,
-                origin=DMOrigin(
-                    self.context.dm, str(self.author_id) in OWNER_USER_IDS, turn.from_bot
-                ),
-                level=turn.here["abilities.external_apps"],
-            )
-        # Reminders and watches: the author's own list, and whether they may
-        # set one here (abilities.reminders).
-        item["watches"] = watch_card(
-            self.context.guild_id,
-            self.context.dm,
-            turn.here,
-            self.author_matches,
-            speaker=Speaker(author_id=self.author_id, from_bot=turn.from_bot),
-        )
-        return item
+    @staticmethod
+    def is_reply_to_bot(msg):
+        return is_reply_to_bot(msg)
 
-    def record_item(self, turn: MessageTurn, item):
-        self.queue.append(item)
-        burst_note = f" (+{len(turn.fragments)} fragment(s))" if turn.fragments else ""
-        # An owner's own DM: every outbox item that answers it, settles it
-        # or posts in its channel must carry its nonce (owner_dm_gate).
-        # (The wake hook's test too: settings.speaker "owner" in a DM.)
-        owner_dm = bool(self.context.dm and str(self.author_id) in OWNER_USER_IDS)
-        note_item_meta(
-            self.state,
-            self.msg["id"],
-            author_id=self.author_id,
-            channel_id=self.msg["channel_id"],
-            bot=turn.from_bot,
-            dm=self.context.dm,
-            kind=item["kind"],
-            owner_dm=owner_dm,
-            owner_command=item["owner_command"],
-            guild_id=self.context.guild_id,
-            author=self.author_name,
-            # Settings requests: never from a forwarded message;
-            # attachments or a reply to someone else's message
-            # always need the owner's Apply.
-            forwarded=any(is_forwarded(m) for m in [self.msg, *turn.fragments]),
-            has_inputs=bool(item["media"] or item["documents"])
-            or bool(item["reply_to"] and not item["reply_to"].get("is_bot")),
-        )
-        if owner_dm:
-            # The capability for this owner DM (written for the wake hook
-            # before the item reaches the queue file).
-            owner_dm_mint_nonce(
-                self.state,
-                self.msg["id"],
-                self.msg["channel_id"],
-                [f["id"] for f in turn.fragments],
-            )
-        if item["owner_command"]:
-            # bin/discord-api.py's capability for this owner's command.
-            note_owner_item(
-                self.state,
-                self.msg["id"],
-                dm=owner_dm,
-                command=OwnerCommand(
-                    channel_id=self.msg["channel_id"],
-                    content=turn.content,
-                    guild_id=self.context.guild_id,
-                ),
-            )
-        # The capability to answer it at all, for the wake that holds it.
-        reply_nonce_mint(self.state, self.msg["id"])
-        print(
-            f"Queued {item['kind']}{' (follow-up)' if item['follow_up'] else ''}"
-            f" from {self.msg['author'].get('username')} in "
-            f"{self.cname}{burst_note}: {turn.content[:80]}",
-            flush=True,
-        )
-        # (Typing comes from the typing thread, via typing_refresh.)
-        ledger_record_many(
-            turn.burst_ids,
-            "queued",
-            context=LedgerContext(
-                channel_id=self.msg.get("channel_id"),
-                author=self.msg.get("author", {}).get("username"),
-                author_id=self.author_id,
-            ),
-        )
-        return True
+    @staticmethod
+    def settings_card(scope, here, channel_id, speaker=None):
+        return settings_card(scope, here, channel_id, speaker)
 
-    def hold_suspicious(self, policy, fragments, matched):
-        if policy == "ignore":
-            ledger_record_many(
-                [self.msg["id"], *[f["id"] for f in fragments]],
-                "skipped",
-                f"suspicious, ignored: {matched}",
-                context=LedgerContext(
-                    channel_id=self.msg.get("channel_id"),
-                    author=self.author_name,
-                    author_id=self.author_id,
-                ),
-            )
-            print(
-                f"Ignored a suspicious message from {self.author_name} in "
-                f"{self.cname} (privacy.suspicious: ignore).",
-                flush=True,
-            )
-        else:
-            quarantine(self.msg, self.cname, matched, fragments)
+    @staticmethod
+    def watch_card(guild_id, dm, here, matches, speaker=None):
+        return watch_card(guild_id, dm, here, matches, speaker)
 
-    def author_matches(self, who):
-        return people_match(
-            who,
-            self.author_id,
-            lambda: (
-                set((self.msg.get("member") or {}).get("roles") or [])
-                if "roles" in (self.msg.get("member") or {})
-                else member_roles(self.context.guild_id, self.author_id)
-            ),
-        )
+    @staticmethod
+    def is_forwarded(msg):
+        return is_forwarded(msg)
+
+
+class _MonitorIngestJournal:
+    @staticmethod
+    def ledger_record_many(mids, status, reason="", context=None):
+        return ledger_record_many(mids, status, reason, context)
+
+    @staticmethod
+    def is_suspicious(content):
+        return is_suspicious(content)
+
+    @staticmethod
+    def quarantine(msg, channel_name, matched_pattern, fragments=()):
+        return quarantine(msg, channel_name, matched_pattern, fragments)
+
+    @staticmethod
+    def alias_fragments(state, trigger_id, fragments):
+        return alias_fragments(state, trigger_id, fragments)
+
+    @staticmethod
+    def note_queued(state, mid):
+        return note_queued(state, mid)
+
+    @staticmethod
+    def note_item_meta(state, mid, **meta):
+        return note_item_meta(state, mid, **meta)
+
+    @staticmethod
+    def owner_dm_mint_nonce(state, mid, channel_id=None, fragments=()):
+        return owner_dm_mint_nonce(state, mid, channel_id, fragments)
+
+    @staticmethod
+    def note_owner_item(state, mid, dm=False, command=None):
+        return note_owner_item(state, mid, dm, command)
+
+    @staticmethod
+    def reply_nonce_mint(state, mid):
+        return reply_nonce_mint(state, mid)
 
 
 def enqueue_message(msg, cname, state, queue, context=None):
     """Validate and queue one burst, preserving its single capability and ledger identity."""
-    return MessageEnqueuer(msg, cname, state, queue, context or QueueContext()).enqueue()
+    return MessageEnqueuer(
+        msg,
+        cname,
+        state,
+        queue,
+        context or QueueContext(),
+        _MonitorIngestPolicy(),
+        _MonitorIngestConversation(),
+        _MonitorIngestJournal(),
+    ).enqueue()
 
 
 def note_ingested(state, mid):
@@ -5456,14 +5042,6 @@ def note_queued(state, mid):
     queued[mid] = now
     _keep_last(queued, 200)
     return now
-
-
-@dataclass
-class Settlement:
-    status: str
-    reason: str = ""
-    replied: bool = False
-    detail: dict | None = None
 
 
 def _settle(state, item, outcome):
@@ -5629,7 +5207,6 @@ def _log_latency(state, qid, picked, sent):
 # Discord's nonce check (send_nonce) only remembers a nonce for a few
 # minutes, and past that a retry of a send that actually landed would
 # post it twice.
-SEND_RETRY_SECS = 90
 # A poison outbox item: one whose processing raises (a bug) would stay in
 # reply_outbox.processing.json and stop every later pass at the same
 # place, so no reply would ever go out again. outbox_pass counts the
@@ -5637,32 +5214,8 @@ SEND_RETRY_SECS = 90
 OUTBOX_POISON_TRIES = 3
 
 
-def _retry_later(item, retry, exc, **keep):
-    """After a failed send: schedule the next try in item["_retry"]
-    (growing gaps; keep: more fields to carry) and say True, or False
-    once SEND_RETRY_SECS have passed since the first failure. The send
-    may well have landed (a timeout after Discord created the message
-    looks exactly like a failure), so it stops before the nonce window
-    closes rather than risk a duplicate."""
-    now = time.time()
-    first = retry.get("first", now)
-    if now - first >= SEND_RETRY_SECS:
-        return False
-    n = retry.get("n", 0) + 1
-    item["_retry"] = dict(keep, first=first, n=n, next=now + min(30, 2**n))
-    print(f"Send failed (attempt {n}; retrying, same nonce): {exc}", flush=True)
-    return True
-
-
 _OUTBOX_CURRENT: dict[str, str | None] = {"key": None}
 _OUTBOX_POISON = {}
-
-
-def _outbox_key(item):
-    try:
-        return hashlib.sha256(json.dumps(item, sort_keys=True, default=str).encode()).hexdigest()
-    except Exception:
-        return None
 
 
 def outbox_pass(state):
@@ -6059,316 +5612,112 @@ class OutboxBatch:
         owner_dm_write_nonces(self.state)
 
 
-class OutboxDelivery:
-    """Keep one reply's authorization, actions and delivery metadata together.
+class _MonitorReplyPolicy:
+    @staticmethod
+    def _outbox_problem(item):
+        return _outbox_problem(item)
 
-    The phase order is security-sensitive: bind the requester before dedup,
-    memory, schedule actions, holds or sends can settle the queue item.
-    """
+    @staticmethod
+    def _refuse(rejects, item, why, note=""):
+        return _refuse(rejects, item, why, note)
 
-    def __init__(self, batch, item):
-        self.batch = batch
-        self.item = item
+    @staticmethod
+    def bind_started(state, item, settled, remaining, rejects):
+        return bind_started(state, item, settled, remaining, rejects)
 
-    def process(self):
-        auth = self.authorize()
-        if auth is None:
-            return
-        actions = self.actions(auth)
-        if actions is None:
-            return
-        payload = self.prepare(auth, actions)
-        if payload is None:
-            return
-        try:
-            self.send_payload(auth, payload)
-            self.record_success(auth, actions, payload)
-        except Exception as exc:
-            self.record_failure(payload, exc)
+    @staticmethod
+    def owner_dm_gate(state, item, index=None):
+        return owner_dm_gate(state, item, index)
 
-    def authorize(self) -> AuthorizedReply | None:
-        _OUTBOX_CURRENT["key"] = _outbox_key(self.item)  # see outbox_pass
-        problem = _outbox_problem(self.item)
-        if problem:
-            _refuse(self.batch.rejects, self.item, problem)
-            return None
-        # Items the monitor started (reminder and watch fires, heartbeat
-        # slots): bound to their own record before anything else looks
-        # at them, whatever the item says (bind_started).
-        fire, handled = bind_started(
-            self.batch.state,
-            self.item,
-            self.batch.settled,
-            self.batch.remaining,
-            self.batch.rejects,
-        )
-        if handled:
-            return None
-        # Owner DMs first, before dedup, holds or anything that settles:
-        # only the owner-DM-only wake holding the DM's nonce may touch it.
-        refused = owner_dm_gate(self.batch.state, self.item, self.batch.index)
-        if refused:
-            _refuse(self.batch.rejects, self.item, refused, "; the owner DM stays open")
-            return None
-        # Then: it answers an open queue item it was handed (its
-        # reply_nonce), in that item's channel; a fire's answer too.
-        stray = own_channel_problem(self.batch.state, self.item, self.batch.index)
-        if not bound_elsewhere(self.batch.state, self.item):
-            note_reply_nonce(self.batch.state, stray)
-        if stray:
-            _refuse(self.batch.rejects, self.item, stray)
-            return None
-        reply_to = self.item.get("reply_to")
-        qid = _answered_id(self.batch.state, self.item)
-        typing_keys = ["item:" + qid] if qid else []
-        # Dedup: never touch the same message twice (overlapping workers)
-        if (reply_to and reply_to in self.batch.state["replied_to"]) or (
-            self.item.get("item") and self.item["item"] in self.batch.state["replied_to"]
-        ):
-            print(
-                f"Skipping duplicate reply to message {reply_to or self.item.get('item')}",
-                flush=True,
-            )
-            _settle(
-                self.batch.state,
-                self.item,
-                outcome=Settlement(status="replied", reason="duplicate suppressed"),
-            )
-            self.batch.settled.append(self.item)
-            return None
-        return AuthorizedReply(fire, reply_to, qid, typing_keys)
+    @staticmethod
+    def own_channel_problem(state, item, index):
+        return own_channel_problem(state, item, index)
 
-    def actions(self, auth: AuthorizedReply) -> ReplyActions | None:
-        # "Stop messaging me": recorded for the author of the message
-        # this item answers (proactive.py); the reply goes out as usual.
-        try:
-            bad = PRO.opt_action(self.batch.state, self.item, self.batch.index)
-        except Exception as e:  # not recorded: the item stays open
-            bad = f"proactive: could not record it ({e})"
-        if bad:
-            _refuse(self.batch.rejects, self.item, bad)
-            return None
-        bad, memory_of = remember_check(self.batch.state, self.item, auth.qid, self.batch.index)
-        if bad:
-            _refuse(self.batch.rejects, self.item, bad)
-            return None
-        sched = None  # a refused schedule action: (line, reason, detail)
-        if "schedule" in self.item:
-            got = watch_schedule(self.batch.state, self.item, self.batch.index)
-            if got and got[0] == "reject":
-                _refuse(self.batch.rejects, self.item, got[1])
-                return None
-            sched = got[1:] if got else None
-        return ReplyActions(memory_of, sched)
+    @staticmethod
+    def bound_elsewhere(state, item):
+        return bound_elsewhere(state, item)
 
-    def prepare(self, auth: AuthorizedReply, actions: ReplyActions) -> PreparedReply | None:
-        # Clamped to Discord's per-message limit AFTER every rewrite: the
-        # @everyone neutralization and link_mentions both lengthen text
-        # normalize_parts already trimmed, and a part over the limit
-        # would fail (400) on every retry.
-        parts = [
-            link_mentions(p, self.item.get("channel_id"), self.batch.state)[:DISCORD_MAX_CHARS]
-            for p in normalize_parts(self.item)
-        ]
-        # Worker-drafted emoji reactions: applied to the reply_to
-        # message. A react-only item may carry no text.
-        reactions = [
-            e for e in (self.item.get("reactions") or []) if isinstance(e, str) and e.strip()
-        ][:5]
-        if actions.sched:
-            # Nothing was scheduled: the monitor says so itself, in place
-            # of the worker's confirmation.
-            parts, reactions = [actions.sched[0]], []
-        if self.item.get("silent"):
-            # The worker decided no reply is warranted (a conversation
-            # that has run its course). Recording it keeps the sweep
-            # from waking the worker again for the same message.
-            _settle(
-                self.batch.state,
-                self.item,
-                outcome=Settlement(
-                    status="skipped", reason="no reply (worker's call)", replied=True
-                ),
-            )
-            if not actions.sched:
-                save_facts(self.batch.state, self.item, actions.memory_of)
-            typing_clear(auth.typing_keys)
-            self.batch.settled.append(self.item)
-            return None
-        if not _is_snowflake(self.item.get("channel_id")) or (
-            auth.reply_to and not _is_snowflake(auth.reply_to)
-        ):
-            print(
-                f"Dropping outbox item with a malformed channel_id or "
-                f"reply_to: {self.item.get('channel_id')!r} "
-                f"{auth.reply_to!r}",
-                flush=True,
-            )
-            return None
-        retry = self.item.get("_retry") or {}
-        if not self.retry_ready(retry):
-            return None
-        if never_share_hit(self.batch.state, self.item, auth.qid, parts):
-            hold_reply(self.batch.state, self.item, auth.qid, parts)
-            typing_clear(auth.typing_keys)
-            self.batch.settled.append(self.item)
-            return None
-        gen_id, approval, attachments, gen_files = _reply_attachments(
-            self.batch.state, self.item, retry
-        )
-        # The reply is about to land, which ends the indicator: stop
-        # typing for this item now, or a ping right after the send would
-        # show typing again for ~10s.
-        typing_clear(auth.typing_keys)
-        return PreparedReply(
-            auth.reply_to, parts, reactions, retry, gen_id, approval, attachments, gen_files
-        )
+    @staticmethod
+    def note_reply_nonce(state, refusal):
+        return note_reply_nonce(state, refusal)
 
-    def retry_ready(self, retry):
-        now = time.time()
-        first = retry.get("first")
-        if first is not None and now - first >= SEND_RETRY_SECS:
-            self.give_up(TimeoutError("send retry window expired"))
-            return False
-        if retry.get("next", 0) > now:
-            self.batch.remaining.append(self.item)
-            return False
-        return True
+    @staticmethod
+    def _answered_id(state, item):
+        return _answered_id(state, item)
 
-    def send_payload(self, auth: AuthorizedReply, payload: PreparedReply):
-        if auth.fire is not None:
-            # Under the requester's message (or @mentioning them),
-            # pinging them and nobody else.
-            payload.reply_to, payload.parts, payload.mentions = watch_fire_send(
-                self.batch.state, auth.fire, payload.parts
-            )
-        if payload.parts:
-            # standalone: post as a plain message, not a Discord
-            # reply, so it notifies nobody and does not count as
-            # addressing the other side (a closing remark that
-            # doesn't ask for an answer).
-            # A fire's nonce is keyed on the fire: two fires answered
-            # alike under one request are two messages, not a retry.
-            send_fragmented(
-                self.item["channel_id"],
-                payload.parts,
-                None if self.item.get("standalone") else payload.reply_to,
-                payload.attachments,
-                delivery=DeliveryOptions(
-                    mentions=payload.mentions,
-                    nonce=f"fire:{auth.fire['id']}" if auth.fire else None,
-                ),
-            )
-            print(
-                f"Sent reply to {self.item.get('author')} in {self.item.get('channel_name')} "
-                f"({len(payload.parts)} part(s)): {payload.parts[0][:60]}",
-                flush=True,
-            )
-        for emoji in payload.reactions:
-            if payload.reply_to and add_reaction(self.item["channel_id"], payload.reply_to, emoji):
-                print(
-                    f"Added reaction {emoji} for {self.item.get('author')} "
-                    f"in #{self.item.get('channel_name')}",
-                    flush=True,
-                )
+    @staticmethod
+    def never_share_hit(state, item, qid, parts):
+        return never_share_hit(state, item, qid, parts)
 
-    def record_success(self, auth: AuthorizedReply, actions: ReplyActions, payload: PreparedReply):
-        if payload.approval:
-            self.batch.state.get("gen_approved", {}).pop(payload.gen_id, None)
-        if payload.parts and payload.gen_files:
-            # A generation really ran and its file went out: count
-            # it for media.per_day here, at send time, never at
-            # queue time.
-            self.batch.state.setdefault("gen_sent", []).extend(rp for _, rp in payload.gen_files)
-            sent_scope = scope_of_channel(self.item["channel_id"])
-            note_media_sent(self.batch.state, sent_scope)
-        if actions.sched and actions.sched[1]:
-            # A reminder or watch refused for a cap or a setting:
-            # ledgered like other refusals (Why no reply?).
-            _settle(
-                self.batch.state,
-                self.item,
-                outcome=Settlement(
-                    status="skipped",
-                    reason=actions.sched[1] or "",
-                    replied=True,
-                    detail=actions.sched[2],
-                ),
-            )
-        else:
-            _settle(self.batch.state, self.item, outcome=Settlement(status="replied", replied=True))
-            if not actions.sched:
-                save_facts(self.batch.state, self.item, actions.memory_of)
-        meta = self.batch.state.get("item_meta", {}).get(auth.qid) if auth.qid else None
-        if (
-            payload.parts
-            and meta
-            and not meta.get("bot")
-            and not meta.get("dm")
-            and meta.get("channel_id") == self.item["channel_id"]
-        ):
-            # A reply to a human actually went out: (re)open their
-            # conversational follow-up window here.
-            open_follow_up(self.batch.state, self.item["channel_id"], meta.get("author_id"))
-        self.batch.settled.append(self.item)
-        typing_clear([], sent_in=self.item["channel_id"] if payload.parts else None)
-        if auth.qid:
-            _log_latency(
-                self.batch.state,
-                auth.qid,
-                payload.retry.get("picked", self.batch.picked),
-                time.time(),
-            )
+    @staticmethod
+    def hold_reply(state, item, qid, parts):
+        return hold_reply(state, item, qid, parts)
 
-    def record_failure(self, payload: PreparedReply, e):
-        code = getattr(e, "code", None)
-        if isinstance(e, SecretBlocked):
-            # It carried a secret (guard_outgoing logged it and told
-            # the owners): never sent, never retried.
-            _settle(
-                self.batch.state, self.item, outcome=Settlement(status="skipped", reason=str(e))
-            )
-            self.batch.settled.append(self.item)
-            return
-        if code == HTTPStatus.FORBIDDEN:
-            # Permanent permission failure (the bot cannot post in
-            # that channel): drop it, don't retry forever.
-            print(
-                f"Dropping outbox item for #{self.item.get('channel_name')}: "
-                f"403 Missing Access ({e})",
-                flush=True,
-            )
-            _settle(
-                self.batch.state,
-                self.item,
-                outcome=Settlement(status="skipped", reason="403 missing access"),
-            )
-            self.batch.settled.append(self.item)
-            return
-        if _retry_later(
-            self.item,
-            payload.retry,
-            e,
-            attachments=payload.gen_files,
-            picked=payload.retry.get("picked", self.batch.picked),
-        ):
-            self.batch.remaining.append(self.item)
-            return
-        self.give_up(e)
+    @staticmethod
+    def _reply_attachments(state, item, retry):
+        return _reply_attachments(state, item, retry)
 
-    def give_up(self, e):
-        print(
-            f"Giving up on reply to {self.item.get('author')} in "
-            f"{self.item.get('channel_name')} after "
-            f"{SEND_RETRY_SECS}s of send errors: {e}",
-            flush=True,
-        )
-        _settle(
-            self.batch.state,
-            self.item,
-            outcome=Settlement(status="skipped", reason=f"send failed: {e}"[:200]),
-        )
-        self.batch.settled.append(self.item)
+
+class _MonitorReplyEffects:
+    @staticmethod
+    def _settle(state, item, outcome):
+        return _settle(state, item, outcome)
+
+    @staticmethod
+    def remember_check(state, item, qid, index):
+        return remember_check(state, item, qid, index)
+
+    @staticmethod
+    def watch_schedule(state, item, index):
+        return watch_schedule(state, item, index)
+
+    @staticmethod
+    def link_mentions(text, channel_id, state):
+        return link_mentions(text, channel_id, state)
+
+    @staticmethod
+    def normalize_parts(item):
+        return normalize_parts(item)
+
+    @staticmethod
+    def typing_clear(keys, sent_in=None):
+        return typing_clear(keys, sent_in)
+
+    @staticmethod
+    def watch_fire_send(state, fire, parts):
+        return watch_fire_send(state, fire, parts)
+
+    @staticmethod
+    def send_fragmented(channel_id, parts, reply_to=None, attachments=(), delivery=None):
+        return send_fragmented(channel_id, parts, reply_to, attachments, delivery)
+
+    @staticmethod
+    def add_reaction(channel_id, message_id, emoji):
+        return add_reaction(channel_id, message_id, emoji)
+
+    @staticmethod
+    def note_media_sent(state, scope):
+        return note_media_sent(state, scope)
+
+    @staticmethod
+    def scope_of_channel(channel_id):
+        return scope_of_channel(channel_id)
+
+    @staticmethod
+    def save_facts(state, item, t):
+        return save_facts(state, item, t)
+
+    @staticmethod
+    def open_follow_up(state, channel_id, user_id):
+        return open_follow_up(state, channel_id, user_id)
+
+    @staticmethod
+    def _log_latency(state, qid, picked, sent):
+        return _log_latency(state, qid, picked, sent)
+
+    @staticmethod
+    def opt_action(state, item, index):
+        return PRO.opt_action(state, item, index)
 
 
 def _restore_outbox_retries(state, items):
@@ -6410,7 +5759,9 @@ def process_outbox(state):
     batch = OutboxBatch(state, picked)
     originals = [(item, _outbox_key(item)) for item in outbox]
     for item, _key in originals:
-        OutboxDelivery(batch, item).process()
+        OutboxDelivery(
+            batch, item, _MonitorReplyPolicy(), _MonitorReplyEffects(), _OUTBOX_CURRENT
+        ).process()
     try:
         batch.finish()
     except SharedLockTimeout:
