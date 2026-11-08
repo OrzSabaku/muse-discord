@@ -62,7 +62,12 @@
 | Discordの設定画面 | `src/muse_discord/settings_ui.py` |
 | 返信データの共通検証 | `src/muse_discord/reply_protocol.py` |
 | プロセス監視 | `bin/watchdog.sh` |
-| 通知の定義・保存 | `src/muse_discord/muse_watches.py` |
+| 通知の公開API | `src/muse_discord/muse_watches.py` |
+| 通知依頼とWeb確認結果の形式検証 | `src/muse_discord/watches/schema.py` |
+| 通知依頼の認可・追加・取り消し | `src/muse_discord/watches/actions.py` |
+| 通知の保存・期限・処理済み記録 | `src/muse_discord/watches/store.py` |
+| 通知の文字列照合・公開範囲に応じた表示 | `src/muse_discord/watches/matching.py`・`presentation.py` |
+| Web確認の発行・予算・nonce照合 | `src/muse_discord/watches/web_checks.py` |
 | 自発発言のスロット発行・照合・送信 | `src/muse_discord/proactive/runtime.py` |
 | 自発発言の対象・時間帯・上限の判定 | `src/muse_discord/proactive/targets.py` |
 | サーバーとDMごとの実行時刻・対象の交替 | `src/muse_discord/proactive/heartbeat.py` |
@@ -208,3 +213,5 @@ node --test telemetry/worker/test/worker.test.js
 チャンネル・サーバーと探索メタデータは `DirectoryState` が保持する。`DirectoryRefresh` は探索中に追加されたチャンネルを残し、完了後に同じ辞書へ最新情報を反映する。IDの集合が変わらなくても名前や権限を更新し、既存サービスの参照を古い辞書へ取り残さない。
 
 ワーカーへ渡す参照メッセージと設定カードは `WorkerContext` が作る。受信パイプラインは会話・媒体・通知と、台帳・隔離・依頼記録・権限発行の担当サービスを直接使う。モニターの中継クラスや同じ操作を列挙する専用インターフェースを重ねない。通知のキュー登録も依頼記録と権限発行を直接使い、受信パイプラインへ依存させない。
+
+通知のデータ操作は `watches` 内で形式検証・認可・保存・照合・表示・Web確認に分け、Discord I/Oを持つ実行サービスから利用する。`muse_watches` は状態や中継関数を持たない公開窓口とする。保存は共通のatomic writerを600権限で使い、CLIとモニターの更新は同じ `watches.lock` で直列化する。

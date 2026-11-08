@@ -26,6 +26,8 @@ import test_watches as tw
 from common import HOOK_RUNTIME, MUT_DIR, scratch
 from settings_harness import OWNER, U1, U2
 
+from muse_discord.watches.web_checks import _utc_day
+
 W_ = None  # muse_watches, from the monitor under test
 
 
@@ -212,7 +214,7 @@ class Web(tw.Base):
         self.assertEqual([e["id"] for e in self.due()], [i for i in self.items()])
         # The day's total still paces the owners' checks.
         with self.mod.watch_store().edit() as d:
-            d["web"] = {"day": W_._utc_day(tw.time.time()), "total": W_.WEB_TOTAL_PER_DAY}
+            d["web"] = {"day": _utc_day(tw.time.time()), "total": W_.WEB_TOTAL_PER_DAY}
             for r in d["items"].values():
                 r["check"] = None
                 r["next_check"] = 0
