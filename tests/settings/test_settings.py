@@ -740,7 +740,7 @@ class NeverShare(MonitorBase):
         resp, recs = self.click(hid, "send")
         self.assertEqual(resp["type"], 7)
         with quiet():
-            m.apply_record(self.st, recs[0])
+            m._gateway_ingress(self.st, m._DIRECTORY.channels).metadata({"_record": recs[0]})
             m._OUTBOX.process(self.st)
         posted = m.api.channel_posts(CH)
         self.assertEqual(len(posted), 1)
@@ -755,7 +755,7 @@ class NeverShare(MonitorBase):
         hid = next(iter(holds))
         _resp, recs = self.click(hid, "discard")
         with quiet():
-            m.apply_record(self.st, recs[0])
+            m._gateway_ingress(self.st, m._DIRECTORY.channels).metadata({"_record": recs[0]})
         self.assertEqual(self.st["holds"], {})
         _item, _out, holds = self.hold("the cat is out")
         hid = next(iter(holds))

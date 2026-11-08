@@ -1,7 +1,7 @@
 """Drain realtime events through the same receiver used by REST gap repair."""
 
 import queue
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from muse_discord.channel_access import ChannelAccess
@@ -11,10 +11,18 @@ from muse_discord.receiving.messages import CONVERSATION_TYPES, ReceivedMessages
 
 @dataclass
 class GatewayEvents:
-    guild: Callable[[dict, dict], None]
+    guild: Callable[[dict, dict], bool]
     permissions: Callable[[dict], None]
     activity: Callable[..., None]
-    record: Callable[[dict, dict], None]
+    record_handlers: Mapping[str, Callable[[dict, dict], None]]
+    refresh: Callable[[], None]
+
+    def record(self, state, rec):
+        """Apply an interaction change only when the main loop drains its record."""
+        kind = rec.get("kind")
+        handler = self.record_handlers.get(kind) if isinstance(kind, str) else None
+        if handler is not None:
+            handler(state, rec)
 
 
 @dataclass
@@ -31,7 +39,8 @@ class GatewayIngress:
 
     def metadata(self, m):
         if "_guild_event" in m:
-            self.events.guild(self.state, m["_guild_event"])
+            if self.events.guild(self.state, m["_guild_event"]):
+                self.events.refresh()
             return True
         if "_perm_event" in m:
             self.events.permissions(m["_perm_event"])

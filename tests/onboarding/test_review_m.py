@@ -36,7 +36,9 @@ class FirstRun(unittest.TestCase):
             st = mod.load_state()  # no state.json
             mod._GUILD_LIFECYCLE.sync(st, {}, {})  # boot discovery failed
             for gid in (G1, G2):  # READY's GUILD_CREATEs
-                mod.on_guild_event(st, {"op": "create", "id": gid})
+                mod._gateway_ingress(st, mod._DIRECTORY.channels).metadata(
+                    {"_guild_event": {"op": "create", "id": gid}}
+                )
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
         self.assertIsNone(mod._admission().trigger_verdict(stranger, G2)[0])
 

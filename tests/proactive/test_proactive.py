@@ -256,7 +256,9 @@ class Base(unittest.TestCase):
         with quiet() as buf:
             r = self.m._INTERACTIONS.dispatch(ix, recs.append)
             for rec in recs:
-                self.m.apply_record(self.st, rec)
+                self.m._gateway_ingress(self.st, self.m._DIRECTORY.channels).metadata(
+                    {"_record": rec}
+                )
         self.out += buf.getvalue()
         return r
 

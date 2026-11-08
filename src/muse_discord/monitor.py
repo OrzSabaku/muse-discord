@@ -456,11 +456,6 @@ _JOIN_NOTICES: JoinNotices
 _GUILD_LIFECYCLE: GuildLifecycle
 
 
-def on_guild_event(state, ev):
-    if _GUILD_LIFECYCLE.on_event(state, ev):
-        _DISCOVERY_REFRESH.request()
-
-
 UPDATE_CHECK_FILE = os.path.join(BASE_DIR, "update_check.json")
 UPDATE_REQUEST_FILE = os.path.join(BASE_DIR, "update_request.json")
 
@@ -479,16 +474,6 @@ def telemetry_notice():
     text = TM.take_notice(settings)
     if text:
         _OWNER_MESSAGES.notify(text)
-
-
-def apply_record(state, rec):
-    kind = rec.get("kind")
-    if kind == "update_choice":
-        _UPDATE_NOTICES.apply_choice(state, rec)
-    elif kind == "hold_choice":
-        _REVIEW.apply_choice(state, rec)
-    elif kind == "proactive_yes":
-        PRO.consent.apply_button(rec)
 
 
 _INTERACTIONS: InteractionRouter
@@ -650,7 +635,17 @@ def _gateway_ingress(state, channels):
         _receiver(state),
         channels,
         _ACCESS,
-        GatewayEvents(on_guild_event, _ACCESS.permission_event, note_activity, apply_record),
+        GatewayEvents(
+            guild=_GUILD_LIFECYCLE.on_event,
+            permissions=_ACCESS.permission_event,
+            activity=note_activity,
+            record_handlers={
+                "update_choice": _UPDATE_NOTICES.apply_choice,
+                "hold_choice": _REVIEW.apply_choice,
+                "proactive_yes": lambda _state, rec: PRO.consent.apply_button(rec),
+            },
+            refresh=_DISCOVERY_REFRESH.request,
+        ),
         GUILD_ALLOWLIST,
     )
 

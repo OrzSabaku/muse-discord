@@ -81,7 +81,7 @@ def environment(get):
         receiver,
         directory.channels,
         ChannelAccess(directory.channels, get, lambda: False),
-        GatewayEvents(*[Mock() for _ in range(4)]),
+        GatewayEvents(Mock(return_value=False), Mock(), Mock(), {}, Mock()),
         set(),
     )
     return receiver, gateway

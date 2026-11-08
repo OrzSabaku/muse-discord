@@ -410,7 +410,9 @@ class OwnerlessServer(unittest.TestCase):
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
         # Quiet from the gateway's join event on, before discovery.
         with quiet():
-            mod.on_guild_event(st, {"op": "create", "id": G2})
+            mod._gateway_ingress(st, mod._DIRECTORY.channels).metadata(
+                {"_guild_event": {"op": "create", "id": G2}}
+            )
         self.assertIsNone(mod._admission().trigger_verdict(stranger, G2)[0])
         with quiet():
             mod._GUILD_LIFECYCLE.sync(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)

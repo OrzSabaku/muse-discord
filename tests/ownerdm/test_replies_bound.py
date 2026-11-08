@@ -134,8 +134,8 @@ class StillWorks(_B):
         self.outbox(self.forged(CH, _hold="0" * 12))
         self.assert_refused_here(CH)
         with quiet():
-            self.mod.apply_record(
-                self.st, {"kind": "hold_choice", "hold": hid, "action": "send", "by": OWNER}
+            self.mod._gateway_ingress(self.st, self.mod._DIRECTORY.channels).metadata(
+                {"_record": {"kind": "hold_choice", "hold": hid, "action": "send", "by": OWNER}}
             )
         # The release is bound to the hold's own item and channel: the
         # same hold id on another channel's copy is refused.
