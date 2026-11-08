@@ -413,7 +413,7 @@ class NewThreads(Base):
 class SystemNotices(Base):
     def test_pin_in_open_follow_up_window_is_ignored(self):
         m = self.m
-        m.open_follow_up(self.st, CH, U1)
+        m._conversation().open_follow_up(self.st, CH, U1)
         pin = gmsg(U1, "", age=0)
         pin["type"] = 6  # CHANNEL_PINNED_MESSAGE
         started = gmsg(U1, "side chat", age=0)

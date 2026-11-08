@@ -12,14 +12,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "_li
 import common  # noqa: F401 (select the source tree under test)
 
 from muse_discord.conversation import Conversation
+from muse_discord.generated_replies import GeneratedReplies
 from muse_discord.ingest import IngestConversation, IngestJournal, IngestPolicy, MessageEnqueuer
 from muse_discord.message_models import QueueContext, SecretBlocked
 from muse_discord.message_queue import QueueFiles
 from muse_discord.muse_settings import Scope, Settings
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
-from muse_discord.reply_delivery import SEND_RETRY_SECS, OutboxDelivery, ReplyEffects, ReplyPolicy
+from muse_discord.owner.authorization import OwnerAuthorization
+from muse_discord.owner.review import ReplyReview
+from muse_discord.reply_binding import ReplyBinding, StalePrompt
+from muse_discord.reply_delivery import SEND_RETRY_SECS, OutboxDelivery, ReplyEffects
+from muse_discord.reply_policy import ReplyPolicy
 from muse_discord.response_policy import ResponsePolicy
 from muse_discord.storage import atomic_write, read_json
+from muse_discord.watches.delivery import WatchDelivery
 
 
 class Ingress(unittest.TestCase):
@@ -104,44 +110,106 @@ class Delivery(unittest.TestCase):
             rejects=[],
             settled=[],
         )
-        self.policy = Mock(spec=ReplyPolicy)
-        self.policy._outbox_problem.return_value = None
-        self.policy.bind_started.return_value = (None, False)
-        self.policy.owner_dm_gate.return_value = None
-        self.policy.own_channel_problem.return_value = None
-        self.policy.bound_elsewhere.return_value = False
-        self.policy._answered_id.return_value = "100"
-        self.policy.never_share_hit.return_value = False
-        self.policy._reply_attachments.return_value = (None, None, [], [])
-        self.effects = Mock(spec=ReplyEffects)
+        binding = Mock(spec=ReplyBinding)
+        binding.stale_prompt = Mock(spec=StalePrompt)
+        self.policy = ReplyPolicy(
+            binding=binding,
+            owners=Mock(spec=OwnerAuthorization),
+            review=Mock(spec=ReplyReview),
+            generated=Mock(spec=GeneratedReplies),
+            watches=Mock(spec=WatchDelivery),
+            proactive_outbox=Mock(return_value=None),
+            queue=Mock(spec=QueueFiles),
+            rejected_path="rejected.json",
+            max_reply_chars=2000,
+        )
+        self.policy.watches.bind.return_value = None
+        self.policy.owners.gate.return_value = None
+        self.policy.binding.problem.return_value = None
+        self.policy.binding.bound_elsewhere.return_value = False
+        self.policy.review.hit.return_value = False
+        self.policy.generated.attachments.return_value = (None, None, [], [])
+        self.effects = Mock(
+            spec=ReplyEffects(
+                state=Mock(),
+                memory=Mock(),
+                schedules=Mock(),
+                watches=Mock(),
+                conversation=Mock(),
+                typing=Mock(),
+                parts=Mock(),
+                sender=Mock(),
+                response=Mock(),
+                directory=Mock(),
+                opt_action=Mock(),
+                max_reply_chars=2000,
+            )
+        )
+        self.effects.max_reply_chars = 2000
         self.effects.opt_action.return_value = None
-        self.effects.remember_check.return_value = (None, None)
-        self.effects.normalize_parts.return_value = ["hello"]
-        self.effects.link_mentions.side_effect = lambda text, *_: text
+        self.effects.memory.check.return_value = (None, None)
+        self.effects.conversation.link_mentions.side_effect = lambda text, *_: text
         self.pipeline = OutboxDelivery(self.batch, self.item, self.policy, self.effects, {})
 
     def test_owner_dm_refusal_precedes_actions_and_settlement(self):
-        self.policy.owner_dm_gate.return_value = "wrong owner nonce"
+        self.policy.owners.gate.return_value = "wrong owner nonce"
         self.pipeline.process()
-        self.policy._refuse.assert_called_once()
+        self.assertEqual(self.batch.rejects, [(self.item, "wrong owner nonce")])
         self.assertEqual(self.effects.mock_calls, [])
         self.assertEqual(self.batch.settled, [])
 
     def test_expired_retry_never_calls_transport(self):
         self.item["_retry"] = {"first": time.time() - SEND_RETRY_SECS - 1}
         self.pipeline.process()
-        self.effects.send_fragmented.assert_not_called()
-        self.effects._settle.assert_called_once()
+        self.effects.parts.send.assert_not_called()
+        self.effects.state.settle.assert_called_once()
         self.assertEqual(self.batch.settled, [self.item])
 
     def test_blocked_secret_settles_without_retry_or_memory_write(self):
-        self.effects.send_fragmented.side_effect = SecretBlocked("secret")
+        self.effects.parts.send.side_effect = SecretBlocked("secret")
         self.pipeline.process()
-        outcome = self.effects._settle.call_args.kwargs["outcome"]
+        outcome = self.effects.state.settle.call_args.kwargs["outcome"]
         self.assertEqual(outcome.status, "skipped")
         self.assertEqual(self.batch.remaining, [])
         self.assertEqual(self.batch.settled, [self.item])
-        self.effects.save_facts.assert_not_called()
+        self.effects.memory.save.assert_not_called()
+
+    def test_failed_proactive_check_cannot_fall_through_to_ordinary_reply(self):
+        self.policy.proactive_outbox.side_effect = OSError("slot unavailable")
+        self.policy.queue.load.return_value = [{"message_id": "100", "kind": "proactive"}]
+        self.item["owner_dm_nonce"] = "private-slot-token"
+        self.pipeline.process()
+        self.policy.owners.gate.assert_not_called()
+        self.assertEqual(self.effects.mock_calls, [])
+        rejected, reason = self.batch.rejects[0]
+        self.assertNotIn("private-slot-token", str(rejected))
+        self.assertIn("slot could not be checked", reason)
+        self.assertEqual(self.batch.settled, [])
+
+    def test_failed_slot_and_queue_lookup_refuses_even_an_ordinary_shaped_reply(self):
+        self.policy.proactive_outbox.side_effect = OSError("slot unavailable")
+        self.policy.queue.load.side_effect = OSError("queue unavailable")
+        self.pipeline.process()
+        self.policy.owners.gate.assert_not_called()
+        self.assertEqual(self.effects.mock_calls, [])
+        self.assertIn("slot could not be checked", self.batch.rejects[0][1])
+
+    def test_failed_slot_lookup_allows_a_verified_non_slot_to_continue_binding(self):
+        self.policy.proactive_outbox.side_effect = OSError("slot unavailable")
+        self.policy.queue.load.return_value = [{"message_id": "100", "kind": "mention"}]
+        self.policy.owners.gate.return_value = "wrong owner nonce"
+        self.pipeline.process()
+        self.policy.owners.gate.assert_called_once()
+        self.assertEqual(self.batch.rejects, [(self.item, "wrong owner nonce")])
+        self.assertEqual(self.effects.mock_calls, [])
+
+    def test_already_settled_watch_fire_never_reaches_other_authorization_or_actions(self):
+        self.policy.watches.bind.return_value = {"gone": "100"}
+        self.pipeline.process()
+        self.policy.proactive_outbox.assert_not_called()
+        self.policy.owners.gate.assert_not_called()
+        self.assertEqual(self.effects.mock_calls, [])
+        self.assertEqual(self.batch.settled, [{"item": "100"}])
 
 
 class LivePolicy(unittest.TestCase):

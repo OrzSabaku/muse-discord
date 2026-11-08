@@ -21,6 +21,7 @@ import sys
 import time
 import unittest
 from unittest import mock
+from urllib.parse import unquote
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
@@ -65,7 +66,12 @@ class Base(unittest.TestCase):
             m._DIRECT_MESSAGES.names[cid] = "dm"
             m._DIRECT_MESSAGES.users[cid] = uid
         self.reactions = []
-        m.add_reaction = lambda cid, mid, e: self.reactions.append((cid, mid, e)) or True
+
+        def put_reaction(path):
+            _, _, cid, _, mid, _, emoji, _ = path.split("/")
+            self.reactions.append((cid, mid, unquote(emoji)))
+
+        m._DISCORD.put = put_reaction
         self.st = state(m)
         self.out = ""
 

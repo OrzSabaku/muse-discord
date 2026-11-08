@@ -22,6 +22,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "_lib")
@@ -45,6 +46,7 @@ from settings_harness import (
     state,
 )
 
+from muse_discord import reply_policy
 from muse_discord.outbox_store import OUTBOX_POISON_TRIES
 
 DM = "400000000000000077"  # OWNER's DM channel
@@ -382,19 +384,19 @@ class Robustness(Base):
     def test_a_poison_item_is_set_aside_after_a_few_passes(self):
         m = self.mod
         good, _ = self.ask(U2)
-        real = m.normalize_parts
+        real = reply_policy.normalize_parts
 
-        def boom(item):
+        def boom(item, max_chars):
             if item.get("text") == "poison":
                 raise ValueError("a bug")
-            return real(item)
+            return real(item, max_chars)
 
-        m.normalize_parts = boom
         with open(m.OUTBOX_FILE, "w") as f:
             json.dump([{"item": good["id"], "channel_id": CH, "text": "poison"}], f)
-        for _ in range(OUTBOX_POISON_TRIES):
-            with quiet(), self.assertRaises(ValueError):
-                m.outbox_pass(self.st)
+        with patch.object(reply_policy, "normalize_parts", boom):
+            for _ in range(OUTBOX_POISON_TRIES):
+                with quiet(), self.assertRaises(ValueError):
+                    m.outbox_pass(self.st)
         self.assertEqual(self.rejected()[-1]["item"]["text"], "poison")
         self.outbox(self.reply(good, text="hello"))  # flows again
         self.assertEqual([d["content"] for _, d in self.new_sends()], ["hello"])

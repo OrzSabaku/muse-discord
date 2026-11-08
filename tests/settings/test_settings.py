@@ -1077,7 +1077,7 @@ servers:
             gmsg(U2, "draw", mention=True, roles=[ROLE], channel=CH_G2, guild=G2), guild=G2
         )
         self.assertTrue(item["may_generate"])
-        m.note_media_sent(self.st, m.scope_for(G2, CH_G2))
+        m._response_policy().note_media_sent(self.st, m.scope_for(G2, CH_G2))
         _ok, item = self.enqueue(
             gmsg(U2, "again", mention=True, roles=[ROLE], channel=CH_G2, guild=G2), guild=G2
         )

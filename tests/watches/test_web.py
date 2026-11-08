@@ -337,7 +337,7 @@ class CheckerHook(unittest.TestCase):
 class FireMemory(Web):
     """A reminder or watch notice is not the owner's words (a web
     watch's carries a page's summary): its answer never saves facts
-    to the Muse's memory (monitor.py, remember_check)."""
+    to the Muse's memory (owner/memory.py, OwnerMemory.check)."""
 
     def test_fire_answers_never_write_memory(self):
         mem = os.path.join(os.path.dirname(self.mod.OUTBOX_FILE), "MEMORY.md")

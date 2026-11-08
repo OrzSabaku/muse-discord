@@ -82,7 +82,7 @@ class ReplyBinding:
         (proactive.py, through bind_started: the slot's own nonce, its
         targets and caps bind it; it has no reply_nonce). The one place to
         add another such binder. A reminder or watch firing is not one:
-        watch_bind checks its place, and its reply_nonce still binds it to
+        WatchDelivery.bind checks its place, and its reply_nonce still binds it to
         the run that was handed it."""
         if hold_released_ok(state, item):
             return True

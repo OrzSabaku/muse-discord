@@ -220,7 +220,7 @@ class OutboxProcessor:
             fresh = self.files.load(self.files.pending)
             if fresh is None:
                 return  # mid-write; the next pass gets it
-            # Held replies an owner chose to send ride along (see hold_reply).
+            # Held replies an owner chose to send ride along (see owner.review.ReplyReview).
             outbox = (
                 (self.files.load(self.files.processing) or []) + fresh + state.pop("released", [])
             )

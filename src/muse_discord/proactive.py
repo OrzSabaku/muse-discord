@@ -41,7 +41,7 @@ in at a few points; everything else is here:
 
 The binding: like a reminder or watch fire, a slot is an item the
 monitor starts (its own kind, an id from monitor.started_item_id), plus
-the places its reply may go; monitor.bind_started binds both, before the
+the places its reply may go; reply_policy.ReplyPolicy.bind_started binds both, before the
 owner-DM gate. slot = {"id", "kind": "proactive", "nonce", "at",
 "expires", "targets": {channel_id: {"type", "user_id"}}, "max_posts",
 "posts", "spent"}. Unlike a fire's reply, a slot's post is sent here

@@ -30,7 +30,7 @@ Security model:
      worker never holds the token; it only reads and writes the
      queue/outbox files.
   6. never_share: a reply containing one of the owner's listed phrases
-     is held for the owners instead of posted (see hold_reply).
+     is held for the owners instead of posted (see owner.review.ReplyReview).
 
 Configuration: config.yaml next to this file (or --config PATH, or the
 MUSE_DISCORD_CONFIG env var), plus config.discord.yaml (changes made
@@ -53,7 +53,7 @@ except ImportError:
     print("PyYAML and Pydantic v2 are required: run uv sync", file=sys.stderr)
     sys.exit(1)
 
-from muse_discord import media_ingest, reply_protocol, storage
+from muse_discord import media_ingest, storage
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord.admission import AdmissionPolicy, SharedServers
@@ -93,9 +93,6 @@ from muse_discord.interaction_dispatch import (
 from muse_discord.interactions import ephemeral
 from muse_discord.message_ledger import MessageLedger
 from muse_discord.message_models import (
-    PROACTIVE_KIND as PRO_KIND,
-)
-from muse_discord.message_models import (
     LedgerContext,
     MessagePlace,
     QueueContext,
@@ -103,14 +100,12 @@ from muse_discord.message_models import (
 )
 from muse_discord.message_outcomes import MessageOutcomes
 from muse_discord.message_queue import QueueFiles, owner_dm_metadata
-from muse_discord.message_queue import answered_id as _answered_id
 from muse_discord.messaging import formatting as reply_formatting
 from muse_discord.messaging.parts import PartDelivery
 from muse_discord.messaging.sending import MessageSender
 from muse_discord.messaging.typing import TypingIndicators, TypingState
 from muse_discord.monitor_health import MonitorHealth, token_rejected_exit
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
-from muse_discord.outbox_store import redact_nonces as redact_nonces
 from muse_discord.outgoing_guard import OutgoingGuard, collect_nonces
 from muse_discord.owner.admin_digest import AdminDigests
 from muse_discord.owner.authorization import OwnerAuthorization
@@ -130,7 +125,8 @@ from muse_discord.receiving.messages import ReceivedMessages, ReceptionEffects
 from muse_discord.receiving.quarantine import MessageQuarantine, is_suspicious
 from muse_discord.receiving.reconciliation import MentionReconciler, RecoveryWindow
 from muse_discord.reply_binding import ReplyBinding, StalePrompt
-from muse_discord.reply_delivery import OutboxDelivery
+from muse_discord.reply_delivery import OutboxDelivery, ReplyEffects
+from muse_discord.reply_policy import ReplyPolicy
 from muse_discord.reply_state import ReplyState
 from muse_discord.response_policy import (
     ResponsePolicy,
@@ -581,9 +577,32 @@ def _publish_reply_capabilities(state):
 
 
 def _deliver_outbox_item(batch, item):
-    OutboxDelivery(
-        batch, item, _MonitorReplyPolicy(), _MonitorReplyEffects(), _OUTBOX_CURRENT
-    ).process()
+    policy = ReplyPolicy(
+        binding=_reply_binding(),
+        owners=_owner_auth(),
+        review=_reply_review(),
+        generated=_generated_replies(),
+        watches=_watch_delivery(),
+        proactive_outbox=PRO.outbox_item,
+        queue=_queue_files(),
+        rejected_path=OUTBOX_REJECTED_FILE,
+        max_reply_chars=MAX_REPLY_CHARS,
+    )
+    effects = ReplyEffects(
+        state=_reply_state(),
+        memory=_owner_memory(),
+        schedules=_watch_requests(),
+        watches=policy.watches,
+        conversation=_conversation(),
+        typing=_typing_service(),
+        parts=_part_delivery(),
+        sender=_message_sender(),
+        response=_response_policy(),
+        directory=_directory_scopes(),
+        opt_action=PRO.opt_action,
+        max_reply_chars=MAX_REPLY_CHARS,
+    )
+    OutboxDelivery(batch, item, policy, effects, _OUTBOX_CURRENT).process()
 
 
 def _outbox_processor():
@@ -816,8 +835,6 @@ def dms_enabled():
 # requeues them (a missed follow-up is not a dropped mention).
 # state["follow_up"]: {"<channel>:<user>": time the window opened}
 # ---------------------------------------------------------------------------
-def open_follow_up(state, channel_id, user_id):
-    return _conversation().open_follow_up(state, channel_id, user_id)
 
 
 def addresses_someone_else(msg):
@@ -1047,10 +1064,6 @@ def never_share_hit(state, item, qid, parts):
     return _reply_review().hit(state, item, qid, parts)
 
 
-def hold_reply(state, item, qid, parts):
-    return _reply_review().hold(state, item, qid, parts)
-
-
 def expire_holds(state):
     return _reply_review().expire(state)
 
@@ -1235,14 +1248,6 @@ def owner_dm_gate(state, item, index=None):
 # ---------------------------------------------------------------------------
 MEMORY_FILE = os.environ.get("MUSE_MEMORY_FILE") or os.path.expanduser("~/MEMORY.md")
 _MEMORY_MISSING = {"logged": False}
-
-
-def remember_check(state, item, qid, index):
-    return _owner_memory().check(state, item, qid, index)
-
-
-def save_facts(state, item, t):
-    return _owner_memory().save(state, item, t)
 
 
 def owner_dm_upkeep(state, force=False):
@@ -1527,10 +1532,6 @@ def media_permission(state, scope, here, author_matches):
     return _response_policy().media_permission(state, scope, here, author_matches)
 
 
-def note_media_sent(state, scope):
-    return _response_policy().note_media_sent(state, scope)
-
-
 def collect_media(msg):
     """Collect bounded attachments into this monitor's media directory."""
     return media_ingest.collect_media(msg, MEDIA_DIR)
@@ -1749,32 +1750,6 @@ def _settle(state, item, outcome):
     return _reply_state().settle(state, item, outcome)
 
 
-def _outbox_problem(item):
-    """Why an outbox item cannot be processed, or None. Ids given as
-    numbers are normalized to strings in place. Checked first, so a
-    wrong type never raises out of process_outbox mid-pass."""
-    problems = reply_protocol.shape_problems(item)
-    if problems:
-        return "; ".join(problems)
-    for field in reply_protocol.ID_FIELDS:
-        if item.get(field) in (None, ""):
-            item.pop(field, None)
-        else:
-            item[field] = str(item[field])
-    if "schedule" in item:
-        # Reminders and watches (muse_watches.py): shape only here.
-        problems = W.shape_problems(item)
-        if problems:
-            return "schedule: " + "; ".join(problems)
-    if item.get("silent"):
-        return reply_protocol.content_problem(item)
-    return reply_protocol.content_problem(item, has_text=bool(normalize_parts(item)))
-
-
-def _log_latency(state, qid, picked, sent):
-    return _reply_state().log_latency(state, qid, picked, sent)
-
-
 # Progress belongs to this running monitor; outbox_store owns recovery rules.
 _OUTBOX_CURRENT: dict[str, str | None] = {"key": None}
 _OUTBOX_POISON = {}
@@ -1782,75 +1757,6 @@ _OUTBOX_POISON = {}
 
 def outbox_pass(state):
     return _outbox_processor().pass_once(state, process_outbox)
-
-
-def _refuse(rejects, item, why, note=""):
-    """Log a refused outbox item and set it aside (nonces blanked)."""
-    where = item.get("channel_name") if isinstance(item, dict) else None
-    print(
-        f"Refused outbox item for {where or '?'}: {why}{note} (set aside "
-        f"in {os.path.basename(OUTBOX_REJECTED_FILE)})",
-        flush=True,
-    )
-    rejects.append((redact_nonces(item), why))
-
-
-def bind_started(state, item, settled, remaining, rejects):
-    """The one binding step for outbox items that answer an item the
-    monitor started, run before owner_dm_gate (docs/PROTOCOL.md, "Fires: the
-    monitor starts a queue item"): a reminder or watch fire (watch_bind: its
-    requester, its place) or a heartbeat slot (proactive.py: its
-    targets, nonce and caps; sent there, never by the path below).
-    Returns (fire, handled): handled means the item was settled, set
-    aside or kept for a retry here; fire is a bound fire for the send
-    path below, else None."""
-    fire = watch_bind(item)
-    if isinstance(fire, dict) and fire.get("gone"):
-        print(
-            f"Outbox item for reminder {fire['gone']}: it was settled already; nothing sent.",
-            flush=True,
-        )
-        # (Its ledger entry already says how it ended.)
-        settled.append({"item": fire["gone"]})
-        return None, True
-    if isinstance(fire, str):
-        _refuse(rejects, item, fire)
-        return None, True
-    if fire is not None:
-        return fire, False
-    try:
-        pro = PRO.outbox_item(state, item)
-    except Exception as e:  # never blocks the replies
-        print(f"Proactive outbox error: {e}", flush=True)
-        pro = None
-        if could_name_slot(item):
-            # Never left to the ordinary path: set aside.
-            _refuse(rejects, item, "proactive: its slot could not be checked")
-            return None, True
-    if pro is None:
-        return None, False
-    if pro.reject:
-        _refuse(rejects, item, pro.reject)
-    if pro.retry:
-        remaining.append(item)
-    if pro.spent:
-        settled.append({"item": pro.spent})
-    return None, True
-
-
-def could_name_slot(item):
-    """When proactive.py cannot say: an item shaped like a slot's answer
-    (its nonce field and no reply_nonce) or naming a queued slot."""
-    if item.get("owner_dm_nonce") and not item.get("reply_nonce"):
-        return True
-    names = {str(item[f]) for f in ("item", "reply_to") if item.get(f)}
-    try:
-        return any(
-            isinstance(q, dict) and q.get("kind") == PRO_KIND and str(q.get("message_id")) in names
-            for q in load_queue()
-        )
-    except Exception:
-        return True
 
 
 STALE_PROMPT_FILE = os.path.join(BASE_DIR, "prompt_outdated.json")
@@ -1864,114 +1770,6 @@ def _reply_binding():
     )
 
 
-class _MonitorReplyPolicy:
-    @staticmethod
-    def _outbox_problem(item):
-        return _outbox_problem(item)
-
-    @staticmethod
-    def _refuse(rejects, item, why, note=""):
-        return _refuse(rejects, item, why, note)
-
-    @staticmethod
-    def bind_started(state, item, settled, remaining, rejects):
-        return bind_started(state, item, settled, remaining, rejects)
-
-    @staticmethod
-    def owner_dm_gate(state, item, index=None):
-        return owner_dm_gate(state, item, index)
-
-    @staticmethod
-    def own_channel_problem(state, item, index):
-        return _reply_binding().problem(state, item, index)
-
-    @staticmethod
-    def bound_elsewhere(state, item):
-        return _reply_binding().bound_elsewhere(state, item)
-
-    @staticmethod
-    def note_reply_nonce(state, refusal):
-        return _reply_binding().stale_prompt.note(state, refusal)
-
-    @staticmethod
-    def _answered_id(state, item):
-        return _answered_id(state, item)
-
-    @staticmethod
-    def never_share_hit(state, item, qid, parts):
-        return never_share_hit(state, item, qid, parts)
-
-    @staticmethod
-    def hold_reply(state, item, qid, parts):
-        return hold_reply(state, item, qid, parts)
-
-    @staticmethod
-    def _reply_attachments(state, item, retry):
-        return _generated_replies().attachments(state, item, retry)
-
-
-class _MonitorReplyEffects:
-    @staticmethod
-    def _settle(state, item, outcome):
-        return _settle(state, item, outcome)
-
-    @staticmethod
-    def remember_check(state, item, qid, index):
-        return remember_check(state, item, qid, index)
-
-    @staticmethod
-    def watch_schedule(state, item, index):
-        return watch_schedule(state, item, index)
-
-    @staticmethod
-    def link_mentions(text, channel_id, state):
-        return link_mentions(text, channel_id, state)
-
-    @staticmethod
-    def normalize_parts(item):
-        return normalize_parts(item)
-
-    @staticmethod
-    def typing_clear(keys, sent_in=None):
-        return typing_clear(keys, sent_in)
-
-    @staticmethod
-    def watch_fire_send(state, fire, parts):
-        return watch_fire_send(state, fire, parts)
-
-    @staticmethod
-    def send_fragmented(channel_id, parts, reply_to=None, attachments=(), delivery=None):
-        return send_fragmented(channel_id, parts, reply_to, attachments, delivery)
-
-    @staticmethod
-    def add_reaction(channel_id, message_id, emoji):
-        return add_reaction(channel_id, message_id, emoji)
-
-    @staticmethod
-    def note_media_sent(state, scope):
-        return note_media_sent(state, scope)
-
-    @staticmethod
-    def scope_of_channel(channel_id):
-        return scope_of_channel(channel_id)
-
-    @staticmethod
-    def save_facts(state, item, t):
-        return save_facts(state, item, t)
-
-    @staticmethod
-    def open_follow_up(state, channel_id, user_id):
-        return open_follow_up(state, channel_id, user_id)
-
-    @staticmethod
-    def _log_latency(state, qid, picked, sent):
-        return _log_latency(state, qid, picked, sent)
-
-    @staticmethod
-    def opt_action(state, item, index):
-        return PRO.opt_action(state, item, index)
-
-
 def process_outbox(state):
     return _outbox_processor().process(state)
 
@@ -1981,12 +1779,12 @@ def process_outbox(state):
 # watches"). The worker asks for one with a `schedule` action on its
 # reply to a queue item; the requester is that item's author and the
 # place its channel, from item_meta, never from the outbox
-# (watch_schedule). watches.json keeps them across restarts. When a
+# (watches.requests.WatchRequests). watches.json keeps them across restarts. When a
 # reminder is due, or a watch matches a server message the monitor
 # ingests (classify_message: gateway and poll, once each), watch_tick
 # queues a "reminder" item (a fire) for the worker. The worker's reply
-# to it is bound to the requester and the place (watch_bind) and may
-# ping the requester only (watch_fire_send). A fire is kept in
+# to it is bound to the requester and the place (watches.delivery.WatchDelivery.bind) and may
+# ping the requester only (WatchDelivery.send). A fire is kept in
 # watches.json until the ledger settles it, so a restart between
 # saving it and queueing it re-queues it instead of losing it.
 # ---------------------------------------------------------------------------
@@ -2053,10 +1851,6 @@ def watch_card(guild_id, dm, here, matches, speaker=None):
     return _watch_requests().card(guild_id, dm, here, matches, speaker)
 
 
-def watch_schedule(state, item, index):
-    return _watch_requests().schedule(state, item, index)
-
-
 def _note_watch_timezone(uid, fresh):
     for op, value in (fresh or {}).get("done") or []:
         if op == "tz":
@@ -2112,14 +1906,6 @@ def watch_scan(msg, guild_id):
 
 
 # -- answering a fire -------------------------------------------------------
-
-
-def watch_bind(item):
-    return _watch_delivery().bind(item)
-
-
-def watch_fire_send(state, fire, parts):
-    return _watch_delivery().send(state, fire, parts)
 
 
 PIDFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "monitor.pid")

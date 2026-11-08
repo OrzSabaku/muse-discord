@@ -94,7 +94,7 @@ class OwnerMemory:
         return lines
 
     def save(self, state, item, t):
-        """Append item's remember facts (owner DM t, from remember_check)
+        """Append item's remember facts (owner DM t, from check)
         to MEMORY_FILE, once per owner DM. Never raises."""
         if not t or not item.get("remember"):
             return
