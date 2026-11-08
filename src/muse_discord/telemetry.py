@@ -47,7 +47,6 @@ import random
 import re
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -59,6 +58,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
+
+from muse_discord.storage import atomic_write as _atomic_write
 
 MAX_DISCORD_ID_LENGTH = 25
 MIN_PRESET_CHANGES = 2
@@ -490,18 +491,7 @@ def build_payload(rec, install_id):
 # Files
 # ---------------------------------------------------------------------------
 def atomic_write_json(path, obj):
-    fd, tmp = tempfile.mkstemp(
-        dir=os.path.dirname(path) or ".", prefix="." + os.path.basename(path) + ".", suffix=".tmp"
-    )
-    try:
-        with os.fdopen(fd, "w") as f:
-            os.fchmod(f.fileno(), 0o600)
-            json.dump(obj, f, sort_keys=True)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    _atomic_write(path, obj, 0o600, text=json.dumps(obj, sort_keys=True))
 
 
 def load_file(path):
@@ -530,14 +520,9 @@ def read_install_id(path, create=True):
 
 
 def reset_install_id(path):
-    v = str(uuid.uuid4())
-    fd, tmp = tempfile.mkstemp(
-        dir=os.path.dirname(path) or ".", prefix="." + os.path.basename(path) + ".", suffix=".tmp"
-    )
-    with os.fdopen(fd, "w") as f:
-        f.write(v + "\n")
-    os.replace(tmp, path)
-    return v
+    value = str(uuid.uuid4())
+    _atomic_write(path, None, 0o600, text=value + "\n")
+    return value
 
 
 def drain_wakes(path):
