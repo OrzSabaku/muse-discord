@@ -601,7 +601,7 @@ class Posting(Base):
             self.reply(m1, schedule={"v": 1, "changes": [{"op": "tz", "tz": "Etc/GMT-6"}]})
         )  # UTC+6: night for U1
         self.assertEqual(
-            self.m.watch_store().read()["tz"].get(U1), "Etc/GMT-6", self.out
+            self.m._WATCH_STORE.read()["tz"].get(U1), "Etc/GMT-6", self.out
         )  # reminders use it now
         self.now += HOUR
         self.assertIn(DM_U1, self.targets(self.next_slot("private", 0)))

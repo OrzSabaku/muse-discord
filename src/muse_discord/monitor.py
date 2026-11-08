@@ -147,7 +147,7 @@ from muse_discord.watches.delivery import WatchDelivery
 from muse_discord.watches.fires import WatchFireBuilder
 from muse_discord.watches.queue import WatchQueue
 from muse_discord.watches.requests import WatchRequests
-from muse_discord.watches.runtime import WatchRuntime
+from muse_discord.watches.runtime import WatchRuntime, WatchState
 from muse_discord.watches.web import WebWatchWork
 from muse_discord.worker_context import WorkerContext
 
@@ -395,7 +395,7 @@ def _discovery():
         lambda: BOT_ID,
         GUILD_ALLOWLIST,
         _DIRECTORY,
-        _channel_access(),
+        _ACCESS,
     )
 
 
@@ -464,7 +464,7 @@ _OUTPUT: OutgoingGuard
 def _live_nonces():
     return collect_nonces(
         (_OWNER_DM_NONCES_WRITTEN.get("body"), _ITEM_NONCES_WRITTEN.get("body")),
-        (_OWNER_ITEMS_WRITTEN.get("body"), _WEB_DUE_WRITTEN.get("body")),
+        (_OWNER_ITEMS_WRITTEN.get("body"), _WATCH_STATE.web_cache.get("body")),
         lambda: PRO.store.secret_nonces(),
     )
 
@@ -631,7 +631,7 @@ def _response_policy():
         _conversation(),
         scope_for,
         scope_of_channel,
-        member_roles,
+        _AUTHOR_ROLES.get_roles,
         TM.count,
     )
 
@@ -670,11 +670,6 @@ def scope_of_channel(channel_id):
 # (guild, user) -> (role ids, fetched at): roles of authors whose messages
 # carry no member object (the REST poll), for role entries in who.allow /
 # who.ignore. Only fetched when such a list names a role.
-_MEMBER_ROLES = {}
-
-
-def member_roles(guild_id, user_id):
-    return AuthorRoles(api_get, rest_backing_off, _MEMBER_ROLES).get_roles(guild_id, user_id)
 
 
 # user id -> (shares a server with the bot?, checked at), for
@@ -982,7 +977,7 @@ def settings_context():
             _message_ledger,
             _DIRECTORY_VIEW,
             _DIRECT_MESSAGES,
-            lambda: watch_store().read()["fired"],
+            lambda: _WATCH_STORE.read()["fired"],
         ),
         admin_change=_admin_digests().note,
         bot_id=str(BOT_ID or ""),
@@ -1308,7 +1303,7 @@ def _gateway_ingress(state, channels):
     return GatewayIngress(
         _receiver(state),
         channels,
-        _channel_access(),
+        _ACCESS,
         GatewayEvents(on_guild_event, watch_perm_event, note_activity, apply_record),
         GUILD_ALLOWLIST,
     )
@@ -1429,41 +1424,23 @@ def process_outbox(state):
 # watches.json until the ledger settles it, so a restart between
 # saving it and queueing it re-queues it instead of losing it.
 # ---------------------------------------------------------------------------
+_ACCESS: ChannelAccess
+_AUTHOR_ROLES: AuthorRoles
+_WATCH_STORE: W.Store
+_WATCH_STATE: WatchState
+
 WATCHES_FILE = os.path.join(BASE_DIR, "watches.json")
 # Web watches: the live checks for hooks/watch-due.sh (mode 600), and
 # the checker's reports from bin/watch-report.py (drained each tick).
 WEB_DUE_FILE = os.path.join(BASE_DIR, "web_watches_due.json")
 WEB_RESULTS_FILE = os.path.join(BASE_DIR, "web_watch_results.json")
-_WEB_DUE_WRITTEN = {"body": None, "path": None}
-_WATCH_STORE: dict[str, W.Store | None] = {"store": None}
-_GUILD_PERMS = {}  # guild id -> {"roles": {id: perms}, "owner_id"}
-_CHANNEL_OVERWRITES = {}  # channel id -> its overwrites (discovery)
-_WATCH_MEMBERS = {}  # (guild, user) -> (role ids or None, fetched at)
-_WATCH_MATCHES = []  # [(watch id, what matched)] since the last tick
-_WATCH_TICK = {"next": 0.0, "upkeep": 0.0}
-
-
-def watch_store():
-    s = _WATCH_STORE["store"]
-    if s is None or s.path != WATCHES_FILE:
-        s = _WATCH_STORE["store"] = W.Store(WATCHES_FILE)
-    return s
 
 
 # -- what a requester can read -------------------------------------------
-def _channel_access():
-    return ChannelAccess(
-        _DIRECTORY.channels,
-        api_get,
-        rest_backing_off,
-        _GUILD_PERMS,
-        _CHANNEL_OVERWRITES,
-        _WATCH_MEMBERS,
-    )
 
 
 def watch_perm_event(ev):
-    return _channel_access().permission_event(ev)
+    return _ACCESS.permission_event(ev)
 
 
 # -- asking for one ---------------------------------------------------------
@@ -1472,7 +1449,7 @@ def watch_perm_event(ev):
 def _watch_audience():
     return WatchAudience(
         _response_policy(),
-        _channel_access(),
+        _ACCESS,
         _DIRECTORY.guilds,
         _USER_NAMES,
         owners_absent,
@@ -1481,7 +1458,7 @@ def _watch_audience():
 
 
 def _watch_requests():
-    return WatchRequests(watch_store(), _watch_audience(), queued_item_meta, _note_watch_timezone)
+    return WatchRequests(_WATCH_STORE, _watch_audience(), queued_item_meta, _note_watch_timezone)
 
 
 def _note_watch_timezone(uid, fresh):
@@ -1497,13 +1474,13 @@ def _note_watch_timezone(uid, fresh):
 
 
 def _watch_delivery():
-    return WatchDelivery(watch_store(), api_get, normalize_parts)
+    return WatchDelivery(_WATCH_STORE, api_get, normalize_parts)
 
 
 def _watch_runtime():
     audience = _watch_audience()
     return WatchRuntime(
-        store=watch_store(),
+        store=_WATCH_STORE,
         audience=audience,
         fires=WatchFireBuilder(audience, ledger_record, _worker_context().settings_card),
         queue=WatchQueue(
@@ -1519,11 +1496,10 @@ def _watch_runtime():
             _publish,
             lambda: _SETTINGS.owners,
             is_suspicious,
-            _WEB_DUE_WRITTEN,
+            _WATCH_STATE.web_cache,
         ),
         entries=lambda: _ledger_load()["entries"],
-        matches=_WATCH_MATCHES,
-        clock=_WATCH_TICK,
+        state=_WATCH_STATE,
     )
 
 
@@ -1866,13 +1842,19 @@ def _start_monitor():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
-    global _PROCESS_LOCK, _GATEWAY
+    global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
     global _DIRECTORY, TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
     global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTIONS, _INTERACTION_RESPONDER, _INTERACTION_WORKER
     _PROCESS_LOCK = MonitorLock(lambda: PIDFILE)
     _GATEWAY = GatewaySession(TOKEN, settings_context, guard_outgoing)
     _DIRECTORY = DirectoryState()
+    _ACCESS = ChannelAccess(
+        _DIRECTORY.channels, lambda path: api_get(path), lambda: rest_backing_off()
+    )
+    _AUTHOR_ROLES = AuthorRoles(lambda path: api_get(path), lambda: rest_backing_off())
+    _WATCH_STORE = W.Store(lambda: WATCHES_FILE)
+    _WATCH_STATE = WatchState()
     _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _STATE_STORE = StateFile(lambda: STATE_FILE)
     _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())

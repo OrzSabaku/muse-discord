@@ -146,7 +146,7 @@ class Web(tw.Base):
         # Review L: web_issue must be given the owners now.
         self.web()
         (i,) = self.items()
-        with self.mod.watch_store().edit() as d:
+        with self.mod._WATCH_STORE.edit() as d:
             d["items"][i]["requester"] = U1  # no longer an owner
         self.tick()
         self.assertNotIn(i, [e["id"] for e in self.due()])
@@ -206,14 +206,14 @@ class Web(tw.Base):
         self.assertEqual(len(self.items()), 1, self.out)
         # A web watch someone else set before this change ends (they are
         # told, as for one that gave up), and is never checked.
-        with self.mod.watch_store().edit() as d:
+        with self.mod._WATCH_STORE.edit() as d:
             (rec,) = d["items"].values()
             d["items"]["wlegacy"] = dict(rec, requester=U1, owner=False)
         self.tick()
         self.assertNotIn("wlegacy", self.items())
         self.assertEqual([e["id"] for e in self.due()], [i for i in self.items()])
         # The day's total still paces the owners' checks.
-        with self.mod.watch_store().edit() as d:
+        with self.mod._WATCH_STORE.edit() as d:
             d["web"] = {"day": _utc_day(tw.time.time()), "total": W_.WEB_TOTAL_PER_DAY}
             for r in d["items"].values():
                 r["check"] = None

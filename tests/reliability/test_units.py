@@ -60,7 +60,7 @@ class F2BurstLedger(unittest.TestCase):
 
     def _sweep(self, mod, st, msgs):
         mod.api.msgs["C1"] = msgs
-        mod._DIRECTORY.channels = {"C1": chan()}
+        mod._DIRECTORY.adopt({"C1": chan()}, mod._DIRECTORY.guilds)
         q = []
         mod.sweep_mentions(st, q, mod._DIRECTORY.channels)
         return [i["message_id"] for i in q]
@@ -144,7 +144,7 @@ class F6Watermarks(unittest.TestCase):
         self.st = new_state(self.mod)
         self.m0 = msg("C1", "U2", "old", age=100)
         self.st["last_seen"]["C1"] = self.m0["id"]
-        self.mod._DIRECTORY.channels = {"C1": chan()}
+        self.mod._DIRECTORY.adopt({"C1": chan()}, self.mod._DIRECTORY.guilds)
 
     def poll(self):
         tr = self.mod.check_channel("C1", "Srv #general", self.st, G1)
@@ -165,7 +165,7 @@ class F6Watermarks(unittest.TestCase):
         self.assertEqual(self.poll(), [m2["id"]])
         # An owner DM the poll missed is swept up.
         mod = self.mod
-        mod._DIRECTORY.channels = {}
+        mod._DIRECTORY.adopt({}, mod._DIRECTORY.guilds)
         mod._DIRECT_MESSAGES.names = {"DM1": "owner"}
         d1 = msg("DM1", OWNER, "are you there?", gid=None, age=600)
         mod.api.msgs["DM1"] = [d1]
@@ -229,7 +229,7 @@ class F7Discovery(unittest.TestCase):
     def test_unseeded_history_is_not_new_and_reseed_keeps_watermark(self):
         mod = H.load_monitor()
         st = new_state(mod)
-        mod._DIRECTORY.channels = {"C1": chan()}
+        mod._DIRECTORY.adopt({"C1": chan()}, mod._DIRECTORY.guilds)
         old = [msg("C1", "U1", f"@bot {i}", mention=True) for i in range(5)]
         mod.api.msgs["C1"] = list(old)
         tr = mod.check_channel("C1", "Srv #general", st, G1)

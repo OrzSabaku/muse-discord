@@ -34,6 +34,13 @@ def _restored_item(state, f):
 
 
 @dataclass
+class WatchState:
+    matches: list = field(default_factory=list)
+    clock: dict = field(default_factory=lambda: {"next": 0.0, "upkeep": 0.0})
+    web_cache: dict = field(default_factory=lambda: {"body": None, "path": None})
+
+
+@dataclass
 class WatchRuntime:
     store: W.Store
     audience: WatchAudience
@@ -41,8 +48,7 @@ class WatchRuntime:
     queue: WatchQueue
     web: WebWatchWork
     entries: Callable[[], dict]
-    matches: list = field(default_factory=list)
-    clock: dict = field(default_factory=lambda: {"next": 0.0, "upkeep": 0.0})
+    state: WatchState = field(default_factory=WatchState)
 
     def tick(self, state, now=None):
         """Main loop: fire due reminders and watch matches (grouped per
@@ -58,13 +64,13 @@ class WatchRuntime:
         is fired. A fire whose place was not checked in the first phase is
         held until the next tick."""
         now = time.time() if now is None else now
-        if now < self.clock["next"] and not self.matches:
+        if now < self.state.clock["next"] and not self.state.matches:
             return
-        self.clock["next"] = now + WATCH_TICK_SECS
+        self.state.clock["next"] = now + WATCH_TICK_SECS
         store = self.store
         data = store.read()
-        cands = list(self.matches)
-        del self.matches[:]
+        cands = list(self.state.matches)
+        del self.state.matches[:]
         matches = [(wid, m) for wid, m, ctx in cands if self.match_ok(data, wid, ctx)]
         verdicts = {}
         for key, name in self.places_due(data, matches, now).items():
@@ -91,8 +97,8 @@ class WatchRuntime:
         self.web.write_due(store.read(), now)
         for q in queued:
             self.queue.enqueue(state, q)
-        if now >= self.clock["upkeep"]:
-            self.clock["upkeep"] = now + WATCH_UPKEEP_SECS
+        if now >= self.state.clock["upkeep"]:
+            self.state.clock["upkeep"] = now + WATCH_UPKEEP_SECS
             self.upkeep(state, now)
 
     def places_due(self, data, matches, now):
@@ -225,7 +231,7 @@ class WatchRuntime:
         parent = info.get("parent_id") if info.get("thread") else None
         ts = _snowflake_ts(msg.get("id"))
         now = time.time()
-        pending = {c[0] for c in self.matches}
+        pending = {c[0] for c in self.state.matches}
         for wid, r in items.items():
             if (
                 not isinstance(r, dict)
@@ -241,9 +247,9 @@ class WatchRuntime:
             hit = W.match_text(r.get("words") or [], text)
             if not hit:
                 continue
-            if len(self.matches) >= WATCH_MATCH_QUEUE_LIMIT:
+            if len(self.state.matches) >= WATCH_MATCH_QUEUE_LIMIT:
                 return  # a flood: the rest of this tick's matches wait
-            self.matches.append(
+            self.state.matches.append(
                 (
                     wid,
                     {

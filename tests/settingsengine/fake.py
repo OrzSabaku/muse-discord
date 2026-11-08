@@ -167,6 +167,6 @@ def load_monitor(test, text):
     mod.send_typing = lambda cid: None
     mod.collect_media = lambda m: ([], [], [])
     mod.BOT_ID = mod.BOT_USER_ID = BOT
-    mod._DIRECTORY.guilds = {G1: {"name": "Lounge"}}
+    mod._DIRECTORY.adopt(mod._DIRECTORY.channels, {G1: {"name": "Lounge"}})
     mod.cfg_path = cfg
     return mod

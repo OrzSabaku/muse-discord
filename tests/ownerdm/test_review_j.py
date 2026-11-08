@@ -101,10 +101,13 @@ D.OWNER_ITEMS_FILE = os.path.join(WORK, "owner_items.json")
 
 
 MON = tb.load_monitor(tb.CFG)
-MON._DIRECTORY.channels = {
-    cid: {"name": c["name"], "guild_id": c["guild_id"], "thread": c["type"] in (10, 11, 12)}
-    for cid, c in CHANNELS.items()
-}
+MON._DIRECTORY.adopt(
+    {
+        cid: {"name": c["name"], "guild_id": c["guild_id"], "thread": c["type"] in (10, 11, 12)}
+        for cid, c in CHANNELS.items()
+    },
+    MON._DIRECTORY.guilds,
+)
 
 
 def owner_item(content):

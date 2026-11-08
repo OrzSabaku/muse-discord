@@ -91,19 +91,19 @@ class PermissionRules(unittest.TestCase):
 class WatchPermissionPolicy(H.Base):
     @property
     def access(self):
-        return self.mod._channel_access()
+        return self.mod._ACCESS
 
     def test_deleted_role_no_longer_grants_view_even_with_cached_membership(self):
         m = self.mod
         self.assertTrue(self.access.can_view(H.G1, H.U2, H.CH2))
-        self.assertIn((H.G1, H.U2), m._WATCH_MEMBERS)
+        self.assertIn((H.G1, H.U2), m._ACCESS.members)
         m.watch_perm_event({"t": "GUILD_ROLE_DELETE", "d": {"guild_id": H.G1, "role_id": H.ROLE}})
         self.assertFalse(self.access.can_view(H.G1, H.U2, H.CH2))
 
     def test_role_and_channel_events_change_view_immediately(self):
         m = self.mod
-        m._CHANNEL_OVERWRITES[H.CH2] = []
-        m._GUILD_PERMS[H.G1]["roles"][H.G1] = 0
+        m._ACCESS.overwrites[H.CH2] = []
+        m._ACCESS.guilds[H.G1]["roles"][H.G1] = 0
         self.assertFalse(self.access.can_view(H.G1, H.U2, H.CH2))
         m.watch_perm_event(
             {
@@ -126,7 +126,7 @@ class WatchPermissionPolicy(H.Base):
 
     def test_owner_transfer_invalidates_owner_bypass(self):
         m = self.mod
-        m._GUILD_PERMS[H.G1]["roles"] = {H.G1: 0}
+        m._ACCESS.guilds[H.G1]["roles"] = {H.G1: 0}
         m.watch_perm_event({"t": "GUILD_UPDATE", "d": {"id": H.G1, "owner_id": H.U1}})
         self.assertTrue(self.access.can_view(H.G1, H.U1, H.CH))
         m.watch_perm_event({"t": "GUILD_UPDATE", "d": {"id": H.G1, "owner_id": H.U2}})
@@ -138,7 +138,7 @@ class WatchPermissionPolicy(H.Base):
         self.assertFalse(self.access.can_view(H.G1, "100000000000000099", H.CH))
         m._DIRECTORY.channels[H.THREAD]["private"] = True
         self.assertFalse(self.access.can_view(H.G1, H.U1, H.THREAD))
-        m._CHANNEL_OVERWRITES[H.CH] = [{"id": "bad", "type": 0, "allow": str(VIEW), "deny": "0"}]
+        m._ACCESS.overwrites[H.CH] = [{"id": "bad", "type": 0, "allow": str(VIEW), "deny": "0"}]
         self.assertIsNone(self.access.permissions(H.G1, H.U1, H.CH))
         self.assertFalse(self.access.is_public(H.G1, H.CH))
 

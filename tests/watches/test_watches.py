@@ -88,7 +88,7 @@ class Base(unittest.TestCase):
 
         m.api_get = get
         # Everyone reads CH; CH2 is for ROLE only.
-        m._channel_access().note_guild(
+        m._ACCESS.note_guild(
             G1,
             {
                 "owner_id": "1",
@@ -98,7 +98,7 @@ class Base(unittest.TestCase):
                 ],
             },
         )
-        m._CHANNEL_OVERWRITES.update(
+        m._ACCESS.overwrites.update(
             {
                 CH: [],
                 CH2: [
@@ -168,7 +168,7 @@ class Base(unittest.TestCase):
         self.out += buf.getvalue()
 
     def tick(self, ahead=0.0):
-        self.mod._WATCH_TICK.update(next=0.0, upkeep=0.0)
+        self.mod._WATCH_STATE.clock.update(next=0.0, upkeep=0.0)
         with quiet() as buf:
             self.mod.watch_tick(self.st, now=time.time() + ahead)
         self.out += buf.getvalue()
@@ -179,7 +179,7 @@ class Base(unittest.TestCase):
 
     # -- looking --------------------------------------------------------------
     def items(self):
-        return self.mod.watch_store().read()["items"]
+        return self.mod._WATCH_STORE.read()["items"]
 
     def fires(self):
         return [q for q in self.mod.load_queue() if q.get("kind") in ("reminder", "watch-met")]
@@ -278,7 +278,7 @@ class Reminders(Base):
         )
         self.assertEqual(self.fires(), [])
         self.tick(ahead=140)  # upkeep: settled
-        self.assertEqual(self.mod.watch_store().read()["fires"], {})
+        self.assertEqual(self.mod._WATCH_STORE.read()["fires"], {})
         self.assertEqual(self.fires(), [])
         # A second answer to it is never sent.
         self.outbox(self.held({"item": f["message_id"], "channel_id": CH, "text": "again"}))
@@ -546,12 +546,12 @@ class Watches(Base):
         self.watch(OWNER, ["deploy"], where=f"channel:{G1}:{CH2}", every=True, channel=DM, dm=True)
         self.assertEqual(len(self.items()), 1, self.out)
         self.mod.api.members[(G1, OWNER)] = []  # lost the role
-        self.mod._WATCH_MEMBERS.clear()
+        self.mod._ACCESS.members.clear()
         self.scan(gmsg(U2, "deploy is out", channel=CH2))
         self.tick()
         self.assertEqual(self.fires(), [])
         self.mod.api.members[(G1, OWNER)] = [ROLE]  # and back
-        self.mod._WATCH_MEMBERS.clear()
+        self.mod._ACCESS.members.clear()
         self.scan(gmsg(U2, "deploy is out", channel=CH2))
         self.tick()
         self.assertEqual(len(self.fires()), 1)
@@ -578,7 +578,7 @@ class Watches(Base):
             "guild_name": "Lounge",
             "can_send": True,
         }
-        m._CHANNEL_OVERWRITES.update(
+        m._ACCESS.overwrites.update(
             {lobby: [], CH: [{"id": ROLE, "type": 0, "deny": str(VIEW), "allow": "0"}]}
         )
         self.watch(U1, ["raid"], every=True, channel=lobby)
@@ -654,7 +654,7 @@ class Caps(Base):
         self.assertEqual(len(self.fires()), 1)
         self.tick(ahead=121)  # over it: held
         self.assertEqual(len(self.fires()), 1)
-        held = self.mod.watch_store().read()["held"]
+        held = self.mod._WATCH_STORE.read()["held"]
         (fid,) = held
         self.assertEqual(self.ledger(fid)["code"], "watch-held")
         self.assertEqual(self.items(), {})  # not lost: held
@@ -664,7 +664,7 @@ class Caps(Base):
         self.assertEqual(len(fires), 2, self.out)
         later = next(f for f in fires if f["message_id"] == fid)
         self.assertTrue(later["reminder"]["late"])
-        self.assertEqual(self.mod.watch_store().read()["held"], {})
+        self.assertEqual(self.mod._WATCH_STORE.read()["held"], {})
 
     def test_held_every_time_notices_fold_into_one(self):
         self.cfg = CFG + "everywhere:\n  limits:\n    per_person_per_day: 1\n"
@@ -673,10 +673,10 @@ class Caps(Base):
         for k in range(3):  # 3 matches, 15 min
             self.scan(gmsg(U2, "pizza!"))  # apart, all capped
             self.tick(ahead=k * (W.DEBOUNCE_SECS + 1))
-            with self.mod.watch_store().edit() as d:  # (debounce passes)
+            with self.mod._WATCH_STORE.edit() as d:  # (debounce passes)
                 for r in d["items"].values():
                     r["last_fired"] = 0
-        held = list(self.mod.watch_store().read()["held"].values())
+        held = list(self.mod._WATCH_STORE.read()["held"].values())
         self.assertEqual(len(held), 1)
         ((_, e),) = held[0]["es"]
         self.assertEqual(e["more"], 2)

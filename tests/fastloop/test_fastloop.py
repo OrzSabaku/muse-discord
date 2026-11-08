@@ -149,7 +149,7 @@ class SlicedJobs(unittest.TestCase):
                 },
             }
         )
-        mod._DIRECTORY.channels = {"C1": H.chan(), "OLD": H.chan("old")}
+        mod._DIRECTORY.adopt({"C1": H.chan(), "OLD": H.chan("old")}, mod._DIRECTORY.guilds)
         self.st = {
             "last_seen": {"C1": "5", "OLD": "5"},
             "replied_to": [],
