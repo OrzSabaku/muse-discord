@@ -221,7 +221,7 @@ class Interactions(unittest.TestCase):
         self.recs = []
 
     def dispatch(self, i):
-        return self.mod.dispatch_interaction(i, self.recs.append)
+        return self.mod._INTERACTIONS.dispatch(i, self.recs.append)
 
     def test_owner_update_now(self):
         r = self.dispatch(ix(f"mdupd:now:{V2}"))
@@ -329,7 +329,7 @@ class Interactions(unittest.TestCase):
         orig = mod._DISCORD.request
         mod._DISCORD.request = request
         try:
-            mod.interaction_callback(ix("x"), {"type": 7, "data": {}})
+            mod._INTERACTION_RESPONDER.send(ix("x"), {"type": 7, "data": {}})
         finally:
             mod._DISCORD.request = orig
         self.assertEqual(seen["path"], "/interactions/9001/tok-en_1/callback")

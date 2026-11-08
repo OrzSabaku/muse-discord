@@ -40,6 +40,7 @@
 | モニターの稼働記録・トークン拒否時の終了 | `src/muse_discord/monitor_health.py` |
 | Discord HTTP通信 | `src/muse_discord/discord_rest.py`（discord.py） |
 | コマンドの定義・差分登録・再試行 | `src/muse_discord/settings_commands.py` |
+| ボタン操作の振り分け・匿名応答・専用ワーカー | `src/muse_discord/interaction_dispatch.py` |
 | Discord接続・UI操作受付 | `src/muse_discord/discord_connection.py`（discord.py） |
 | 設定変更による応答対象・公開範囲・費用の評価 | `src/muse_discord/settings_assessment.py` |
 | プリセットの定義・変更案への変換・一致判定 | `src/muse_discord/settings_presets.py` |
@@ -134,6 +135,7 @@ HTTPの長い制限待ちと認証失敗は `http_runtime`、稼働記録は `mo
 生成添付の選択は `generated_replies.GeneratedReplies` が持つ。依頼IDと送信先に結び付いた有効な承認だけを使い、再試行の添付パスも毎回確認する。実際の送信後に承認を消費する処理は `reply_delivery` が担う。
 設定画面の実行時アクセスは `settings_runtime.SettingsContext`、ユーザー別の一時保存は `SettingsSessions` が持つ。診断は `message_outcomes.MessageOutcomes` が台帳とディレクトリから組み立て、送信先不明のサーバーメッセージをDMへ分類しない。
 コマンドの定義と差分登録は `settings_commands.CommandRegistrar` が持つ。登録状況・再試行時刻・application IDをサービス内で保持し、他のコマンドを消す一括置換は使わない。Gateway側の設定コマンド判定も同じ名前の定義を参照する。
+ボタン等の操作は `interaction_dispatch` が受け付ける。振り分け時に現在の所有者を確認し、状態変更は記録キューへ返す。ハンドラーと応答の例外を個別に処理し、後続の操作を止めない。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

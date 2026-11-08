@@ -59,7 +59,7 @@ def handle(ix, ctx):
 
 
 for key in ("/test-settings", "test-settings"):
-    mod.register_interaction(
+    mod._INTERACTIONS.register(
         key, lambda ix, rest, uid, record: handle(ix, mod.settings_context()), owner_only=False
     )
 
@@ -70,7 +70,7 @@ def cb(i, resp):
         acked.set()
 
 
-mod.interaction_callback = cb
+mod._INTERACTION_RESPONDER.send = cb
 res["put_at"] = {}
 
 

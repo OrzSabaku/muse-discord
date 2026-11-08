@@ -708,7 +708,7 @@ class NeverShare(MonitorBase):
             "member": {"user": {"id": uid}},
             "message": {"content": "Held a reply"},
         }
-        resp = self.m.dispatch_interaction(ix, recs.append)
+        resp = self.m._INTERACTIONS.dispatch(ix, recs.append)
         return resp, recs
 
     def test_hold_buttons_send_anyway(self):

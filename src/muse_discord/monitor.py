@@ -46,9 +46,6 @@ import queue as pyqueue
 import sys
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 from http import HTTPStatus
 
 try:
@@ -88,9 +85,14 @@ from muse_discord.directory.scopes import DirectoryScopes
 from muse_discord.directory.snapshot import DirectorySnapshot
 from muse_discord.durable_state import QueuePublication, StateFile
 from muse_discord.generated_replies import GeneratedReplies
-from muse_discord.http_runtime import DiscordCalls, RequestOptions, RestBackoff
+from muse_discord.http_runtime import DiscordCalls, RestBackoff
 from muse_discord.ingest import MessageEnqueuer
-from muse_discord.interactions import ephemeral, interaction_user_id
+from muse_discord.interaction_dispatch import (
+    InteractionResponder,
+    InteractionRouter,
+    InteractionWorker,
+)
+from muse_discord.interactions import ephemeral
 from muse_discord.message_ledger import MessageLedger
 from muse_discord.message_models import (
     PROACTIVE_KIND as PRO_KIND,
@@ -158,7 +160,6 @@ from muse_discord.watches.runtime import WatchRuntime
 from muse_discord.watches.web import WebWatchWork
 
 CONFIG_PATH_ARGUMENT = 2
-APPLICATION_COMMAND_TYPE = 2
 MEMBER_CACHE_LIMIT = 2000
 EMPTY_OUTBOX_MAX_BYTES = 4  # JSON [] with optional whitespace/newline
 
@@ -1015,69 +1016,13 @@ def apply_record(state, rec):
 # "/<name>" for a slash command. A handler gets (interaction, the rest of
 # the custom_id, the clicking user's id, record) and returns the callback
 # response; record(dict) hands a state change to the main loop.
-INTERACTION_HANDLERS = {}  # key -> (handler, owner_only)
-INTERACTION_CALLBACK_TIMEOUT = 2.5  # inside Discord's 3s deadline
-
-
-def register_interaction(key, handler, owner_only=True):
-    INTERACTION_HANDLERS[key] = (handler, owner_only)
-
-
-def dispatch_interaction(ix, record):
-    data = ix.get("data") or {}
-    if ix.get("type") in (3, 5):  # MESSAGE_COMPONENT, MODAL_SUBMIT
-        key, _, rest = str(data.get("custom_id") or "").partition(":")
-    elif ix.get("type") == APPLICATION_COMMAND_TYPE:
-        key, rest = "/" + str(data.get("name") or ""), ""
-    else:
-        return None  # nothing to answer (e.g. autocomplete)
-    entry = INTERACTION_HANDLERS.get(key)
-    if entry is None:
-        return ephemeral("That control is no longer active.")
-    handler, owner_only = entry
-    uid = interaction_user_id(ix)
-    if owner_only and uid not in OWNER_USER_IDS:
-        return ephemeral("Only this bot's owners can use that.")
-    return handler(ix, rest, uid, record)
-
-
-def interaction_callback(ix, response):
-    """Anonymous interaction token auth, independent of Bot-token failures."""
-    path = (
-        f"/interactions/{urllib.parse.quote(str(ix['id']), safe='')}/"
-        f"{urllib.parse.quote(str(ix['token']), safe='')}/callback"
-    )
-    response = guard_outgoing(response, "an interaction response")
-    _DISCORD.request(
-        "POST",
-        path,
-        response,
-        options=RequestOptions(timeout=INTERACTION_CALLBACK_TIMEOUT, anonymous=True),
-    )
-
-
-def _interaction_thread_main(ix_inbox, record):
-    """Answer interactions as they arrive (fed by the gateway thread)."""
-    while True:
-        ix = ix_inbox.get()
-        try:
-            response = dispatch_interaction(ix, record)
-        except Exception as e:
-            print(f"Interaction handler error: {e}", flush=True)
-            response = ephemeral("Something went wrong; try again.")
-        if response is None:
-            continue
-        try:
-            interaction_callback(ix, response)
-        except Exception as e:
-            print(f"Interaction response failed: {e}", flush=True)
+_INTERACTIONS: InteractionRouter
+_INTERACTION_RESPONDER: InteractionResponder
+_INTERACTION_WORKER: InteractionWorker
 
 
 def on_update_button(ix, rest, uid, record):
     return _update_notices().on_button(ix, rest, uid, record)
-
-
-register_interaction("mdupd", on_update_button)
 
 
 # ---------------------------------------------------------------------------
@@ -1116,16 +1061,10 @@ def on_hold_button(ix, rest, uid, record):
     return _reply_review().on_button(ix, rest, uid, record)
 
 
-register_interaction("mdhold", on_hold_button)
-
-
 def on_proactive_button(ix, rest, uid, record):
     """mdpro:yes:<token>: the Yes on the monitor's own question to one
     person (proactive.py, asks); anyone may click, only theirs counts."""
     return PRO.on_button(ix, rest, uid, record) or ephemeral("That button is no longer active.")
-
-
-register_interaction("mdpro", on_proactive_button, owner_only=False)
 
 
 # ---------------------------------------------------------------------------
@@ -2657,7 +2596,7 @@ def _start_monitor_threads(state):
     _holds_live.update({hid: h.get("at", 0) for hid, h in (state.get("holds") or {}).items()})
     _update_announced["version"] = (state.get("update_notice") or {}).get("version")
     threading.Thread(
-        target=_interaction_thread_main,
+        target=_INTERACTION_WORKER.run,
         args=(_ix_inbox, lambda rec: _gateway_inbox.put({"_record": rec})),
         daemon=True,
         name="interactions",
@@ -2746,7 +2685,7 @@ def _initialize_services():
     """Build process-owned services after configuration and token validation."""
     global TM, PRO, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT, _STATE_STORE
-    global _SETTINGS_SESSIONS, _COMMANDS
+    global _SETTINGS_SESSIONS, _COMMANDS, _INTERACTIONS, _INTERACTION_RESPONDER, _INTERACTION_WORKER
     _SETTINGS_SESSIONS = SettingsSessions(lambda: time.time())
     _STATE_STORE = StateFile(lambda: STATE_FILE)
     _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
@@ -2760,6 +2699,12 @@ def _initialize_services():
     _DISCORD = DiscordCalls(
         lambda: TOKEN, _BACKOFF, _HEALTH, lambda data, where: guard_outgoing(data, where)
     )
+    _INTERACTIONS = InteractionRouter(lambda: OWNER_USER_IDS)
+    _INTERACTIONS.register("mdupd", on_update_button)
+    _INTERACTIONS.register("mdhold", on_hold_button)
+    _INTERACTIONS.register("mdpro", on_proactive_button, owner_only=False)
+    _INTERACTION_RESPONDER = InteractionResponder(_DISCORD)
+    _INTERACTION_WORKER = InteractionWorker(_INTERACTIONS, _INTERACTION_RESPONDER)
     _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
     _DIRECT_MESSAGES = DirectChannels()
     _ACTIVITY = GatewayActivity()

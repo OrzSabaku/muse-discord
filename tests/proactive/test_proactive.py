@@ -253,7 +253,7 @@ class Base(unittest.TestCase):
             "message": {"content": "question"},
         }
         with quiet() as buf:
-            r = self.m.dispatch_interaction(ix, recs.append)
+            r = self.m._INTERACTIONS.dispatch(ix, recs.append)
             for rec in recs:
                 self.m.apply_record(self.st, rec)
         self.out += buf.getvalue()
