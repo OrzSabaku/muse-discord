@@ -23,6 +23,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "watches"))
 import test_binding as tb  # noqa: E402
 from settings_harness import CH, OWNER, quiet  # noqa: E402
 
+from muse_discord.message_models import SecretBlocked  # noqa: E402 (source path bootstrap)
+
 
 def token_like(uid="111000000000000009"):
     """A string shaped like a Discord bot token for uid."""
@@ -94,7 +96,7 @@ class Outbox(tb.Base):
         ]
         with mock.patch.object(m._DISCORD, "request", lambda *a, **k: opened.append(a)), quiet():
             for call in calls:
-                with self.assertRaises(m.SecretBlocked):
+                with self.assertRaises(SecretBlocked):
                     call()
         self.assertEqual(opened, [])
 
@@ -107,7 +109,7 @@ class Outbox(tb.Base):
         with (
             mock.patch.object(m._DISCORD, "request", lambda *a, **k: opened.append(a)),
             quiet(),
-            self.assertRaises(m.SecretBlocked),
+            self.assertRaises(SecretBlocked),
         ):
             m.send_reply_with_files(CH, "ok", [(leak, "cat.png")])
         self.assertEqual(opened, [])

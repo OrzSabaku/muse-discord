@@ -64,7 +64,6 @@ except ImportError:
 from muse_discord import generated_media, media_ingest, reply_protocol, storage
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
-from muse_discord import secret_scan as SCAN
 from muse_discord.admission import AdmissionPolicy, SharedServers
 from muse_discord.bursts import (
     BurstEffects,
@@ -99,7 +98,6 @@ from muse_discord.message_models import (
     LedgerContext,
     MessagePlace,
     QueueContext,
-    SecretBlocked,
     Speaker,
 )
 from muse_discord.message_models import (
@@ -115,6 +113,7 @@ from muse_discord.messaging.typing import TypingIndicators, TypingState
 from muse_discord.monitor_health import MonitorHealth, token_rejected_exit
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
 from muse_discord.outbox_store import redact_nonces as redact_nonces
+from muse_discord.outgoing_guard import OutgoingGuard, collect_nonces
 from muse_discord.owner.admin_digest import AdminDigests
 from muse_discord.owner.authorization import OwnerAuthorization
 from muse_discord.owner.capabilities import CapabilityFiles, CapabilityIssuer
@@ -560,84 +559,23 @@ def api_get(path):
 # ---------------------------------------------------------------------------
 
 
-_SECRET_ALERT = {"day": None, "busy": False}
+_OUTPUT: OutgoingGuard
 
 
 def _live_nonces():
-    """Every nonce the monitor holds live: the values of its flat nonce
-    maps, and the "nonce" fields of owner_items and the web checks
-    (never other fields, such as a check's public group tag)."""
-    out = set()
-    for cache in (_OWNER_DM_NONCES_WRITTEN, _ITEM_NONCES_WRITTEN):
-        body = cache.get("body")
-        if isinstance(body, dict):
-            out |= {v for v in body.values() if isinstance(v, str) and v}
-    with contextlib.suppress(Exception):  # a live heartbeat slot's nonce (proactive.py)
-        out |= {v for v in (PRO.secret_nonces() or ()) if v}
-
-    def walk(v):
-        if isinstance(v, dict):
-            for k, x in v.items():
-                if k == "nonce" and isinstance(x, str) and x:
-                    out.add(x)
-                else:
-                    walk(x)
-        elif isinstance(v, list):
-            for x in v:
-                walk(x)
-
-    for cache in (_OWNER_ITEMS_WRITTEN, _WEB_DUE_WRITTEN):
-        walk(cache.get("body"))
-    return out
+    return collect_nonces(
+        (_OWNER_DM_NONCES_WRITTEN.get("body"), _ITEM_NONCES_WRITTEN.get("body")),
+        (_OWNER_ITEMS_WRITTEN.get("body"), _WEB_DUE_WRITTEN.get("body")),
+        lambda: PRO.secret_nonces(),
+    )
 
 
 def secret_in(text):
-    """What secret text carries, or None (secret_scan.find)."""
-    return SCAN.find(text, TOKEN, _live_nonces())
-
-
-def _payload_strings(v, key=None):
-    if isinstance(v, str):
-        if key != "nonce":  # Discord's own send nonce, derived
-            yield v
-    elif isinstance(v, dict):
-        for k, x in v.items():
-            yield from _payload_strings(x, k)
-    elif isinstance(v, list):
-        for x in v:
-            yield from _payload_strings(x, key)
+    return _OUTPUT.find(text)
 
 
 def guard_outgoing(data, where):
-    """Raise SecretBlocked (and log, and tell the owners once a day) when
-    anything data would send carries a secret: any of its strings, or
-    all of them joined (a token split across parts, embed fields or file
-    names). data is returned as is: nothing is ever altered. Every send
-    helper calls it."""
-    texts = list(_payload_strings(data))
-    for text in [*texts, "".join(texts)]:
-        what = secret_in(text)
-        if what:
-            print(f"Blocked a send to {where}: it contained {what}; nothing was sent.", flush=True)
-            _secret_alert(where)
-            raise SecretBlocked(f"blocked: it contained {what}")
-    return data
-
-
-def _secret_alert(where):
-    """DM the owners about a blocked send, once a day (never raises)."""
-    day = time.strftime("%Y-%m-%d")
-    if _SECRET_ALERT["day"] == day or _SECRET_ALERT["busy"]:
-        return
-    _SECRET_ALERT.update(day=day, busy=True)
-    try:
-        notify_owners(
-            "I didn't send a reply because it looked like it "
-            "held a secret (my bot token or one of my private "
-            "codes). I tell you about this at most once a day."
-        )
-    finally:
-        _SECRET_ALERT["busy"] = False
+    return _OUTPUT.guard(data, where)
 
 
 def api_post(path, data):
@@ -3426,7 +3364,7 @@ def initialize(config_path=None, token_override=None):
     global PRO, SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
     global TM, TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
     global _S0, _SETTINGS, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
-    global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH
+    global _DIRECT_MESSAGES, _DISCORD, _BACKOFF, _HEALTH, _OUTPUT
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
@@ -3471,6 +3409,12 @@ def initialize(config_path=None, token_override=None):
         sys.exit(1)
     _HEALTH = MonitorHealth(lambda: HEARTBEAT_FILE, lambda: time.time())
     _BACKOFF = RestBackoff(BACKOFF_INITIAL_SECS, BACKOFF_MAX_SECS, lambda: time.time())
+    _OUTPUT = OutgoingGuard(
+        lambda: TOKEN,
+        _live_nonces,
+        lambda text: notify_owners(text),
+        lambda: time.strftime("%Y-%m-%d"),
+    )
     _DISCORD = DiscordCalls(
         lambda: TOKEN, _BACKOFF, _HEALTH, lambda data, where: guard_outgoing(data, where)
     )

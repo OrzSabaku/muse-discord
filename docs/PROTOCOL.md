@@ -23,6 +23,7 @@
 | 受信添付の取得・文書抽出・動画フレーム抽出 | `src/muse_discord/media_ingest.py` |
 | 生成添付のパス検証・圧縮・期限切れ削除 | `src/muse_discord/generated_media.py` |
 | ファイル排他・原子的な保存 | `src/muse_discord/storage.py` |
+| 送信前の秘密情報検査・ライブnonce収集・所有者への通知制限 | `src/muse_discord/outgoing_guard.py` |
 | 送信形式・添付・分割送信・入力中表示 | `src/muse_discord/messaging/` |
 | サーバー・チャンネルの探索・所属・設定用スナップショット | `src/muse_discord/directory/` |
 | 所有者DMの認可・権限・記憶・通知・承認 | `src/muse_discord/owner/` |
@@ -117,6 +118,7 @@ RESTの巡回と定期ジョブの実行順・待ち時間は `rest_scheduler.Re
 RESTとGatewayの受信は `receiving.messages`、Gatewayイベントの振り分けは `receiving.gateway` が持つ。`receiving.cursor` はRESTの確認位置とGatewayで処理したIDを分けて保持し、Gatewayの受信で通信断中の未取得メッセージを飛び越さない。既知DMの対応表は `receiving.direct` が持つ。
 処理結果と診断理由は `message_ledger.MessageLedger` が保存する。`receiving.reconciliation` は台帳と処理中のIDを `RecoveryScan` にまとめ、確認できないメッセージだけを再登録する。返信済み・保留中・送信待ちの連投は断片からも二重登録しない。
 HTTPの長い制限待ちと認証失敗は `http_runtime`、稼働記録は `monitor_health` が持つ。RESTの完了・失敗時に稼働記録を更新し、匿名のinteraction応答が401になってもBotのトークン拒否として扱わない。
+送信前の検査は `outgoing_guard.OutgoingGuard` が持つ。値の書き換えは行わず、各文字列と結合した内容を検査する。所有者への通知回数はスレッド間で共有し、ロックを解放してから送ることで再帰した検査でも待ち合わない。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

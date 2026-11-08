@@ -14,6 +14,8 @@ sys.path.insert(0, HERE)
 import test_secrets as ts  # noqa: E402
 from test_secrets import CH, TOKEN, quiet, token_like  # noqa: E402
 
+from muse_discord.message_models import SecretBlocked  # noqa: E402 (source path bootstrap)
+
 FOREIGN = token_like()  # another bot's token, read by the worker
 
 
@@ -65,7 +67,7 @@ class Upload(ts.tb.Base):
         with (
             mock.patch.object(m._DISCORD, "request", urlopen),
             quiet(),
-            contextlib.suppress(m.SecretBlocked, OSError),
+            contextlib.suppress(SecretBlocked, OSError),
         ):
             m.send_reply_with_files(CH, "see " + TOKEN[:30], [(half, "half.txt")])
         self.assertEqual(opened, [], "the upload was sent")
