@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import yaml
+from pydantic import ValidationError
 
 from muse_discord.settings_display import (
     CATEGORY_TYPE,
@@ -61,7 +62,7 @@ from muse_discord.settings_display import (
 from muse_discord.settings_display import (
     ValueChange as ValueChange,
 )
-from muse_discord.settings_schema import CORE, CORE_GROUPS, TOP
+from muse_discord.settings_schema import CORE, CORE_GROUPS, TOP, EngineSettings
 from muse_discord.settings_schema import NOTES_MAX as NOTES_MAX
 from muse_discord.settings_schema import PRESENCE_KINDS as PRESENCE_KINDS
 
@@ -79,15 +80,6 @@ DEFAULT_TOKEN_FILE = "~/.config/muse-discord/bot_token"
 DEFAULT_PERSONA = "persona.md"
 # Short key names a channel/category entry uses.
 CHANNEL_SHORT = {"replies": "who.replies", "notes": "style.notes"}
-ENGINE_KEYS = {
-    "rest_poll_seconds": None,
-    "discovery_refresh_minutes": None,
-    "coalesce_seconds": None,
-    "max_reply_chars": None,
-    "guild_ids": None,
-    "sweep": {"every_cycles", "grace_seconds", "max_age_hours", "max_recoveries"},
-    "backoff": {"initial_seconds", "max_seconds"},
-}
 _ID_RE = re.compile(r"^[0-9]{1,25}$")
 
 
@@ -423,7 +415,8 @@ class Settings:
         self.overlay_doc = {}
         self.retire = []  # [(keystr, entry, reason)]
         self.labels = {}
-        self.engine = {}
+        self.engine = EngineSettings()
+        self.engine_warnings = []
         self.owners = []
         self.persona = DEFAULT_PERSONA
         self.token_from = DEFAULT_TOKEN_FILE
@@ -465,7 +458,7 @@ class Settings:
         return out
 
     def guild_ids(self):
-        return [str(g) for g in self.engine.get("guild_ids") or []]
+        return list(self.engine.guild_ids)
 
     # -- layers ------------------------------------------------------------
     def layer(self, path, key):
@@ -1029,28 +1022,15 @@ def _parse_servers(p, data, st):
 
 
 def _parse_engine(p, data, st):
-    eng = data.get("engine")
-    if eng is not None:
-        if not isinstance(eng, dict):
-            p.err("engine", "expected a block")
-        else:
-            for k, sub in eng.items():
-                if k not in ENGINE_KEYS:
-                    p.err(f"engine.{k}", "unknown engine setting; valid: " + ", ".join(ENGINE_KEYS))
-                elif isinstance(ENGINE_KEYS[k], set):
-                    if not isinstance(sub, dict):
-                        p.err(f"engine.{k}", "expected a block")
-                        continue
-                    for kk in sub:
-                        if kk not in ENGINE_KEYS[k]:
-                            p.err(
-                                f"engine.{k}.{kk}",
-                                "unknown; valid: " + ", ".join(sorted(ENGINE_KEYS[k])),
-                            )
-            gids = eng.get("guild_ids")
-            if gids is not None and not isinstance(gids, list):
-                p.err("engine.guild_ids", "expected a list of server ids")
-            st.engine = eng
+    engine = data.get("engine")
+    try:
+        st.engine = EngineSettings.model_validate(
+            {} if engine is None else engine, context={"warnings": st.engine_warnings}
+        )
+    except ValidationError as exc:
+        for error in exc.errors(include_url=False):
+            path = ".".join(str(part) for part in ("engine", *error["loc"]))
+            p.err(path, error["msg"])
 
 
 def _parse_new(p, data, st):

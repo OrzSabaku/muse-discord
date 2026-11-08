@@ -270,50 +270,6 @@ def _on_settings_changed(prev, cur):
         print(f"Owners are now: {', '.join(sorted(OWNER_USER_IDS)) or 'none'}", flush=True)
 
 
-@dataclass
-class NumericRule:
-    default: int | float
-    cast: type[int] | type[float]
-    minimum: int | float | None = None
-    maximum: int | float | None = None
-
-
-def _cfg_num(section, key, name, rule):
-    """Resolve one numeric setting. Only a missing or null value means
-    "use the default": an explicit 0 is honored wherever 0 is a real
-    setting. Where a value would busy-loop, divide by zero, or blank
-    every reply, it is clamped into [minimum, maximum] with a warning
-    printed once, here at import."""
-    default = rule.default
-    cast = rule.cast
-    minimum = rule.minimum
-    maximum = rule.maximum
-    raw = section.get(key)
-    if raw is None:
-        return cast(default)
-    try:
-        val = cast(raw)
-    except TypeError, ValueError:
-        print(
-            f"WARNING: config {name}={raw!r} is not a number; using the default {default}.",
-            flush=True,
-        )
-        return cast(default)
-    if minimum is not None and val < minimum:
-        print(
-            f"WARNING: config {name}={raw!r} is below the minimum {minimum}; using {minimum}.",
-            flush=True,
-        )
-        return cast(minimum)
-    if maximum is not None and val > maximum:
-        print(
-            f"WARNING: config {name}={raw!r} is above the maximum {maximum}; using {maximum}.",
-            flush=True,
-        )
-        return cast(maximum)
-    return val
-
-
 # --- Read once at import: identity and engine internals ---
 OWNER_USER_IDS = set(_S0.owners)
 GUILD_ALLOWLIST = set(_S0.guild_ids())
@@ -344,94 +300,21 @@ def is_bot_author(author):
     return bool(author.get("bot")) and str(author.get("id")) not in TREAT_AS_HUMAN
 
 
-# 0 = no coalescing: every trigger is queued on the next tick.
-_ENGINE = _S0.engine or {}
-_ENG = "engine"
-COALESCE_SECS = _cfg_num(
-    _ENGINE,
-    "coalesce_seconds",
-    f"{_ENG}.coalesce_seconds",
-    rule=NumericRule(default=5, cast=float, minimum=0),
-)
-# Bots running this package send long replies as 2-4 parts with a 2-4s
-# typing beat between them, so a bot's burst gets a longer window to
-# arrive whole before its trigger is queued.
+# Operational defaults and normalization are owned by EngineSettings.
+_ENGINE = _S0.engine
+for _warning in _S0.engine_warnings:
+    print(_warning, flush=True)
+COALESCE_SECS = _ENGINE.coalesce_seconds
 BOT_COALESCE_SECS = max(COALESCE_SECS, 15.0)
-# Every part is cut to this length too, so it may not exceed Discord's
-# 2000-character message limit; 0 would blank every reply.
-MAX_REPLY_CHARS = _cfg_num(
-    _ENGINE,
-    "max_reply_chars",
-    f"{_ENG}.max_reply_chars",
-    rule=NumericRule(default=1800, cast=int, minimum=1, maximum=2000),
-)
-# Each full poll is a request per channel: 0 would busy-loop the main
-# loop and hammer Discord's per-IP rate limit.
-POLL_INTERVAL = _cfg_num(
-    _ENGINE,
-    "rest_poll_seconds",
-    "engine.rest_poll_seconds",
-    rule=NumericRule(default=30, cast=int, minimum=10),
-)
-_SWEEP_CFG = _ENGINE.get("sweep") or {}
-# Used as a modulus: 0 would abort every poll cycle midway.
-SWEEP_EVERY_CYCLES = _cfg_num(
-    _SWEEP_CFG,
-    "every_cycles",
-    "engine.sweep.every_cycles",
-    rule=NumericRule(default=6, cast=int, minimum=1),
-)
-SWEEP_GRACE_SECS = _cfg_num(
-    _SWEEP_CFG,
-    "grace_seconds",
-    "engine.sweep.grace_seconds",
-    rule=NumericRule(default=240, cast=float, minimum=0),
-)
-# 0 = no mention is young enough to sweep: recovery is off, by choice.
-SWEEP_MAX_AGE_SECS = (
-    _cfg_num(
-        _SWEEP_CFG,
-        "max_age_hours",
-        "engine.sweep.max_age_hours",
-        rule=NumericRule(default=6, cast=float, minimum=0),
-    )
-    * 3600
-)
-# 0 = never requeue; a lost mention is ledgered as skipped instead.
-SWEEP_MAX_RECOVERIES = _cfg_num(
-    _SWEEP_CFG,
-    "max_recoveries",
-    "engine.sweep.max_recoveries",
-    rule=NumericRule(default=2, cast=int, minimum=0),
-)
-_BACKOFF_CFG = _ENGINE.get("backoff") or {}
-# A zero backoff would answer a 429 with more requests at once.
-BACKOFF_INITIAL_SECS = _cfg_num(
-    _BACKOFF_CFG,
-    "initial_seconds",
-    "engine.backoff.initial_seconds",
-    rule=NumericRule(default=60, cast=float, minimum=1),
-)
-BACKOFF_MAX_SECS = _cfg_num(
-    _BACKOFF_CFG,
-    "max_seconds",
-    "engine.backoff.max_seconds",
-    rule=NumericRule(default=900, cast=float, minimum=1),
-)
-# Discovery probes every channel; 0 would re-run it on every poll.
-CHANNEL_REFRESH_CYCLES = max(
-    1,
-    round(
-        _cfg_num(
-            _ENGINE,
-            "discovery_refresh_minutes",
-            "engine.discovery_refresh_minutes",
-            rule=NumericRule(default=30, cast=float, minimum=1),
-        )
-        * 60
-        / POLL_INTERVAL
-    ),
-)
+MAX_REPLY_CHARS = _ENGINE.max_reply_chars
+POLL_INTERVAL = _ENGINE.rest_poll_seconds
+SWEEP_EVERY_CYCLES = _ENGINE.sweep.every_cycles
+SWEEP_GRACE_SECS = _ENGINE.sweep.grace_seconds
+SWEEP_MAX_AGE_SECS = _ENGINE.sweep.max_age_hours * 3600
+SWEEP_MAX_RECOVERIES = _ENGINE.sweep.max_recoveries
+BACKOFF_INITIAL_SECS = _ENGINE.backoff.initial_seconds
+BACKOFF_MAX_SECS = _ENGINE.backoff.max_seconds
+CHANNEL_REFRESH_CYCLES = max(1, round(_ENGINE.discovery_refresh_minutes * 60 / POLL_INTERVAL))
 
 
 def _load_token():
