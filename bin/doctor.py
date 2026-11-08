@@ -40,7 +40,10 @@ AGE_HOUR_THRESHOLD = 2 * 60 * 60
 CANNOT_DM_DISCORD_CODE = 50007
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import setup_common as C  # noqa: E402 (local import path bootstrap)
+import setup_common  # noqa: E402 (local import path bootstrap)
+
+setup_common.ensure_src_on_path()
+from muse_discord.setup import support as C  # noqa: E402
 
 HOOKS = (
     # (stamp, what it is, how often it runs, older than this = problem)
