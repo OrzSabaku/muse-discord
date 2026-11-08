@@ -18,6 +18,7 @@ from harness import monitor as m
 
 from muse_discord.outbox_store import OUTBOX_POISON_TRIES
 from muse_discord.reply_delivery import SEND_RETRY_SECS
+from muse_discord.storage import SharedLockTimeout
 
 
 @contextmanager
@@ -39,7 +40,7 @@ class LockTimeout(unittest.TestCase):
         first, worker, incoming = [{"message_id": snowflake()} for _ in range(3)]
         write(m.QUEUE_FILE, [first])
         with held_lock():
-            with self.assertRaises(m.SharedLockTimeout):
+            with self.assertRaises(SharedLockTimeout):
                 m.queue_edit(add=[incoming], drop=lambda q: q == first)
             self.assertEqual(read(m.QUEUE_FILE), [first])
             write(m.QUEUE_FILE, [first, worker])  # the lock holder's write
@@ -59,7 +60,7 @@ class LockTimeout(unittest.TestCase):
         state = new_state()
         item = {"item": snowflake(), "channel_id": "101", "text": "waiting"}
         write(m.OUTBOX_FILE, [item])
-        with held_lock(), self.assertRaises(m.SharedLockTimeout):
+        with held_lock(), self.assertRaises(SharedLockTimeout):
             m._OUTBOX.pass_once(state)
         self.assertEqual(read(m.OUTBOX_FILE), [item])
         self.assertFalse(os.path.exists(m.OUTBOX_PROCESSING_FILE))
@@ -83,7 +84,7 @@ class LockTimeout(unittest.TestCase):
             with (
                 patch.object(m, "api_post", post),
                 capture(),
-                self.assertRaises(m.SharedLockTimeout),
+                self.assertRaises(SharedLockTimeout),
             ):
                 m._OUTBOX.pass_once(state)
             self.assertEqual(state["reply_nonces"][mid]["nonce"], nonce)
@@ -112,7 +113,7 @@ class LockTimeout(unittest.TestCase):
 
             with patch.object(m, "api_post", side_effect=fail_send) as send, capture():
                 for attempt in (1, 2):
-                    with self.assertRaises(m.SharedLockTimeout):
+                    with self.assertRaises(SharedLockTimeout):
                         m._OUTBOX.pass_once(state)
                     checkpoint = read(m.STATE_FILE)
                     retry = next(iter(checkpoint["outbox_retries"].values()))
@@ -164,14 +165,14 @@ class LockTimeout(unittest.TestCase):
             capture(),
         ):
             m.stage_trigger(state, incoming, "general", "mention", place=m.MessagePlace("G"))
-            with held_lock(), self.assertRaises(m.SharedLockTimeout):
-                m._stage_polled_messages(state, [])
+            with held_lock(), self.assertRaises(SharedLockTimeout):
+                m._QUEUE_STAGING.stage(state, [])
         restored = read(m.STATE_FILE)
         self.assertFalse(restored["pending"])
         self.assertEqual(restored["queue_backlog"][0]["message_id"], incoming["id"])
         self.assertEqual(read(m.QUEUE_FILE), [])
         with capture():
-            m._stage_polled_messages(restored, [])
+            m._QUEUE_STAGING.stage(restored, [])
         self.assertEqual([q["message_id"] for q in read(m.QUEUE_FILE)], [incoming["id"]])
         self.assertNotIn("queue_backlog", read(m.STATE_FILE))
 
@@ -180,9 +181,9 @@ class LockTimeout(unittest.TestCase):
         write(m.QUEUE_FILE, [{"message_id": mid, "channel_id": "101"}])
         item = signed(m, state, {"item": mid, "reply_to": mid, "channel_id": "101", "text": "hi"})
         write(m.OUTBOX_FILE, [item])
-        with patch.object(m.OutboxDelivery, "actions", side_effect=m.SharedLockTimeout("busy")):
+        with patch.object(m.OutboxDelivery, "actions", side_effect=SharedLockTimeout("busy")):
             for _ in range(OUTBOX_POISON_TRIES):
-                with self.assertRaises(m.SharedLockTimeout):
+                with self.assertRaises(SharedLockTimeout):
                     m._OUTBOX.pass_once(state)
         self.assertEqual(m._OUTBOX.poison, {})
         self.assertEqual(read(m.OUTBOX_PROCESSING_FILE), [item])
@@ -216,7 +217,7 @@ class LockTimeout(unittest.TestCase):
         self.assertIs(actual_status, status)
         self.assertEqual(read(m.STATE_FILE)["queue_backlog"][0]["message_id"], incoming["id"])
         with capture():
-            m._stage_polled_messages(restored, [])
+            m._QUEUE_STAGING.stage(restored, [])
         self.assertEqual([q["message_id"] for q in read(m.QUEUE_FILE)], [incoming["id"]])
 
     def test_replayed_backlog_does_not_resurrect_a_settled_item(self):

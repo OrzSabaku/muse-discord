@@ -51,6 +51,7 @@ from settings_harness import (
 )
 
 from muse_discord.settings_presets import preset_changes
+from muse_discord.storage import SharedLockTimeout
 
 DM_U1 = "400000000000000079"
 DM_U2 = "400000000000000080"
@@ -1097,7 +1098,7 @@ class PublicationRecovery(Base):
         m, pro = self.m, self.m.PRO
         with open(m.LOCK_FILE, "a") as holder, mock.patch.object(m, "LOCK_WAIT_SECS", 0):
             fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with quiet(), self.assertRaises(m.SharedLockTimeout):
+            with quiet(), self.assertRaises(SharedLockTimeout):
                 self.heartbeat("private")
         saved = pro.store.data()["slot"]
         sid, nonce, deadlines = saved["id"], saved["nonce"], dict(pro.store.data()["heartbeats"])
@@ -1119,7 +1120,7 @@ class PublicationRecovery(Base):
         m, pro = self.m, self.m.PRO
         with open(m.LOCK_FILE, "a") as holder, mock.patch.object(m, "LOCK_WAIT_SECS", 0):
             fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with quiet(), self.assertRaises(m.SharedLockTimeout):
+            with quiet(), self.assertRaises(SharedLockTimeout):
                 self.heartbeat("private")
         slot = pro.store.data()["slot"]
         pro.store._data = None

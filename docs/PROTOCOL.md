@@ -33,6 +33,7 @@ outboxの処理中項目・失敗回数・新規返信の到着検知は `Outbox
 | 設定の再読み込み・所有者状態・スレッド間の変更引き渡し | `src/muse_discord/settings_watch.py` |
 | メッセージの処理結果・診断理由の永続化と観測した名前のキャッシュ | `src/muse_discord/message_ledger.py` |
 | 受信拒否・送信権限不足の記録と重複ログの抑制 | `src/muse_discord/receiving/audit.py` |
+| 受信バーストのキュー登録・再起動時の未登録項目の復旧 | `src/muse_discord/receiving/staging.py` |
 | 受信内容の検査・連投全体の隔離・破損記録の退避 | `src/muse_discord/receiving/quarantine.py` |
 | REST・Gateway受信の分類・確認位置・重複排除 | `src/muse_discord/receiving/` |
 | 連投の集約・到着順序・登録失敗の再試行 | `src/muse_discord/bursts.py` |

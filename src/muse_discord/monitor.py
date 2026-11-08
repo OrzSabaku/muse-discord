@@ -119,6 +119,7 @@ from muse_discord.receiving.gateway import GatewayEvents, GatewayIngress
 from muse_discord.receiving.messages import ReceivedMessages, ReceptionEffects
 from muse_discord.receiving.quarantine import MessageQuarantine, is_suspicious
 from muse_discord.receiving.reconciliation import MentionReconciler, RecoveryWindow
+from muse_discord.receiving.staging import QueueStaging
 from muse_discord.reply_binding import ReplyBinding, StalePrompt
 from muse_discord.reply_delivery import OutboxDelivery, ReplyEffects
 from muse_discord.reply_policy import ReplyPolicy
@@ -139,7 +140,7 @@ from muse_discord.rest_scheduler import run_phase as _run_phase
 from muse_discord.settings_commands import SETTINGS_PREFIX, CommandRegistrar
 from muse_discord.settings_runtime import SettingsContext, SettingsSessions
 from muse_discord.settings_watch import LiveSettings
-from muse_discord.storage import PrivateFile, SharedLockTimeout, atomic_write
+from muse_discord.storage import PrivateFile, atomic_write
 from muse_discord.storage import publish_private as _publish
 from muse_discord.watches.audience import WatchAudience
 from muse_discord.watches.delivery import WatchDelivery
@@ -532,8 +533,12 @@ def queue_edit(add=(), drop=None):
     return _queue_files().edit(add, drop)
 
 
+def _queue_publication():
+    return QueuePublication(_queue_files(), _STATE_STORE, _LEDGER)
+
+
 def publish_queue_additions(state, additions=()):
-    return QueuePublication(_queue_files(), _STATE_STORE, _LEDGER).publish(state, additions)
+    return _queue_publication().publish(state, additions)
 
 
 def load_state():
@@ -891,6 +896,7 @@ def register_commands(gateway_status=None):
     return _COMMANDS.register(gateway_status)
 
 
+_QUEUE_STAGING: QueueStaging
 _ACTIVITY: GatewayActivity
 
 
@@ -1270,29 +1276,6 @@ def _drain_live_messages(state, _gateway_inbox):
             stage_trigger(state, msg, cname, "dm", place=MessagePlace(guild_id=None, dm=True))
 
 
-def _stage_polled_messages(state, dm_items):
-    # Stage polled DMs into the coalescing buffer (bursts from
-    # the same author fold into one pending entry; guild triggers
-    # were staged as they were classified). Matured bursts flush
-    # into single queue items.
-    # The queue snapshot only serves the duplicate checks: what
-    # gets written is just the items appended to it, applied to a
-    # fresh read under the lock (queue_edit), because the flush
-    # can take tens of seconds (media downloads, ffmpeg) while the
-    # monitor's own sends remove answered items.
-    queue = load_queue()
-    queued = {q.get("message_id") for q in queue if isinstance(q, dict)}
-    queue.extend(q for q in state.get("queue_backlog", []) if q["message_id"] not in queued)
-    n_before = len(queue)
-    for msg, cname in dm_items:
-        stage_trigger(state, msg, cname, "dm", place=MessagePlace(guild_id=None, dm=True))
-
-    flush_pending(state, queue)
-    publish_queue_additions(state, queue[n_before:])
-    save_state(state)
-    return queue
-
-
 def _retry_cycle_identity(cycle_done):
     if cycle_done:
         _BACKOFF.clean_cycle()
@@ -1459,17 +1442,7 @@ def _start_monitor():
     # gateway degrades to the 30s poll.
     inbox, status = _start_monitor_threads(state)
 
-    # A restart must not drop bursts staged before it: their messages are
-    # already marked seen, so flush them immediately instead of waiting out
-    # a coalesce window that mostly elapsed while the monitor was down.
-    if state.get("pending"):
-        queue = load_queue()
-        n_before = len(queue)
-        if flush_pending(state, queue, force=True):
-            try:
-                publish_queue_additions(state, queue[n_before:])
-            except SharedLockTimeout as exc:
-                print(f"Startup queue publication deferred: {exc}", flush=True)
+    _QUEUE_STAGING.recover(state)
     save_state(state)
 
     return state, inbox, status
@@ -1547,7 +1520,7 @@ def _initialize_owner_services():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
-    global _LEDGER, _RECEPTION_AUDIT
+    global _QUEUE_STAGING, _LEDGER, _RECEPTION_AUDIT
     global _OUTBOX
     global _SENDER, _PARTS, _TYPING
     global _PROCESS_LOCK, _GATEWAY, _ACCESS, _AUTHOR_ROLES, _WATCH_STORE, _WATCH_STATE
@@ -1604,6 +1577,7 @@ def _initialize_services():
         now=lambda: time.time(),
     )
     _RECEPTION_AUDIT = ReceptionAudit(_LEDGER)
+    _QUEUE_STAGING = QueueStaging(_bursts, _queue_publication)
     _initialize_owner_services()
     _OUTBOX = OutboxProcessor(
         _outbox_files,
@@ -1701,7 +1675,7 @@ def main():
         _run_phase("Reminders and watches", watch_tick, state)
         _run_phase("Proactive", PRO.tick, state)
         poll_turn, rest_spent = scheduler.poll_slice(state, now, backing, dm_items)
-        queue = _run_phase("Queue/staging", _stage_polled_messages, state, dm_items)
+        queue = _run_phase("Queue/staging", _QUEUE_STAGING.stage, state, dm_items)
         _run_phase("Typing", _TYPING.refresh, state, queue)
         outbox_pass_at = time.time()
         _run_phase("Outbox", _send_outbox, state)
