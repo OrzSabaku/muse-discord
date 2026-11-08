@@ -110,6 +110,12 @@ class OwnerPresence:
                     )
         self.restore(state)
 
+    def note_author(self, gid):
+        """An owner's message resolves an outstanding membership check locally."""
+        if gid and gid in self.membership and self.membership[gid] is not True:
+            self.membership[gid] = True
+            self.spoke[gid] = True
+
     def absent(self, gid):
         """True when no owner is known to be in this server (checked and
         absent, or not checked yet since the bot joined) and no owner chose

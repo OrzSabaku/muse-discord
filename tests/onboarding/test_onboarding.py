@@ -417,7 +417,7 @@ class OwnerlessServer(unittest.TestCase):
         self.assertEqual(mod.ledger_code("skipped", f"settings: {why}"), "ownerless")
         # Not a shared server for DMs (who.dms_from: shared-servers).
         mod.api.members[(G2, U1)] = []
-        mod._SHARED_SERVER.clear()
+        mod._SHARED_MEMBERSHIP.clear()
         self.assertFalse(mod.shares_server(U1))
         # A restart whose boot discovery fails keeps the gate.
         with quiet():

@@ -67,6 +67,7 @@ from muse_discord import generated_media, media_ingest, reply_protocol, storage
 from muse_discord import muse_settings as MS
 from muse_discord import muse_watches as W
 from muse_discord import secret_scan as SCAN
+from muse_discord.admission import AdmissionPolicy, SharedServers
 from muse_discord.bursts import (
     BurstEffects,
     CoalescePolicy,
@@ -1166,67 +1167,25 @@ def who_allows(msg, guild_id, resolved):
 # user id -> (shares a server with the bot?, checked at), for
 # who.dms_from: shared-servers. Positive answers last an hour, negative
 # ones ten minutes.
-_SHARED_SERVER = {}
+_SHARED_MEMBERSHIP: SharedServers
+
+
+def _admission():
+    return AdmissionPolicy(
+        _response_policy(), _owner_presence(), _directory_scopes(), _SHARED_MEMBERSHIP
+    )
 
 
 def shares_server(user_id):
-    user_id = str(user_id)
-    hit = _SHARED_SERVER.get(user_id)
-    now = time.time()
-    if hit and now - hit[1] < (3600 if hit[0] else 600):
-        return hit[0]
-    if rest_backing_off():
-        return bool(hit and hit[0])
-    for gid in list(GUILDS):
-        if owners_absent(gid):
-            continue  # a server no owner is in shares nothing
-        try:
-            api_get(f"/guilds/{gid}/members/{user_id}")
-        except Exception as e:
-            if getattr(e, "code", None) in (403, 404):
-                continue  # not a member there
-            return bool(hit and hit[0])  # transient: decide later
-        _SHARED_SERVER[user_id] = (True, now)
-        return True
-    _SHARED_SERVER[user_id] = (False, now)
-    return False
-
-
-def _dm_audience_problem(uid, res):
-    policy = res["who.dms_from"]
-    if policy == "owners":
-        return "who.dms_from is owners"
-    if isinstance(policy, list) and uid not in policy:
-        return "not in who.dms_from"
-    if people_match(res["who.ignore"], uid):
-        return "on who.ignore"
-    if not people_match(res["who.allow"], uid):
-        return "not in who.allow"
-    if policy == "shared-servers" and not shares_server(uid):
-        return "shares no server with the bot"
-    return None
+    return _SHARED_MEMBERSHIP.contains(user_id)
 
 
 def dm_refusal(author):
-    """Why a DM from author is not read and answered, or None when it is:
-    who.replies (off = no DMs at all), who.dms_from (owners |
-    shared-servers | anyone | a list of user ids: the owners plus those
-    people), who.bots, and who.allow / who.ignore at the DM scope."""
-    res = settings().resolve(MS.Scope.dm())
-    if res["who.replies"] == "off":
-        return "who.replies is off for DMs"
-    uid = str((author or {}).get("id") or "")
-    bot = is_bot_author(author)
-    if uid in OWNER_USER_IDS and not bot:
-        return None
-    if bot and res["who.bots"] == "ignore":
-        return "who.bots is ignore"
-    return _dm_audience_problem(uid, res)
+    return _admission().dm_refusal(author)
 
 
 def dm_sender_allowed(author):
-    """Whether a DM from author is read and answered (see dm_refusal)."""
-    return dm_refusal(author) is None
+    return _admission().dm_sender_allowed(author)
 
 
 def retire_overlay_changes():
@@ -1248,7 +1207,7 @@ def retire_overlay_changes():
 
 
 def dms_enabled():
-    return settings().get("who.replies", MS.Scope.dm()) != "off"
+    return _admission().dms_enabled()
 
 
 # ---------------------------------------------------------------------------
@@ -2141,50 +2100,8 @@ def addresses_bot(msg):
     return _conversation().addresses_bot(msg)
 
 
-def _trigger_policy_problem(author, gid, here):
-    replies = here["who.replies"]
-    owner = str(author.get("id") or "") in OWNER_USER_IDS
-    if replies == "off":
-        return "who.replies is off here"
-    if not owner and owners_absent(gid):
-        return "none of the owners is in this server"
-    if is_bot_author(author) and here["who.bots"] == "ignore":
-        return "who.bots: ignore"
-    return None
-
-
 def trigger_verdict(msg, guild_id=None, state=None):
-    """trigger_kind plus why: (kind, refusal). refusal is set only when
-    the message addresses the bot directly (addresses_bot) and the
-    settings of its scope decline it; ordinary chatter gets None."""
-    author = _who(msg)
-    if author.get("id") == BOT_ID:
-        return None, None
-    gid = (
-        guild_id
-        or msg.get("guild_id")
-        or (CHANNELS.get(msg.get("channel_id")) or {}).get("guild_id")
-    )
-    here = settings().resolve(scope_for(gid, msg.get("channel_id")))
-    replies = here["who.replies"]
-    direct = addresses_bot(msg)
-    owner = str(author.get("id") or "") in OWNER_USER_IDS
-    if owner and gid and gid in OWNER_IN_GUILD and OWNER_IN_GUILD[gid] is not True:
-        OWNER_IN_GUILD[gid] = True  # an owner wrote there: a member
-        _OWNER_SPOKE[gid] = True
-    refusal = _trigger_policy_problem(author, gid, here)
-    if refusal:
-        return None, refusal if direct else None
-    freely = replies == "freely" and not is_bot_author(author)
-    if (
-        not direct
-        and not freely
-        and not (state is not None and replies == "conversational" and follow_up_open(state, msg))
-    ):
-        return None, None
-    if not who_allows(msg, gid, here):
-        return None, ("not allowed by who.allow / who.ignore" if direct else None)
-    return ("mention" if direct else "follow_up"), None
+    return _admission().trigger_verdict(msg, guild_id, state)
 
 
 def note_refused(msg, cname, reason):
@@ -2607,21 +2524,15 @@ def classify_message(state, msg, channel_name, guild_id=None):
 # default (owners) the bot never even records a stranger's DM, so there
 # is nothing to decline or deflect.
 def dm_listed_people():
-    """The people who.dms_from names (a list of user ids), else []."""
-    v = settings().get("who.dms_from", MS.Scope.dm())
-    return [str(u) for u in v] if isinstance(v, list) else []
+    return _admission().dm_listed_people()
 
 
 def dm_poll_user_ids():
-    if not dms_enabled():
-        return []
-    return sorted(set(OWNER_USER_IDS) | set(dm_listed_people()))
+    return _admission().dm_poll_user_ids()
 
 
 def dm_swept_author(uid):
-    """Whose DMs the poll and the sweep cover (and so whose refused DMs
-    are ledgered): the owners and the people who.dms_from names."""
-    return str(uid) in OWNER_USER_IDS or str(uid) in dm_listed_people()
+    return _admission().dm_swept_author(uid)
 
 
 # The DM channels the poll has resolved, {channel_id: recipient name}:
@@ -4265,7 +4176,7 @@ def initialize(config_path=None, token_override=None):
     global COALESCE_SECS, GUILD_ALLOWLIST, MAX_REPLY_CHARS, OWNER_USER_IDS, POLL_INTERVAL
     global PRO, SWEEP_EVERY_CYCLES, SWEEP_GRACE_SECS, SWEEP_MAX_AGE_SECS, SWEEP_MAX_RECOVERIES
     global TM, TOKEN, TREAT_AS_HUMAN, _ENGINE, _INITIALIZED
-    global _S0, _SETTINGS, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH
+    global _S0, _SETTINGS, _DIRECTORY_VIEW, _ACTIVITY, _DISCOVERY_REFRESH, _SHARED_MEMBERSHIP
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
@@ -4311,6 +4222,13 @@ def initialize(config_path=None, token_override=None):
     _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
     _ACTIVITY = GatewayActivity()
     _DISCOVERY_REFRESH = DiscoveryRefresh()
+    _SHARED_MEMBERSHIP = SharedServers(
+        lambda path: api_get(path),
+        lambda: rest_backing_off(),
+        lambda: list(GUILDS),
+        lambda gid: owners_absent(gid),
+        lambda: time.time(),
+    )
     TM = _import_telemetry()
     PRO = _import_proactive()
     _INITIALIZED = True
