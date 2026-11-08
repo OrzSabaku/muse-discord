@@ -5,9 +5,11 @@ handler failures from later interactions and hands state changes back through
 its supplied record callback; it never mutates the main loop's state directly.
 """
 
+import queue
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from threading import Thread
 
 from muse_discord.http_runtime import DiscordCalls, RequestOptions
 from muse_discord.interactions import ephemeral, interaction_user_id
@@ -65,6 +67,16 @@ class InteractionResponder:
 class InteractionWorker:
     router: InteractionRouter
     responder: InteractionResponder
+    _thread: Thread | None = field(default=None, init=False, repr=False)
+
+    def start(self, ix_inbox: queue.Queue, record: Callable[[dict], None]) -> Thread:
+        """Start the dedicated responder once, after its approval state is restored."""
+        if self._thread is None:
+            self._thread = Thread(
+                target=self.run, args=(ix_inbox, record), daemon=True, name="interactions"
+            )
+            self._thread.start()
+        return self._thread
 
     def run(self, ix_inbox, record):
         """Answer interactions as they arrive (fed by the gateway thread)."""

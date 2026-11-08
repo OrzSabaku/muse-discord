@@ -52,6 +52,12 @@ class ReplyReview:
     settle: Callable[..., None]
     live: dict = field(default_factory=dict)
 
+    def restore(self, state):
+        """Restore live hold timestamps before the interaction worker accepts clicks."""
+        self.live.update(
+            {hid: hold.get("at", 0) for hid, hold in (state.get("holds") or {}).items()}
+        )
+
     def hit(self, state, item, qid, parts):
         """True when this reply must be held (see above)."""
         phrases = self.settings_source().get("privacy.never_share", MS.Scope.everywhere())

@@ -9,7 +9,7 @@ import contextlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from threading import Lock
+from threading import Lock, Thread
 from typing import Any
 
 from muse_discord.conversation import _snowflake_ts
@@ -29,6 +29,14 @@ class TypingIndicators:
     sources: dict = field(default_factory=dict)
     last: dict = field(default_factory=dict)
     lock: Lock = field(default_factory=Lock)
+    _thread: Thread | None = field(default=None, init=False, repr=False)
+
+    def start(self) -> Thread:
+        """Start this process's typing refresher once, independent of slow main-loop work."""
+        if self._thread is None:
+            self._thread = Thread(target=self.run, daemon=True, name="typing")
+            self._thread.start()
+        return self._thread
 
     def send(self, channel_id):
         """Show the typing indicator for ~10s. Signals responsiveness while

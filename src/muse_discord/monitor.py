@@ -40,7 +40,6 @@ config.example.yaml for the schema.
 
 import os
 import sys
-import threading
 import time
 
 try:
@@ -1304,20 +1303,11 @@ def _send_outbox(state):
 def _start_monitor_threads(state):
     _gateway_inbox, _gateway_status = _GATEWAY.start()
     _ix_inbox = _GATEWAY.interactions
-    # Typing indicator on its own clock (see _TYPING.refresh).
-    threading.Thread(target=_TYPING.run, daemon=True, name="typing").start()
-    # Interactions (button clicks) on their own thread, fed straight by
-    # the gateway thread: the 3s acknowledgement deadline never waits on
-    # the main loop. What they change in state comes back through the
-    # gateway inbox ("_record", applied by drain_gateway).
-    _REVIEW.live.update({hid: h.get("at", 0) for hid, h in (state.get("holds") or {}).items()})
-    _UPDATE_NOTICES.announced["version"] = (state.get("update_notice") or {}).get("version")
-    threading.Thread(
-        target=_INTERACTION_WORKER.run,
-        args=(_ix_inbox, lambda rec: _gateway_inbox.put({"_record": rec})),
-        daemon=True,
-        name="interactions",
-    ).start()
+    _TYPING.start()
+    # Restore approval mirrors before accepting clicks on the dedicated worker.
+    _REVIEW.restore(state)
+    _UPDATE_NOTICES.restore(state)
+    _INTERACTION_WORKER.start(_ix_inbox, lambda rec: _gateway_inbox.put({"_record": rec}))
 
     return _gateway_inbox, _gateway_status
 

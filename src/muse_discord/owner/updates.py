@@ -100,6 +100,10 @@ class UpdateNotices:
     installed: Callable[..., bool]
     announced: dict = field(default_factory=lambda: {"version": None})
 
+    def restore(self, state):
+        """Restore the announced version before the interaction worker accepts clicks."""
+        self.announced["version"] = (state.get("update_notice") or {}).get("version")
+
     def announce(self, state):
         """DM the owners about the release in update_check.json, once per
         version: only a version newer than the last one announced is
