@@ -43,7 +43,6 @@ import json
 import os
 import re
 import secrets
-import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -62,6 +61,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from muse_discord.storage import atomic_write
 
 MAX_TIME_STRING_LENGTH = 40
 UTC_YEAR_2100 = 4102444800
@@ -441,24 +442,11 @@ class Store:
             before = json.dumps(data, sort_keys=True)
             yield data
             if json.dumps(data, sort_keys=True) != before:
-                self._write(data)
+                atomic_write(self.path, data, 0o600)
             self._data = data
             self._sig = self._stat()
         finally:
             os.close(fd)
-
-    def _write(self, data):
-        d = os.path.dirname(self.path) or "."
-        fd, tmp = tempfile.mkstemp(dir=d, prefix=".watches.json.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w") as f:
-                os.fchmod(f.fileno(), 0o600)
-                json.dump(data, f)
-            os.replace(tmp, self.path)
-        except BaseException:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-            raise
 
 
 def new_id(data, kind):
