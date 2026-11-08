@@ -26,6 +26,8 @@ from settings_harness import (  # noqa: E402 (local import path bootstrap)
     state,
 )
 
+from muse_discord.settings_commands import SETTINGS_COMMAND, WHY_COMMAND  # noqa: E402 (source path bootstrap)
+
 CFG = f"""version: 1
 owners: ["{OWNER}"]
 token_from: env:MUSE_TEST_TOKEN
@@ -114,7 +116,7 @@ def discord_copy(mod, **over):
         "contexts": [1, 0],
         "type": 1,
         "name": "settings",
-        "description": mod.SETTINGS_COMMAND["description"],
+        "description": SETTINGS_COMMAND["description"],
         "default_member_permissions": None,
     }
     c.update(over)
@@ -148,14 +150,14 @@ class Registration(unittest.TestCase):
         return r, out.getvalue()
 
     def test_command_definitions_within_discord_limits(self):
-        for c in (self.mod.SETTINGS_COMMAND, self.mod.WHY_COMMAND):
+        for c in (SETTINGS_COMMAND, WHY_COMMAND):
             self.assertEqual(c["contexts"], [0, 1])  # servers and DMs
             self.assertEqual(c["integration_types"], [0])
             self.assertNotIn("dm_permission", c)  # deprecated for contexts
             self.assertLessEqual(len(c["name"]), 32)
-        self.assertLessEqual(len(self.mod.SETTINGS_COMMAND["description"]), 100)
-        self.assertIsNone(self.mod.SETTINGS_COMMAND["default_member_permissions"])
-        why = self.mod.WHY_COMMAND
+        self.assertLessEqual(len(SETTINGS_COMMAND["description"]), 100)
+        self.assertIsNone(SETTINGS_COMMAND["default_member_permissions"])
+        why = WHY_COMMAND
         self.assertEqual(why["type"], 3)  # a message command
         self.assertNotIn("description", why)  # none on menu commands
         self.assertEqual(why["default_member_permissions"], "32")
@@ -166,11 +168,11 @@ class Registration(unittest.TestCase):
         self.assertEqual(r, "created")
         posts = [x for x in api.log if x[0] == "POST"]
         self.assertEqual(len(posts), 2)
-        self.assertEqual(posts[0][2], self.mod.SETTINGS_COMMAND)
-        self.assertEqual(posts[1][2], self.mod.WHY_COMMAND)
+        self.assertEqual(posts[0][2], SETTINGS_COMMAND)
+        self.assertEqual(posts[1][2], WHY_COMMAND)
         # Once per run: later ticks make no request.
         n = len(api.log)
-        self.mod._COMMAND_REG["next_try"] = 0
+        self.mod._COMMANDS.next_try = 0
         self.assertIsNone(self.run_reg()[0])
         self.assertEqual(len(api.log), n)
         # Already there as Discord returns it: nothing written (a PATCH
@@ -196,16 +198,17 @@ class Registration(unittest.TestCase):
         ]  # the message command
         for over, why_over in cases:
             with self.subTest(over or why_over):
-                mod._COMMAND_REG.update(done=False, next_try=0)
+                mod._COMMANDS.done = False
+                mod._COMMANDS.next_try = 0
                 api = FakeCommands(mod, [discord_copy(mod, **over), why_copy(mod, **why_over)])
                 self.assertEqual(self.run_reg()[0], "updated")
                 patches = [x for x in api.log if x[0] == "PATCH"]
                 self.assertEqual(len(patches), 1)
                 self.assertEqual(
                     patches[0][1:],
-                    ("/applications/777/commands/c1", mod.SETTINGS_COMMAND)
+                    ("/applications/777/commands/c1", SETTINGS_COMMAND)
                     if over
-                    else ("/applications/777/commands/c2", mod.WHY_COMMAND),
+                    else ("/applications/777/commands/c2", WHY_COMMAND),
                 )
                 self.assertFalse([x for x in api.log if x[0] == "POST"])
 
@@ -230,7 +233,8 @@ class Registration(unittest.TestCase):
         api2 = FakeCommands(
             self.mod, [discord_copy(self.mod), why_copy(self.mod, name="Why no reply")]
         )
-        self.mod._COMMAND_REG.update(done=False, next_try=0)
+        self.mod._COMMANDS.done = False
+        self.mod._COMMANDS.next_try = 0
         self.assertEqual(self.run_reg()[0], "unchanged")
         self.assertEqual([x[0] for x in api2.log], ["GET"])
 
@@ -239,16 +243,16 @@ class Registration(unittest.TestCase):
         api.fail = 2
         r, _out = self.run_reg()
         self.assertIsNone(r)
-        self.assertFalse(self.mod._COMMAND_REG["done"])
+        self.assertFalse(self.mod._COMMANDS.done)
         # Not before the retry delay.
         n = len(api.log)
         self.assertIsNone(self.run_reg()[0])
         self.assertEqual(len(api.log), n)
-        self.mod._COMMAND_REG["next_try"] = 0
+        self.mod._COMMANDS.next_try = 0
         self.assertIsNone(self.run_reg()[0])  # fails again
-        self.mod._COMMAND_REG["next_try"] = 0
+        self.mod._COMMANDS.next_try = 0
         self.assertEqual(self.run_reg()[0], "created")
-        self.assertTrue(self.mod._COMMAND_REG["done"])
+        self.assertTrue(self.mod._COMMANDS.done)
 
 
 # ----------------------------------------------------------------- routing

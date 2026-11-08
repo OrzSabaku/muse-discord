@@ -18,6 +18,7 @@ from discord.ext import tasks
 
 from muse_discord import muse_settings as ms
 from muse_discord import settings_ui
+from muse_discord.settings_commands import SETTINGS_NAMES, WHY_NAMES
 
 PRESENCE_UPDATE_SECONDS = 5
 AUTHENTICATION_FAILED = 4004
@@ -178,23 +179,19 @@ class Connection(discord.Client):
     @staticmethod
     def native_settings(raw):
         data = raw.get("data") or {}
-        return data.get("name") in ("settings", "Why no reply?", "Why no reply") or str(
-            data.get("custom_id", "")
-        ).startswith((settings_ui.PREFIX, "mdset:"))
+        return data.get("name") in SETTINGS_NAMES or str(data.get("custom_id", "")).startswith(
+            (settings_ui.PREFIX, "mdset:")
+        )
 
     async def on_interaction(self, interaction):
         data = interaction.data or {}
         name, custom = data.get("name"), data.get("custom_id", "")
         try:
-            if name in (
-                "settings",
-                "Why no reply?",
-                "Why no reply",
-            ) or custom.startswith("mdset:"):
+            if name in SETTINGS_NAMES or custom.startswith("mdset:"):
                 # Acknowledge before even loading config from disk.
                 await interaction.response.defer(ephemeral=True, thinking=True)
                 ctx = await asyncio.to_thread(self.settings_context)
-                if name in ("Why no reply?", "Why no reply"):
+                if name in WHY_NAMES:
                     await settings_ui.why_message(interaction, ctx)
                 elif custom.startswith("mdset:") and not custom.startswith("mdset:open:server:"):
                     await interaction.edit_original_response(
