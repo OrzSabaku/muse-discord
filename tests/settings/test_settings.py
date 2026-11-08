@@ -45,6 +45,9 @@ from settings_harness import (
     write,
 )
 
+from muse_discord.settings import overlay as settings_overlay
+from muse_discord.settings import resolution as settings_resolution
+
 NEW_BASE = f"""version: 1
 owners: ["{OWNER}"]
 token_from: env:MUSE_TEST_TOKEN
@@ -244,7 +247,10 @@ channels:
 
     def test_freely_is_a_more_permissive_rule(self):
         self.assertTrue(MS.loosens("who.replies", "conversational", "freely"))
-        self.assertEqual(MS._quieter("who.replies", "freely", "when-addressed"), "when-addressed")
+        self.assertEqual(
+            settings_resolution._quieter("who.replies", "freely", "when-addressed"),
+            "when-addressed",
+        )
 
 
 class RemovedPlugins(unittest.TestCase):
@@ -329,7 +335,7 @@ class Overlay(unittest.TestCase):
         st = MS.load(cfg)
         self.assertEqual(st.retire, [])
         self.assertEqual(st.get("who.replies", S()), "off")
-        doc = MS._read_overlay_doc(st.overlay_path)
+        doc = settings_overlay._read_overlay_doc(st.overlay_path)
         self.assertEqual(doc["values"][key]["base"], "when-addressed")
         # inherit: as if the server set nothing.
         MS.reset(cfg, key, OWNER)
@@ -346,7 +352,7 @@ class Overlay(unittest.TestCase):
         st2 = MS.load(cfg)
         self.assertEqual(st2.retire, [])
         self.assertEqual(st2.commit_retirements(), [])
-        hist = MS._read_overlay_doc(st.overlay_path)["history"]
+        hist = settings_overlay._read_overlay_doc(st.overlay_path)["history"]
         self.assertEqual(hist[-1]["retired"], "file changed")
 
     def test_number_cap_overlay_survives_reload(self):
@@ -357,7 +363,7 @@ class Overlay(unittest.TestCase):
         st, cfg = load_text(NEW_BASE)
         key = f'servers."{G1}".proactive.per_channel_per_day'
         MS.set_value(cfg, key, 30, actor=MS.WriteActor(by=OWNER))
-        doc = MS._read_overlay_doc(MS.overlay_path_for(cfg))
+        doc = settings_overlay._read_overlay_doc(MS.overlay_path_for(cfg))
         self.assertIsNone(doc["values"][key]["base"])
         st = MS.load(cfg)
         self.assertEqual(st.retire, [])

@@ -250,6 +250,8 @@ def write_config(cfg, owner_id, rep):
     that already lists them is left alone; anything else is backed up
     before it is replaced. Returns the loaded settings."""
     MS = C.settings_module()
+    from muse_discord.storage import atomic_write_text
+
     text = None
     if os.path.exists(cfg):
         try:
@@ -285,7 +287,7 @@ def write_config(cfg, owner_id, rep):
             )
     # Check it exactly as the bot will, before it replaces anything.
     MS.load(cfg, text=text)
-    MS.atomic_write_text(cfg, text)
+    atomic_write_text(cfg, text)
     return MS, C.load_settings(cfg)
 
 

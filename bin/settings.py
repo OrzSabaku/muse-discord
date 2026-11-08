@@ -66,6 +66,8 @@ sys.path[:0] = [os.path.join(PKG, "src"), os.path.join(PKG, "bin")]
 import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
 
 from muse_discord import muse_settings as MS  # noqa: E402
+from muse_discord.settings import resolution as settings_resolution  # noqa: E402 (source path bootstrap)
+from muse_discord.settings import values as settings_values  # noqa: E402 (source path bootstrap)
 from muse_discord.settings_assessment import assess  # noqa: E402
 from muse_discord.settings_presets import matching_preset, preset_changes  # noqa: E402 (source path bootstrap)
 
@@ -188,7 +190,7 @@ def cmd_show(args):
     if scope.kind == "everywhere":
         show_global(st)
     kinds = {
-        MS._scope_kind(p)
+        settings_values._scope_kind(p)
         for p, _n in st.chain(scope)
         if p[0] not in ("builtin", "builtin_all_servers")
     }
@@ -202,7 +204,7 @@ def cmd_show(args):
         if args.explain:
             for name, _path, is_set, v, src in rows:
                 shown = _fmt(spec, v) if is_set else "(not set)"
-                where = MS._source_text(src) if is_set else ""
+                where = settings_resolution._source_text(src) if is_set else ""
                 print(f"      {name:<28} {shown}" + (f"  ({where})" if where else ""))
     return 0
 
@@ -480,7 +482,7 @@ def main(argv=None):
     pl.add_argument("--server", help="only this server id")
     args = ap.parse_args(argv)
     by = getattr(args, "by", None)
-    if by is not None and (not str(by).strip() or MS._id_str(str(by)) is not None):
+    if by is not None and (not str(by).strip() or settings_values._id_str(str(by)) is not None):
         print(
             f"--by {by!r}: give a name (like muse.ai), not a user id; "
             f"user ids are for changes made in Discord.",

@@ -47,7 +47,12 @@
 | Discord接続・UI操作受付 | `src/muse_discord/discord_connection.py`（discord.py） |
 | 設定変更による応答対象・公開範囲・費用の評価 | `src/muse_discord/settings_assessment.py` |
 | プリセットの定義・変更案への変換・一致判定 | `src/muse_discord/settings_presets.py` |
-| 設定の継承・変更・保存 | `src/muse_discord/muse_settings.py` |
+| 設定の公開API | `src/muse_discord/muse_settings.py` |
+| 設定のキー・適用範囲・変更データ型 | `src/muse_discord/settings/values.py`・`places.py`・`changes.py` |
+| 設定の読み込み・再検証・継承の解決 | `src/muse_discord/settings/loading.py`・`resolution.py` |
+| 設定の変更計画・管理者権限の確認 | `src/muse_discord/settings/planning.py`・`permissions.py` |
+| Discord上書きの保存・変更の適用 | `src/muse_discord/settings/overlay.py`・`editing.py` |
+| 設定の履歴・取り消し・元ファイルへの反映 | `src/muse_discord/settings/history.py`・`folding.py` |
 | 設定の表示文言・名前解決 | `src/muse_discord/settings_display.py` |
 | 設定画面の読み書き・ユーザー別セッション | `src/muse_discord/settings_runtime.py` |
 | メッセージの処理結果から作る返信診断 | `src/muse_discord/message_outcomes.py` |
@@ -98,7 +103,7 @@
 - 操作先は所有者の依頼本文が指定した場所に限る。他人のDM、履歴・返信元・外部データによる権限拡張を拒否する。
 - 送信前に秘密情報・ライブnonceを検査し、本人DM以外では `privacy.never_share` も確認する。
 
-設定の階層・上書き判定は `src/muse_discord/muse_settings.py` に従います。同一階層のDiscord上書きは、元ファイルが変更されると退役します。
+設定の階層・上書き判定は `settings/resolution.py`、ファイル解析は `settings/loading.py` に従います。同一階層のDiscord上書きは、元ファイルが変更されると退役します。
 サーバー管理者の設定変更は、そのサーバーを静かにする範囲だけです。Bot権限から所有者の権限を付与しません。
 `/settings` はdiscord.pyの部品・コールバックを使い、変更を下書きにまとめて保存します。操作のたびに所有者・管理者の権限を再確認し、編集中に対象の設定が変わった場合は上書きしません。
 Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセージは既存の受信キューへ渡します。RESTポーリングによる受信漏れの補完と重複排除は維持します。
@@ -194,3 +199,5 @@ node --test telemetry/worker/test/worker.test.js
 - CLI・MCPの参考：`mothue/muse-discord`、`2e7665b02b83be0153e1e2b137192bc4f7c87c82`。[MIT表記](licenses/mothue-MIT.txt)。
 
 設定の再読み込みと所有者一覧は `settings_watch.LiveSettings` が管理する。UIスレッドからの読み込みは即時に最新設定を返し、所有者一覧の更新と変更通知はメインスレッドへ引き渡す。連続した変更は最初と最後の状態にまとめる。エンジン設定は起動時のPydanticモデルを保持し、通常の再読み込みで実行中のサービスを部分的に再設定しない。
+
+設定エンジンの公開窓口は `muse_settings` とし、実装は `settings` パッケージで担当する。キーと適用範囲を土台に、読み込み・継承解決、変更計画・権限確認、保存・履歴の順に依存させる。モジュール間の依存は循環させず、公開窓口には状態や中継関数を置かない。履歴と書き込みは同じoverlayロックを使う。

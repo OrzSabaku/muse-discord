@@ -12,9 +12,9 @@ from muse_discord.muse_settings import (
     PAIR_LENGTH,
     Place,
     Scope,
-    _id_str,
     simulate,
 )
+from muse_discord.settings.values import _id_str
 from muse_discord.settings_display import (
     ServerInfo,
     chain_names,

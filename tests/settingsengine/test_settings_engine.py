@@ -43,6 +43,7 @@ from fake import (
     load_monitor,
 )
 
+from muse_discord.settings import overlay as settings_overlay
 from muse_discord.settings_assessment import assess
 from muse_discord.settings_presets import matching_preset, preset_changes
 
@@ -1029,7 +1030,7 @@ def _writer(cfg, gid, n):
 
 
 class ReviewLow(unittest.TestCase):
-    @mock.patch.object(MS, "HISTORY_CAP", 9)  # odd: cuts land in a group
+    @mock.patch.object(settings_overlay, "HISTORY_CAP", 9)  # odd: cuts land in a group
     def test_history_trim_keeps_groups_whole_and_resume_value(self):
         cfg = config(self, BASE + "    who:\n      replies: when-addressed\n")
         apply(cfg, MS.pause_changes(S1))

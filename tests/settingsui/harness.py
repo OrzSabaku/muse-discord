@@ -17,6 +17,7 @@ from common import scratch
 sys.path.insert(0, os.path.join(MUT, "src"))
 from muse_discord import muse_settings as MS
 from muse_discord import settings_ui as UI
+from muse_discord.settings import overlay as settings_overlay
 
 # Native UI component prefix.
 P = UI.PREFIX
@@ -243,7 +244,7 @@ def install_determinism():
         counter["n"] += 1
         return f"{prefix}{counter['n']:010x}"
 
-    MS._now = lambda: FIXED_AT
+    settings_overlay._now = lambda: FIXED_AT
     MS.new_group_id = gid
     return counter
 
@@ -435,4 +436,4 @@ class FakeCtx:
         return MS.place_value(MS.load(self.cfg), place, key)
 
     def overlay(self):
-        return MS._read_overlay_doc(self.overlay_path)
+        return settings_overlay._read_overlay_doc(self.overlay_path)
