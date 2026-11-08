@@ -70,6 +70,7 @@ from muse_discord.messaging import formatting as reply_formatting
 from muse_discord.messaging.parts import PartDelivery
 from muse_discord.messaging.sending import MessageSender
 from muse_discord.messaging.typing import TypingIndicators
+from muse_discord.monitor_cli import parse_options
 from muse_discord.monitor_health import MonitorHealth, token_rejected_exit
 from muse_discord.monitor_process import MonitorLock
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
@@ -125,9 +126,6 @@ from muse_discord.watches.web import WebWatchWork
 from muse_discord.work_wait import WorkWait
 from muse_discord.worker_context import WorkerContext
 
-CONFIG_PATH_ARGUMENT = 2
-
-
 BASE_DIR = str(project_root(__file__))
 STATE_FILE = os.path.join(BASE_DIR, "state.json")
 QUEUE_FILE = os.path.join(BASE_DIR, "reply_queue.json")
@@ -149,12 +147,6 @@ OUTBOX_PROCESSING_FILE = os.path.join(BASE_DIR, "reply_outbox.processing.json")
 OUTBOX_REJECTED_FILE = os.path.join(BASE_DIR, "reply_outbox.rejected.json")
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
 GENERATED_DIR = os.path.join(BASE_DIR, "generated")
-
-
-def _config_path():
-    if len(sys.argv) > CONFIG_PATH_ARGUMENT and sys.argv[1] == "--config":
-        return sys.argv[2]
-    return os.environ.get("MUSE_DISCORD_CONFIG") or os.path.join(BASE_DIR, "config.yaml")
 
 
 _INITIALIZED = False
@@ -288,18 +280,6 @@ def _conversation():
 
 def is_bot_author(author):
     return _conversation().is_bot_author(author)
-
-
-# Operational defaults and normalization are owned by EngineSettings.
-
-
-def _load_token(initial_settings):
-    # argv (manual/transient use) wins; then token_from in order: an
-    # env:NAME source when that variable is set, a file when readable.
-    # The watchdog never passes a token.
-    if len(sys.argv) > 1 and sys.argv[1] != "--config":
-        return sys.argv[1]
-    return read_token(initial_settings.token_sources(), BASE_DIR)
 
 
 # The bot's own identity, fetched at startup. Used to recognize mentions,
@@ -1244,7 +1224,13 @@ def initialize(config_path=None, token_override=None):
     if _INITIALIZED:
         raise RuntimeError("monitor is already initialized")
     try:
-        _SETTINGS = LiveSettings(MS.Watcher(config_path or _config_path()))
+        _SETTINGS = LiveSettings(
+            MS.Watcher(
+                config_path
+                or os.environ.get("MUSE_DISCORD_CONFIG")
+                or os.path.join(BASE_DIR, "config.yaml")
+            )
+        )
     except MS.SettingsError as e:
         print(
             f"CONFIG ERROR: config.yaml is invalid; not starting.\n{e}", file=sys.stderr, flush=True
@@ -1263,7 +1249,11 @@ def initialize(config_path=None, token_override=None):
         )
     for _warning in initial.engine_warnings:
         print(_warning, flush=True)
-    TOKEN = token_override if token_override is not None else (_load_token(initial) or "")
+    TOKEN = (
+        token_override
+        if token_override is not None
+        else (read_token(initial.token_sources(), BASE_DIR) or "")
+    )
     if not TOKEN:
         print(
             "No bot token: pass one as argv[1], or point token_from at an environment "
@@ -1277,7 +1267,8 @@ def initialize(config_path=None, token_override=None):
 
 def main():
     if not _INITIALIZED:
-        initialize()
+        options = parse_options()
+        initialize(options.config, token_override=options.token)
     state, inbox, status = _start_monitor()
     scheduler = _rest_scheduler()
     outbox_pass_at = 0.0

@@ -49,6 +49,18 @@ class Bootstrap(unittest.TestCase):
         """)
         self.assertEqual(out, "")
 
+    def test_initialization_ignores_the_callers_arguments(self):
+        self.probe("""
+            import os, sys
+            from pathlib import Path
+            from muse_discord import monitor
+            Path("chosen.yaml").write_text("token_from: env:MUSE_BOOTSTRAP_TOKEN\\n")
+            os.environ["MUSE_BOOTSTRAP_TOKEN"] = "configured-token"
+            sys.argv = ["foreign-program", "--unrelated", "anything"]
+            monitor.initialize("chosen.yaml")
+            assert monitor.TOKEN == "configured-token"
+        """)
+
     def test_explicit_initialization_uses_supplied_config_and_token(self):
         self.probe("""
             from pathlib import Path

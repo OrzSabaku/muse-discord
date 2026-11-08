@@ -51,16 +51,6 @@ class CredentialSources(unittest.TestCase):
                 self.assertEqual(session.load_token(), "installation-value")
                 self.assertEqual(read_token(sources, root), "installation-value")
 
-    def test_monitor_argument_keeps_priority_over_configured_sources(self):
-        from muse_discord import monitor
-
-        settings = SimpleNamespace(token_sources=lambda: [("env", "MUSE_CREDENTIAL_VALUE")])
-        with patch.dict(os.environ, {"MUSE_CREDENTIAL_VALUE": "configured"}):
-            with patch.object(sys, "argv", ["monitor.py", "transient"]):
-                self.assertEqual(monitor._load_token(settings), "transient")
-            with patch.object(sys, "argv", ["monitor.py", "--config", "config.yaml"]):
-                self.assertEqual(monitor._load_token(settings), "configured")
-
     def test_missing_sources_return_no_value_and_cli_reports_its_own_failure(self):
         with tempfile.TemporaryDirectory() as root:
             sources = [("file", "missing")]
