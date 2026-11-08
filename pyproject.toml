@@ -34,7 +34,13 @@ line-length = 100
 target-version = "py315"
 
 [tool.ruff.lint]
+# Japanese UI punctuation and prose use these characters intentionally.
+allowed-confusables = ["（", "）", "：", "–"]
 select = ["E", "F", "B", "I", "UP", "SIM", "C901", "PLR", "FURB", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
+"e2e/**" = ["PLR2004", "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

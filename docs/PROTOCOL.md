@@ -86,6 +86,8 @@ uv run --group apps ruff format --check .
 uv run --group apps pyright
 ```
 
+Ruffは本体の複雑度・引数数も検査する。`tests/` と `e2e/` は期待値の数値と関数の規模・複雑度だけを除外し、構文・バグ検査は維持する。日本語UIの句読点は `allowed-confusables` で明示する。
+
 MCPを含めた型検査にはオプション依存も必要。CIとpre-commitもこの環境で検査する。
 実行ファイルとテストには、ソースの探索先を追加した後にimportする箇所がある。そこの `E402` だけを行単位で除外する。
 
