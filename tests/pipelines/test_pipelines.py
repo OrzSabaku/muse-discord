@@ -11,12 +11,14 @@ from unittest.mock import Mock
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "_lib"))
 import common  # noqa: F401 (select the source tree under test)
 
+from muse_discord.conversation import Conversation
 from muse_discord.ingest import IngestConversation, IngestJournal, IngestPolicy, MessageEnqueuer
 from muse_discord.message_models import QueueContext, SecretBlocked
 from muse_discord.message_queue import QueueFiles
 from muse_discord.muse_settings import Scope, Settings
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
 from muse_discord.reply_delivery import SEND_RETRY_SECS, OutboxDelivery, ReplyEffects, ReplyPolicy
+from muse_discord.response_policy import ResponsePolicy
 from muse_discord.storage import atomic_write, read_json
 
 
@@ -140,6 +142,38 @@ class Delivery(unittest.TestCase):
         self.assertEqual(self.batch.remaining, [])
         self.assertEqual(self.batch.settled, [self.item])
         self.effects.save_facts.assert_not_called()
+
+
+class LivePolicy(unittest.TestCase):
+    def test_changed_settings_and_owners_apply_without_rebuilding_policy(self):
+        def configuration(cap):
+            settings = Mock(spec=Settings)
+            settings.cap_layers.side_effect = lambda key, _: (
+                [("everywhere", cap)] if key == "limits.per_day" else []
+            )
+            return settings
+
+        current = [configuration(2)]
+        owners = set()
+        scope = Scope.dm()
+        policy = ResponsePolicy(
+            lambda: current[0],
+            lambda: owners,
+            Conversation("999", "muse"),
+            Mock(return_value=scope),
+            Mock(return_value=scope),
+            Mock(),
+            Mock(),
+        )
+        state = {"rate": {"day": "", "day_count": 0, "users": {}}}
+        self.assertIsNone(policy.rate_block(state, "300", scope=scope))
+        policy.rate_record(state, "300", scope)
+        current[0] = configuration(1)
+        self.assertEqual(policy.rate_block(state, "300", scope=scope)["cap"], 1)
+        owners.add("300")
+        self.assertIsNone(policy.rate_block(state, "300", scope=scope))
+        policy.rate_record(state, "300", scope)
+        self.assertEqual(state["rate"]["day_count"], 1)
 
 
 class Persistence(unittest.TestCase):

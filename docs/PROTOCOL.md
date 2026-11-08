@@ -10,6 +10,7 @@
 | 起動・イベント処理・各機能の接続 | `src/muse_discord/monitor.py` |
 | 受信バーストの検証・キュー項目の組み立て | `src/muse_discord/ingest.py` |
 | 返信の認可・副作用・送信結果の処理順 | `src/muse_discord/reply_delivery.py` |
+| 応答回数・メディア回数・対象者のポリシー | `src/muse_discord/response_policy.py` |
 | 呼びかけ・会話履歴・会話参加者 | `src/muse_discord/conversation.py` |
 | 共有キューの読み取り・差分更新 | `src/muse_discord/message_queue.py` |
 | outboxの取得・再起動復旧・送信後の確定 | `src/muse_discord/outbox_store.py` |
@@ -89,6 +90,8 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 `monitor` のimportでは設定やトークンを読み込まず、サービスを生成しない。`main()` が `initialize()` を呼び、テストも設定とトークンを指定して明示的に初期化する。
 自発発言は `ProactiveContext` に宣言した操作と状態の参照だけを受け取る。モニターの名前空間全体を渡さない。
 受信・返信の各段階は、検証済みの入力と処理結果を値として渡す。前のメソッドによる属性の追加を前提にしない。
+受信項目の組み立ては `ingest`、返信の処理順は `reply_delivery`、取得・復旧・確定のトランザクションは `outbox_store` が持つ。これらからモニターをimportしない。
+応答ポリシーは設定と所有者の取得関数を受け取り、再読み込み後も同じポリシーの呼び出しに反映する。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

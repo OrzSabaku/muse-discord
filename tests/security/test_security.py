@@ -33,6 +33,8 @@ sys.path.insert(
 from common import MUT_DIR as SRC  # noqa: E402
 from common import redirect_files, scratch, signed  # noqa: E402 (local import path bootstrap)
 
+from muse_discord.response_policy import _media_counts as media_counts  # noqa: E402
+
 WORK = scratch("muse-security-")
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 
@@ -434,7 +436,7 @@ def f2_failed_send_retries_with_image_and_counts_once():
     SEND_FILES_FAIL[0] = 1
     M.process_outbox(state)
     assert not FILE_SENDS
-    assert M._media_counts(state)["sent_today"] == 0, "media.per_day counted a failed send"
+    assert media_counts(state)["sent_today"] == 0, "media.per_day counted a failed send"
     assert x["id"] in state.get("gen_approved", {}), "approval popped early"
     assert os.path.realpath(img) not in state.get("gen_sent", []), "gen_sent recorded before send"
     ob = read_outbox()
@@ -445,7 +447,7 @@ def f2_failed_send_retries_with_image_and_counts_once():
     assert FILE_SENDS and FILE_SENDS[0]["files"] == [os.path.realpath(img)], (
         f"retry went out without the image: {FILE_SENDS}"
     )
-    assert M._media_counts(state)["sent_today"] == 1, "media.per_day must count the sent reply once"
+    assert media_counts(state)["sent_today"] == 1, "media.per_day must count the sent reply once"
     assert x["id"] not in state.get("gen_approved", {})
     assert os.path.realpath(img) in state.get("gen_sent", [])
     assert read_outbox() == []

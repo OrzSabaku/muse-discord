@@ -92,6 +92,12 @@ from muse_discord.outbox_store import redact_nonces as redact_nonces
 from muse_discord.paths import project_root
 from muse_discord.reply_delivery import OutboxDelivery
 from muse_discord.reply_protocol import is_snowflake as _is_snowflake
+from muse_discord.response_policy import (
+    ResponsePolicy,
+    note_guild_joined,
+    predates_join,
+)
+from muse_discord.response_policy import _iso_ts as _iso_ts
 from muse_discord.storage import SharedLockTimeout, atomic_write
 from muse_discord.storage import read_json as _read_json
 
@@ -1354,79 +1360,24 @@ def _quarantine_ids():
     return ids
 
 
+def _response_policy():
+    return ResponsePolicy(
+        settings,
+        lambda: OWNER_USER_IDS,
+        _conversation(),
+        scope_for,
+        scope_of_channel,
+        member_roles,
+        TM.count,
+    )
+
+
 def rate_block(state, user_id, channel_id=None, scope=None):
-    """Enforce limits.per_day and limits.per_person_per_day (none = off):
-    None when allowed, else the cap that stops it, {"key", "counter"
-    ("everywhere", "server:<id>", "dms": where the cap is set), "cap"}.
-    Each cap counts what happens in the scope WHERE IT IS SET (everywhere
-    = one total across DMs and every server, a server = that server, dms
-    = all DMs), and every cap set along the message's scope applies.
-    Owners are never capped or counted: these limits bound abuse and
-    token spend from strangers, not the owner's own use of the bot.
-    Counted at queue time, one per burst."""
-    if user_id in OWNER_USER_IDS:
-        return None
-    if scope is None:
-        scope = scope_of_channel(channel_id)
-    st = settings()
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
-    rate = state["rate"]
-
-    if rate["day"] != today:
-        rate["day"] = today
-        rate["day_count"] = 0
-        rate["users"] = {}
-        rate["scopes"] = {}
-    scopes = rate.setdefault("scopes", {})
-
-    for cid, cap in st.cap_layers("limits.per_day", scope):
-        n = rate["day_count"] if cid == "everywhere" else (scopes.get(cid) or {}).get("count", 0)
-        if n >= cap:
-            where = "" if cid == "everywhere" else f" for {cid}"
-            print(f"Rate limit: daily cap ({cap}){where} reached, skipping.", flush=True)
-            return {"key": "limits.per_day", "counter": cid, "cap": cap}
-
-    day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    for cid, cap in st.cap_layers("limits.per_person_per_day", scope):
-        users = (
-            rate["users"]
-            if cid == "everywhere"
-            else scopes.setdefault(cid, {}).setdefault("users", {})
-        )
-        user_hits = [t for t in users.get(user_id, []) if t >= day_start]
-        users[user_id] = user_hits
-        if len(user_hits) >= cap:
-            print(
-                f"Rate limit: user {user_id} hit per-user daily cap"
-                f"{'' if cid == 'everywhere' else ' for ' + cid}, "
-                f"skipping.",
-                flush=True,
-            )
-            return {"key": "limits.per_person_per_day", "counter": cid, "cap": cap}
-
-    return None
+    return _response_policy().rate_block(state, user_id, channel_id, scope)
 
 
 def rate_record(state, user_id, scope=None):
-    """Count one queued item against every counter of its scope (see
-    rate_block). Owners are not counted."""
-    if user_id in OWNER_USER_IDS:
-        return
-    rate = state["rate"]
-    now = time.time()
-    rate["day_count"] += 1
-    rate["users"].setdefault(user_id, []).append(now)
-    for cid in MS.Settings.counter_ids(scope or MS.Scope.everywhere())[1:]:
-        c = rate.setdefault("scopes", {}).setdefault(cid, {})
-        c["count"] = c.get("count", 0) + 1
-        c.setdefault("users", {}).setdefault(user_id, []).append(now)
-
-
-def _iso_ts(iso):
-    try:
-        return datetime.fromisoformat(str(iso)).timestamp()
-    except TypeError, ValueError:
-        return None
+    return _response_policy().rate_record(state, user_id, scope)
 
 
 # ---------------------------------------------------------------------------
@@ -1438,34 +1389,6 @@ def _iso_ts(iso):
 # classification and again at enqueue, independent of last_seen seeding.
 # Backlog still reaches the worker as history on a post-join trigger.
 # ---------------------------------------------------------------------------
-def note_guild_joined(state, gid, joined_at):
-    ts = _iso_ts(joined_at) if joined_at else None
-    if ts is not None:
-        state.setdefault("guild_joined", {})[gid] = ts
-
-
-def join_watermark(state, gid):
-    """The bot's join time in a guild. When Discord has not told us yet,
-    fall back to the moment this monitor first saw the guild: later than
-    the real join, so it can only err toward silence."""
-    joined = state.get("guild_joined", {}).get(gid)
-    if joined is not None:
-        return joined
-    first_seen = state.setdefault("guild_first_seen", {})
-    if gid not in first_seen:
-        first_seen[gid] = time.time()
-        print(
-            f"Join time unknown for guild {gid}; ignoring messages "
-            f"older than now until Discord reports it.",
-            flush=True,
-        )
-    return first_seen[gid]
-
-
-def predates_join(state, msg, gid):
-    if not gid:
-        return False  # DMs have no join
-    return _snowflake_ts(msg.get("id")) < join_watermark(state, gid)
 
 
 # ---------------------------------------------------------------------------
@@ -1531,20 +1454,7 @@ def member_roles(guild_id, user_id):
 
 
 def people_match(value, user_id, roles=lambda: set()):
-    """True when user_id is in a people value: "everyone", "owners", or
-    a list of user ids and "role:<id>" entries (roles() is only called
-    when the list names a role)."""
-    user_id = str(user_id or "")
-    if value == "everyone":
-        return True
-    if value == "owners":
-        return user_id in OWNER_USER_IDS
-    if not isinstance(value, list) or not value:
-        return False
-    if user_id in value:
-        return True
-    want = {v[5:] for v in value if v.startswith("role:")}
-    return bool(want and want & set(roles()))
+    return _response_policy().people_match(value, user_id, roles)
 
 
 def who_allows(msg, guild_id, resolved):
@@ -4448,55 +4358,11 @@ def sweep_gen_state(state):
 
 
 def media_permission(state, scope, here, author_matches):
-    """may_generate for a message in scope (here: its resolved
-    settings): media.enabled is on there, the author is in media.who
-    there (an empty list counts as the owners), and no media.per_day
-    cap set along the scope is reached (each counts in its own scope,
-    see note_media_sent)."""
-    if not here["media.enabled"]:
-        return False
-    if not author_matches(here["media.who"] or "owners"):
-        return False
-    counts = _media_counts(state)
-    for counter, cap in settings().cap_layers("media.per_day", scope):
-        sent = (
-            counts.get("sent_today", 0)
-            if counter == "everywhere"
-            else (counts.get("counts") or {}).get(counter, 0)
-        )
-        if sent >= cap:
-            print(
-                f"Media generation: daily cap ({cap}) reached; not granting may_generate",
-                flush=True,
-            )
-            return False
-    return True
+    return _response_policy().media_permission(state, scope, here, author_matches)
 
 
 def note_media_sent(state, scope):
-    """Count one reply with generated files sent in scope, for every
-    media.per_day counter it adds to (everywhere, its server, or DMs)."""
-    TM.count("media_sent")
-    counts = _media_counts(state)
-    counts["sent_today"] = counts.get("sent_today", 0) + 1
-    for counter in MS.Settings.counter_ids(scope):
-        if counter != "everywhere":
-            c = counts.setdefault("counts", {})
-            c[counter] = c.get(counter, 0) + 1
-
-
-def _media_counts(state):
-    """Today's media.per_day counts in state ("media_sent": day,
-    sent_today = the everywhere total, counts by server / dms), reset
-    each UTC day."""
-    today = datetime.now(UTC).strftime("%Y-%m-%d")
-    g = state.get("media_sent")
-    if not isinstance(g, dict):
-        g = state["media_sent"] = {}
-    if g.get("day") != today:
-        g.clear()
-        g.update(day=today, sent_today=0, counts={})
-    return g
+    return _response_policy().note_media_sent(state, scope)
 
 
 def _gen_item_id(state, item):
@@ -4883,57 +4749,7 @@ def note_item_meta(state, mid, **meta):
     _keep_last(m, 300)
 
 
-class _MonitorIngestPolicy:
-    @property
-    def owners(self) -> set[str]:
-        return OWNER_USER_IDS
-
-    @staticmethod
-    def predates_join(state, msg, gid):
-        return predates_join(state, msg, gid)
-
-    @staticmethod
-    def is_bot_author(author):
-        return is_bot_author(author)
-
-    @staticmethod
-    def own_replies_in_run(history, msg):
-        return own_replies_in_run(history, msg)
-
-    @staticmethod
-    def scope_for(guild_id=None, channel_id=None, dm=False):
-        return scope_for(guild_id, channel_id, dm)
-
-    @staticmethod
-    def settings():
-        return settings()
-
-    @staticmethod
-    def rate_block(state, user_id, channel_id=None, scope=None):
-        return rate_block(state, user_id, channel_id, scope)
-
-    @staticmethod
-    def rate_record(state, user_id, scope=None):
-        return rate_record(state, user_id, scope)
-
-    @staticmethod
-    def media_permission(state, scope, here, author_matches):
-        return media_permission(state, scope, here, author_matches)
-
-    @staticmethod
-    def people_match(value, user_id, roles=lambda: set()):
-        return people_match(value, user_id, roles)
-
-    @staticmethod
-    def member_roles(guild_id, user_id):
-        return member_roles(guild_id, user_id)
-
-
-class _MonitorIngestConversation:
-    @staticmethod
-    def bot_run_length(history, msg):
-        return bot_run_length(history, msg)
-
+class _MonitorIngestConversation(Conversation):
     @staticmethod
     def collect_media(msg):
         return collect_media(msg)
@@ -4941,18 +4757,6 @@ class _MonitorIngestConversation:
     @staticmethod
     def get_reply_context(msg):
         return get_reply_context(msg)
-
-    @staticmethod
-    def conversation_participants(history, msg, reply_ctx):
-        return conversation_participants(history, msg, reply_ctx)
-
-    @staticmethod
-    def is_mention(msg):
-        return is_mention(msg)
-
-    @staticmethod
-    def is_reply_to_bot(msg):
-        return is_reply_to_bot(msg)
 
     @staticmethod
     def settings_card(scope, here, channel_id, speaker=None):
@@ -5013,8 +4817,8 @@ def enqueue_message(msg, cname, state, queue, context=None):
         state,
         queue,
         context or QueueContext(),
-        _MonitorIngestPolicy(),
-        _MonitorIngestConversation(),
+        _response_policy(),
+        _MonitorIngestConversation(BOT_ID, BOT_NAME, TREAT_AS_HUMAN, frozenset(RESPOND_TO)),
         _MonitorIngestJournal(),
     ).enqueue()
 

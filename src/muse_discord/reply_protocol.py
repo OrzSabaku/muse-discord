@@ -102,7 +102,7 @@ def _id_problems(item: dict[object, object]) -> list[str]:
     return errors
 
 
-def item_key(item):
+def item_key(item: object) -> str | None:
     try:
         return hashlib.sha256(json.dumps(item, sort_keys=True, default=str).encode()).hexdigest()
     except Exception:
