@@ -40,6 +40,10 @@ def new_state(mod):
     return st
 
 
+from muse_discord.message_models import DeliveryOptions  # noqa: E402
+from muse_discord.messaging.parts import send_nonce  # noqa: E402
+
+
 class F2BurstLedger(unittest.TestCase):
     def _burst(self, mod, st, contents):
         msgs = [msg("C1", "U1", c, mention=True) for c in contents]
@@ -296,7 +300,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
                 "hi",
                 [(path, "a.png")],
                 reply_to,
-                delivery=mod.DeliveryOptions(nonce="n2"),
+                delivery=DeliveryOptions(nonce="n2"),
             )
         return seen[-1]
 
@@ -306,7 +310,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
             "123456789012345678",
             "hi",
             "223456789012345678",
-            delivery=mod.DeliveryOptions(nonce="n1"),
+            delivery=DeliveryOptions(nonce="n1"),
         )
         data = mod.api.posts[-1][1]
         self.assertEqual(
@@ -326,7 +330,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
         self.assertNotIn("message_reference", payload)
         # The send nonce is pinned: a changed derivation would post
         # retried in-flight sends twice across an upgrade.
-        self.assertEqual(mod.send_nonce("1", "2", ["a", "b"], 1), "85edf89677130208a9da87885")
+        self.assertEqual(send_nonce("1", "2", ["a", "b"], 1), "85edf89677130208a9da87885")
 
     def test_reaction_404_on_deleted_target_settles_once(self):
         mod = H.load_monitor()

@@ -18,6 +18,7 @@
 | 受信添付の取得・文書抽出・動画フレーム抽出 | `src/muse_discord/media_ingest.py` |
 | 生成添付のパス検証・圧縮・期限切れ削除 | `src/muse_discord/generated_media.py` |
 | ファイル排他・原子的な保存 | `src/muse_discord/storage.py` |
+| 送信形式・添付・分割送信・入力中表示 | `src/muse_discord/messaging/` |
 | サーバー・チャンネルの探索・所属・設定用スナップショット | `src/muse_discord/directory/` |
 | 所有者DMの認可・権限・記憶・通知・承認 | `src/muse_discord/owner/` |
 | 通知の権限・登録・発火・復旧・送信先 | `src/muse_discord/watches/` |
@@ -100,6 +101,7 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 所有者DMの認可は `owner.authorization`、権限発行・再発行は `owner.capabilities`、原文からのコマンド対象解決は `owner.targets`、記憶への保存は `owner.memory` が持つ。権限の消費はoutboxの確定時に行う。
 所有者の在籍確認は `owner.presence`、通知は `owner.messaging`・`owner.admin_digest`・`owner.join_notices`・`owner.updates`、返信の保留と承認は `owner.review` が持つ。更新通知も共通の設定Watcherを通す。
 サーバーとチャンネルの探索は `directory.discovery`、参加退出は `directory.lifecycle`、設定画面への公開は `directory.snapshot` が持つ。スナップショットはロック内で交換し、読み手にはコピーを返す。
+送信形式は `messaging.sending`、分割送信と重複抑止nonceは `messaging.parts`、入力中表示の期限と更新は `messaging.typing` が持つ。分割返信は全パートを検査してから最初の送信を行い、途中失敗では元の例外に送信済みIDを残す。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

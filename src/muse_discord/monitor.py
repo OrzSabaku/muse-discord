@@ -40,7 +40,6 @@ config.example.yaml for the schema.
 
 import contextlib
 import fcntl
-import hashlib
 import hmac
 import json
 import os
@@ -56,7 +55,6 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import Protocol, cast
 
 try:
     import yaml  # noqa: F401 (muse_settings needs it)
@@ -93,7 +91,6 @@ from muse_discord.ingest import MessageEnqueuer
 from muse_discord.interactions import ephemeral, interaction_user_id
 from muse_discord.message_models import (
     LEDGER_TERMINAL,
-    DeliveryOptions,
     LedgerContext,
     QueueContext,
     SecretBlocked,
@@ -105,6 +102,10 @@ from muse_discord.message_models import (
 from muse_discord.message_queue import QueueFiles, owner_dm_metadata, trigger_of
 from muse_discord.message_queue import answered_id as _answered_id
 from muse_discord.message_queue import keep_last as _keep_last
+from muse_discord.messaging import formatting as reply_formatting
+from muse_discord.messaging.parts import PartDelivery
+from muse_discord.messaging.sending import MessageSender
+from muse_discord.messaging.typing import TypingIndicators, TypingState
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
 from muse_discord.outbox_store import redact_nonces as redact_nonces
 from muse_discord.owner.admin_digest import AdminDigests
@@ -168,9 +169,6 @@ OUTBOX_PROCESSING_FILE = os.path.join(BASE_DIR, "reply_outbox.processing.json")
 OUTBOX_REJECTED_FILE = os.path.join(BASE_DIR, "reply_outbox.rejected.json")
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
 GENERATED_DIR = os.path.join(BASE_DIR, "generated")
-
-
-TYPING_CACHE_TTL_SECS = 60
 
 
 def _config_path():
@@ -2499,59 +2497,42 @@ def flush_pending(state, queue, force=False):
 # sanitize_reply is a second layer, not the only one.
 
 
-def send_nonce(channel_id, reply_to, parts, index):
-    """Idempotency key for one message part. A POST can fail on our side
-    (timeout, dropped connection, 5xx) after Discord already created the
-    message; with enforce_nonce, Discord answers a repeat of the same
-    nonce from the same bot within a few minutes with the message it
-    already made instead of posting it again. Derived from the reply
-    itself, so retries and even a second monitor process agree on it.
-    Discord caps nonces at 25 characters."""
-    key = json.dumps([channel_id, reply_to, parts, index])
-    return hashlib.sha256(key.encode()).hexdigest()[:25]
+def _upload_message(path, payload, blobs):
+    return _api_call(
+        lambda: discord_request(
+            "POST", path, payload, options=RequestOptions(files=blobs, timeout=60)
+        )
+    )
 
 
-# What a monitor send may ping: users (the worker addresses people with
-# <@id>) and the author of the message replied to. Never roles,
-# @everyone or @here, whatever the text says; the zero-width rewrite in
-# sanitize_reply is a second layer, not the only one.
-SEND_ALLOWED_MENTIONS = {"parse": ["users"], "replied_user": True}
+def _put_reaction(path):
+    return _api_call(lambda: discord_request("PUT", path))
 
 
-def reply_reference(message_id):
-    """The message_reference for a reply. fail_if_not_exists: false makes
-    Discord post it as a plain message when the message replied to was
-    deleted meanwhile, instead of answering 400 on every retry."""
-    return {"message_id": message_id, "fail_if_not_exists": False}
+def _message_sender():
+    return MessageSender(guard_outgoing, api_post, _upload_message, _put_reaction)
+
+
+def _part_delivery():
+    return PartDelivery(_message_sender(), send_typing, time.sleep)
+
+
+def _typing_service():
+    return TypingIndicators(
+        api_post,
+        rest_backing_off,
+        _queue_files(),
+        time,
+        TypingState(_typing_sources, _typing_last, _typing_lock),
+    )
 
 
 def send_reply(channel_id, text, reply_to=None, components=None, delivery=None):
-    delivery = delivery or DeliveryOptions()
-    nonce = delivery.nonce
-    mentions = delivery.mentions
-    text = guard_outgoing({"content": text}, channel_id)["content"]
-    data = {"content": text, "allowed_mentions": mentions or SEND_ALLOWED_MENTIONS}
-    if components:
-        data["components"] = components
-    if reply_to:
-        data["message_reference"] = reply_reference(reply_to)
-    if nonce:
-        data["nonce"] = nonce
-        data["enforce_nonce"] = True
-    return api_post(f"/channels/{channel_id}/messages", data)
+    return _message_sender().reply(channel_id, text, reply_to, components, delivery)
 
 
 def send_typing(channel_id):
-    """Show the typing indicator for ~10s. Signals responsiveness while
-    the reply worker drafts the real reply. Best-effort, and skipped
-    during REST back-off: an indicator is never worth rate-limit
-    pressure."""
-    if rest_backing_off():
-        return
-    with _typing_lock:
-        _typing_last[channel_id] = time.time()
-    with contextlib.suppress(Exception):
-        api_post(f"/channels/{channel_id}/typing", {})
+    return _typing_service().send(channel_id)
 
 
 # ---------------------------------------------------------------------------
@@ -2566,222 +2547,41 @@ def send_typing(channel_id):
 # goes out (sending a message ends the indicator; the beats in
 # send_fragmented cover multi-part replies).
 # ---------------------------------------------------------------------------
-TYPING_EVERY_SECS = 8
-TYPING_MAX_SECS = 180
 _typing_lock = threading.Lock()
 _typing_sources = {}  # "burst:<key>" / "item:<id>" -> (channel_id, start)
 _typing_last = {}  # channel_id -> time of the last typing ping
 
 
-def typing_sync(prefix, current):
-    """Make current ({key: (channel_id, start_ts)}) the full set of typing
-    sources whose keys start with prefix."""
-    with _typing_lock:
-        for key in [k for k in _typing_sources if k.startswith(prefix) and k not in current]:
-            del _typing_sources[key]
-        _typing_sources.update(current)
-
-
 def typing_clear(keys, sent_in=None):
-    """Drop typing sources (their reply is going out or was settled).
-    sent_in: a channel a message was just posted in, which ended its
-    indicator, so any other source there is re-pinged promptly."""
-    with _typing_lock:
-        for key in keys:
-            _typing_sources.pop(key, None)
-        if sent_in:
-            _typing_last.pop(sent_in, None)
+    return _typing_service().clear(keys, sent_in)
 
 
 def typing_refresh(state, queue=None):
-    """Publish the channels that are waiting on a reply (see above).
-    queue: this tick's queue, when the caller has read it already."""
-    now = time.time()
-    bursts = {}
-    for key, entry in state.get("pending", {}).items():
-        # A burst backing off after a failed enqueue does not type (a
-        # rate cap would otherwise keep it typing for the ~15 min of
-        # retries).
-        if entry.get("next_try", 0) <= now:
-            bursts["burst:" + key] = (entry["channel_id"], entry.get("first_seen", now))
-    typing_sync("burst:", bursts)
-    items = {}
-    for item in load_queue() if queue is None else queue:
-        if not isinstance(item, dict) or not item.get("channel_id") or not item.get("message_id"):
-            continue
-        start = item.get("queued_at") or _snowflake_ts(item["message_id"])
-        items["item:" + str(item["message_id"])] = (item["channel_id"], start)
-    typing_sync("item:", items)
+    return _typing_service().refresh(state, queue)
 
 
 def _typing_thread_main():
-    while True:
-        try:
-            time.sleep(1.0)
-            if rest_backing_off():
-                continue
-            now = time.time()
-            with _typing_lock:
-                active = {
-                    cid for cid, start in _typing_sources.values() if now - start < TYPING_MAX_SECS
-                }
-                due = [cid for cid in active if now - _typing_last.get(cid, 0) >= TYPING_EVERY_SECS]
-                for cid in [c for c, t in _typing_last.items() if now - t > TYPING_CACHE_TTL_SECS]:
-                    del _typing_last[cid]
-            for cid in due:
-                send_typing(cid)
-        except Exception as e:
-            print(f"Typing thread error: {e}", flush=True)
+    return _typing_service().run()
 
 
 def add_reaction(channel_id, message_id, emoji):
-    """Add a Unicode emoji reaction to a message (PUT .../@me). Used for
-    reactions drafted by the worker via the outbox 'reactions' list."""
-    encoded = urllib.parse.quote(emoji, safe="")  # "/" stays in the segment
-    try:
-        guard_outgoing({"content": emoji}, channel_id)
-        _api_call(
-            lambda: discord_request(
-                "PUT", f"/channels/{channel_id}/messages/{message_id}/reactions/{encoded}/@me"
-            )
-        )
-        return True
-    except Exception as e:
-        print(f"Reaction {emoji!r} failed on {message_id}: {e}", flush=True)
-        return False
+    return _message_sender().reaction(channel_id, message_id, emoji)
 
 
 def sanitize_reply(text):
-    """Apply output guardrails to a drafted reply."""
-    text = (text or "").strip()[:MAX_REPLY_CHARS]
-    # Neutralize mass mentions with a zero-width space
-    text = text.replace("@everyone", "@\u200beveryone").replace("@here", "@\u200bhere")
-    return text
-
-
-MAX_PARTS = 4  # fragmented delivery: never more than 4 messages per reply
+    return reply_formatting.sanitize_reply(text, MAX_REPLY_CHARS)
 
 
 def normalize_parts(item):
-    """Return a reply as a list of message parts for fragmented delivery.
-
-    The worker drafts long replies as "parts" (2-4 short messages, like a
-    person thinking aloud) instead of one "text" blob. Short replies stay a
-    single-element list. Enforces the part cap and max_reply_chars as the
-    budget of all parts together (the later ones are cut first).
-    """
-    raw = item.get("parts")
-    clean = [p for p in raw if isinstance(p, str) and p.strip()] if isinstance(raw, list) else []
-    if clean:
-        parts = [sanitize_reply(p) for p in clean[:MAX_PARTS]]
-        if len(clean) > MAX_PARTS:
-            # Fold overflow into the last part rather than dropping thoughts.
-            rest = " ".join(sanitize_reply(p) for p in clean[MAX_PARTS:])
-            parts[-1] = sanitize_reply((parts[-1] + " " + rest).strip())
-    else:
-        parts = [sanitize_reply(item.get("text", ""))]
-    out, left = [], MAX_REPLY_CHARS
-    for p in parts:
-        p = p[:left].rstrip()
-        if p:
-            out.append(p)
-            left -= len(p)
-    return out
-
-
-class SendProgress(Protocol):
-    """Metadata retained on the original exception after a partial send."""
-
-    failed_part: int
-    sent_ids: list[str]
+    return reply_formatting.normalize_parts(item, MAX_REPLY_CHARS)
 
 
 def send_fragmented(channel_id, parts, reply_to=None, attachments=(), delivery=None):
-    """Send a reply as sequential messages, like a person thinking aloud.
-
-    The first part is threaded under reply_to; follow-ups go out as plain
-    messages with a typing beat between them. Attachments ride on the last
-    part. Raises on the first failure; the caller retries the whole
-    reply, and each part's nonce makes Discord return the parts that
-    already landed instead of posting them again. mentions: what the
-    parts may ping (default SEND_ALLOWED_MENTIONS); nonce_key: what the
-    nonces derive from besides the text, when not reply_to (a heartbeat
-    slot's id: its posts reply to nothing). Returns the sent messages'
-    ids. The error raised says which part failed (failed_part) and the
-    ids of the parts sent before it (sent_ids).
-    """
-    # Every part checked before the first goes out: a secret in part 3
-    # never leaves parts 1 and 2 half-sent.
-    delivery = delivery or DeliveryOptions()
-    mentions = delivery.mentions
-    nonce_key = delivery.nonce
-    guard_outgoing({"content": list(parts)}, channel_id)  # and joined
-    last_idx = len(parts) - 1
-    sent = []
-    for i, part in enumerate(parts):
-        if i > 0:
-            send_typing(channel_id)
-            time.sleep(random.uniform(2.0, 4.0))
-        nonce = send_nonce(channel_id, nonce_key or reply_to, parts, i)
-        part_delivery = DeliveryOptions(nonce, mentions)
-        try:
-            if i == last_idx and attachments:
-                got = send_reply_with_files(
-                    channel_id,
-                    part,
-                    attachments,
-                    reply_to if i == 0 else None,
-                    delivery=part_delivery,
-                )
-            elif i == 0:
-                got = send_reply(channel_id, part, reply_to, delivery=part_delivery)
-            else:
-                got = send_reply(channel_id, part, delivery=part_delivery)
-        except Exception as e:
-            try:
-                progress = cast(SendProgress, e)
-                progress.failed_part = i
-                progress.sent_ids = list(sent)
-            except Exception:
-                pass
-            raise
-        if isinstance(got, dict) and got.get("id"):
-            sent.append(str(got["id"]))
-    return sent
+    return _part_delivery().send(channel_id, parts, reply_to, attachments, delivery)
 
 
 def send_reply_with_files(channel_id, text, files, reply_to=None, delivery=None):
-    """Send a message with file attachments via multipart/form-data.
-    files: list of (local_path, filename)."""
-    delivery = delivery or DeliveryOptions()
-    nonce = delivery.nonce
-    mentions = delivery.mentions
-    guard_outgoing({"content": text, "files": [name for _, name in files]}, channel_id)
-    blobs = []
-    for path, name in files:
-        with open(path, "rb") as f:
-            blobs.append((name, f.read()))
-    guard_outgoing(
-        {
-            "content": text,
-            "data": [blob.decode("latin-1") for _, blob in blobs],
-            "files": [name for name, _ in blobs],
-        },
-        channel_id,
-    )
-    payload = {"content": text, "allowed_mentions": mentions or SEND_ALLOWED_MENTIONS}
-    if reply_to:
-        payload["message_reference"] = reply_reference(reply_to)
-    if nonce:
-        payload.update(nonce=nonce, enforce_nonce=True)
-    return _api_call(
-        lambda: discord_request(
-            "POST",
-            f"/channels/{channel_id}/messages",
-            payload,
-            options=RequestOptions(files=blobs, timeout=60),
-        )
-    )
+    return _message_sender().files(channel_id, text, files, reply_to, delivery)
 
 
 def sweep_generated():

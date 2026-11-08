@@ -167,7 +167,16 @@ ORIG_SEND_FILES = M.send_reply_with_files
 M.api_post = fake_api_post
 M.api_get = fake_api_get
 M.send_typing = lambda cid: None
-M.send_reply_with_files = fake_send_files
+_ORIG_PART_DELIVERY = M._part_delivery
+
+
+def _test_part_delivery():
+    delivery = _ORIG_PART_DELIVERY()
+    delivery.sender.files = fake_send_files
+    return delivery
+
+
+M._part_delivery = _test_part_delivery
 ORIG_COLLECT = M.collect_media
 _ORIG_ENQ = M.enqueue_message
 _ST = [None]  # the current test's state (reset)
@@ -838,7 +847,7 @@ def f7_files_send_allowed_mentions():
     M.discord_request = cap
     try:
         ORIG_SEND_FILES(
-            GEN_CH, "hi <@&1>", [(f, "a.png")], "123456789012345670", M.DeliveryOptions(nonce="abc")
+            GEN_CH, "hi <@&1>", [(f, "a.png")], "123456789012345670", DeliveryOptions(nonce="abc")
         )
     finally:
         M.discord_request = orig
@@ -971,6 +980,9 @@ def misc_sweep_generated_item_dirs():
     M.sweep_generated()
     assert not os.path.exists(old) and not os.path.exists(old_dir)
     assert os.path.exists(new) and os.path.isdir(empty_new)
+
+
+from muse_discord.message_models import DeliveryOptions  # noqa: E402
 
 
 class Security(unittest.TestCase):

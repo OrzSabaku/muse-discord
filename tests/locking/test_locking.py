@@ -32,6 +32,8 @@ from harness import (
     write,
 )
 
+from muse_discord.messaging.typing import TYPING_EVERY_SECS, TYPING_MAX_SECS
+
 m = monitor
 
 
@@ -469,7 +471,7 @@ def test_typing_thread_lifecycle():
         write(m.QUEUE_FILE, [qitem(a, cid="101", queued_at=clock.now)])
         m.typing_refresh(st)
         n0 = pings("101")
-        clock.step(2 * m.TYPING_EVERY_SECS)
+        clock.step(2 * TYPING_EVERY_SECS)
         assert pings("101") - n0 >= 2, typing_calls()
         # 3. the reply goes out: typing stops for good
         write(
@@ -479,17 +481,17 @@ def test_typing_thread_lifecycle():
             m.process_outbox(st)
         m.typing_refresh(st)
         n0 = pings()
-        clock.step(3 * m.TYPING_EVERY_SECS)
+        clock.step(3 * TYPING_EVERY_SECS)
         assert pings() == n0, typing_calls()[n0:]
         # 4. an item nobody answers stops after TYPING_MAX_SECS: queued
         # a ping interval short of it, it types once more, then stops
         b = snowflake()
-        it = qitem(b, cid="105", queued_at=clock.now - m.TYPING_MAX_SECS + m.TYPING_EVERY_SECS)
+        it = qitem(b, cid="105", queued_at=clock.now - TYPING_MAX_SECS + TYPING_EVERY_SECS)
         write(m.QUEUE_FILE, [it])
         m.typing_refresh(st)
         clock.step()
         assert pings("105") == 1, typing_calls()
-        clock.step(3 * m.TYPING_EVERY_SECS)
+        clock.step(3 * TYPING_EVERY_SECS)
         assert pings("105") == 1, typing_calls()
         # 5. REST back-off: no typing at all
         it["queued_at"] = clock.now
@@ -497,7 +499,7 @@ def test_typing_thread_lifecycle():
         m.typing_refresh(st)
         m._rl_until = clock.now + 100
         n0 = pings()
-        clock.step(2 * m.TYPING_EVERY_SECS)
+        clock.step(2 * TYPING_EVERY_SECS)
         m.send_typing("109")
         assert pings() == n0, typing_calls()[n0:]
     finally:
