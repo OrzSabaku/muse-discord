@@ -618,8 +618,12 @@ class LiveReload(MonitorBase):
         bump(m._SETTINGS.watcher.overlay_path)
         self.rewrite(NEW_BASE + "everywhere:\n  style:\n    length: normal\n")
         with quiet():
-            self.assertEqual(m._SETTINGS.retire_changes(m.notify_owners, m.rest_backing_off), 1)
-            self.assertEqual(m._SETTINGS.retire_changes(m.notify_owners, m.rest_backing_off), 0)
+            self.assertEqual(
+                m._SETTINGS.retire_changes(m._OWNER_MESSAGES.notify, m.rest_backing_off), 1
+            )
+            self.assertEqual(
+                m._SETTINGS.retire_changes(m._OWNER_MESSAGES.notify, m.rest_backing_off), 0
+            )
         self.assertEqual(len(m.api.dm_posts()), 1)  # the owner is told
         self.assertEqual(m.settings().get("style.length", MS.Scope.everywhere()), "normal")
 
@@ -760,7 +764,7 @@ class NeverShare(MonitorBase):
         _resp, recs = self.click(hid, "send")
         self.assertEqual(recs, [])
         with quiet():
-            m.expire_holds(self.st)
+            m._REVIEW.expire(self.st)
         self.assertEqual(self.st["holds"], {})
         self.assertEqual(m.api.channel_posts(CH), [])
 

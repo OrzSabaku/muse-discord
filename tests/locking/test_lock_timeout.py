@@ -204,7 +204,7 @@ class LockTimeout(unittest.TestCase):
             patch.object(m, "discover_channels", return_value=({}, {})),
             patch.object(m, "publish_directory"),
             patch.object(m, "load_state", return_value=state),
-            patch.object(m, "sync_guilds"),
+            patch.object(m._GUILD_LIFECYCLE, "sync"),
             patch.object(m._DIRECTORY, "channels", {}),
             patch.object(m._DIRECTORY, "guilds", {}),
             patch.object(m, "_start_monitor_threads", return_value=(inbox, status)),

@@ -236,11 +236,11 @@ def _proactive_context():
         channel_display=lambda *args, **kwargs: channel_display(*args, **kwargs),
         dm_refusal=lambda *args, **kwargs: dm_refusal(*args, **kwargs),
         load_queue=lambda *args, **kwargs: load_queue(*args, **kwargs),
-        never_share_hit=lambda *args, **kwargs: never_share_hit(*args, **kwargs),
+        never_share_hit=lambda *args, **kwargs: _REVIEW.hit(*args, **kwargs),
         normalize_parts=lambda *args, **kwargs: normalize_parts(*args, **kwargs),
-        notify_owners=lambda *args, **kwargs: notify_owners(*args, **kwargs),
+        notify_owners=lambda *args, **kwargs: _OWNER_MESSAGES.notify(*args, **kwargs),
         owner_check_pending=lambda state, gid: _OWNER_PRESENCE.pending(state, gid),
-        owners_absent=lambda *args, **kwargs: owners_absent(*args, **kwargs),
+        owners_absent=lambda *args, **kwargs: _OWNER_PRESENCE.absent(*args, **kwargs),
         queue_edit=lambda *args, **kwargs: queue_edit(*args, **kwargs),
         queued_item_meta=lambda *args, **kwargs: queued_item_meta(*args, **kwargs),
         rest_backing_off=lambda *args, **kwargs: rest_backing_off(*args, **kwargs),
@@ -326,7 +326,9 @@ _DIRECTORY: DirectoryState
 
 
 def _directory_refresh():
-    return DirectoryRefresh(_DIRECTORY, _discovery(), publish_directory, sync_guilds, save_state)
+    return DirectoryRefresh(
+        _DIRECTORY, _discovery(), publish_directory, _GUILD_LIFECYCLE.sync, save_state
+    )
 
 
 def _discovery():
@@ -460,7 +462,7 @@ def publish_queue_additions(state, additions=()):
 def load_state():
     state = _STATE_STORE.load()
     # Restore owner admission before failed startup discovery can expose a server.
-    mirror_owner_presence(state)
+    _OWNER_PRESENCE.restore(state)
     return state
 
 
@@ -529,26 +531,6 @@ _JOIN_NOTICES: JoinNotices
 _GUILD_LIFECYCLE: GuildLifecycle
 
 
-def notify_owners(text, components=None, flags=None):
-    return _OWNER_MESSAGES.notify(text, components, flags)
-
-
-def mirror_owner_presence(state):
-    return _OWNER_PRESENCE.restore(state)
-
-
-def owners_absent(gid):
-    return _OWNER_PRESENCE.absent(gid)
-
-
-def sync_guilds(state, guilds, channels):
-    return _GUILD_LIFECYCLE.sync(state, guilds, channels)
-
-
-def flush_join_notices(state, guilds, channels):
-    return _JOIN_NOTICES.flush(state, guilds, channels)
-
-
 def on_guild_event(state, ev):
     if _GUILD_LIFECYCLE.on_event(state, ev):
         _DISCOVERY_REFRESH.request()
@@ -566,16 +548,12 @@ def _version_installed(tag, timeout=5):
     return version_installed(BASE_DIR, tag, timeout)
 
 
-def announce_update(state):
-    return _UPDATE_NOTICES.announce(state)
-
-
 def telemetry_notice():
     """DM the owners once when usage stats have not reached their
     endpoint for days (telemetry.py, take_notice)."""
     text = TM.take_notice(settings)
     if text:
-        notify_owners(text)
+        _OWNER_MESSAGES.notify(text)
 
 
 def apply_record(state, rec):
@@ -591,14 +569,6 @@ def apply_record(state, rec):
 _INTERACTIONS: InteractionRouter
 _INTERACTION_RESPONDER: InteractionResponder
 _INTERACTION_WORKER: InteractionWorker
-
-
-def never_share_hit(state, item, qid, parts):
-    return _REVIEW.hit(state, item, qid, parts)
-
-
-def expire_holds(state):
-    return _REVIEW.expire(state)
 
 
 def on_proactive_button(ix, rest, uid, record):
@@ -646,14 +616,6 @@ def settings_context():
     )
 
 
-def _directory_name(some_id):
-    return _DIRECTORY_VIEW.name(some_id)
-
-
-def flush_admin_digests(force=False):
-    return _ADMIN_DIGESTS.flush(force)
-
-
 _CAPABILITIES: CapabilityIssuer
 _OWNER_AUTH: OwnerAuthorization
 
@@ -675,10 +637,6 @@ ITEM_NONCES_FILE = os.path.join(BASE_DIR, "item_nonces.json")
 
 
 _COMMANDS: CommandRegistrar
-
-
-def register_commands(gateway_status=None):
-    return _COMMANDS.register(gateway_status)
 
 
 _QUEUE_STAGING: QueueStaging
@@ -859,7 +817,9 @@ def _reply_binding():
     return ReplyBinding(
         _CAPABILITIES.files.replies,
         lambda item: PRO.delivery.names_slot(item),
-        StalePrompt(STALE_PROMPT_FILE, notify_owners, time.time, lambda: time.strftime("%Y-%m-%d")),
+        StalePrompt(
+            STALE_PROMPT_FILE, _OWNER_MESSAGES.notify, time.time, lambda: time.strftime("%Y-%m-%d")
+        ),
     )
 
 
@@ -891,7 +851,7 @@ def _watch_audience():
         _ACCESS,
         _DIRECTORY.guilds,
         _LEDGER.names,
-        owners_absent,
+        _OWNER_PRESENCE.absent,
         dm_refusal,
     )
 
@@ -1013,10 +973,10 @@ def _drain_live_messages(state, _gateway_inbox):
 
 def _cleanup_cycle(state, cycle_done):
     if cycle_done:
-        flush_join_notices(state, _DIRECTORY.guilds, _DIRECTORY.channels)
-        announce_update(state)
+        _JOIN_NOTICES.flush(state, _DIRECTORY.guilds, _DIRECTORY.channels)
+        _UPDATE_NOTICES.announce(state)
         telemetry_notice()
-        expire_holds(state)
+        _REVIEW.expire(state)
         sweep_media()
         _generated_replies().sweep(state)
         prune_gateway_seen(state)
@@ -1053,7 +1013,7 @@ def _rest_scheduler():
 
 
 def _settings_upkeep(status):
-    register_commands(status)
+    _COMMANDS.register(status)
     _ADMIN_DIGESTS.flush()
 
 
@@ -1097,7 +1057,7 @@ def _start_monitor():
     state = load_state()
     # Join watermarks for every guild, plus the owner summary for any
     # guild joined while the monitor was down.
-    sync_guilds(state, _DIRECTORY.guilds, _DIRECTORY.channels)
+    _GUILD_LIFECYCLE.sync(state, _DIRECTORY.guilds, _DIRECTORY.channels)
 
     # Seed last_seen for any monitored channel not tracked yet, so its
     # history is never mistaken for fresh mentions (first run, or a
@@ -1157,7 +1117,7 @@ def _initialize_owner_services():
         _OWNER_AUTH,
         CommandTargets(_DIRECTORY.channels, _DIRECTORY.guild_channels),
         lambda: load_queue(),
-        lambda text: notify_owners(text),
+        lambda text: _OWNER_MESSAGES.notify(text),
     )
     _REVIEW = ReplyReview(settings, _OWNER_MESSAGES, _DIRECT_MESSAGES.users, _settle)
     _UPDATE_NOTICES = UpdateNotices(
@@ -1169,7 +1129,7 @@ def _initialize_owner_services():
         lambda *args, **kwargs: _version_installed(*args, **kwargs),
     )
     _ADMIN_DIGESTS = AdminDigests(
-        _directory_name,
+        _DIRECTORY_VIEW.name,
         _LEDGER.names,
         _DIRECTORY.guilds,
         _OWNER_MESSAGES.notify,
@@ -1223,7 +1183,7 @@ def _initialize_services():
     _OUTPUT = OutgoingGuard(
         lambda: TOKEN,
         _live_nonces,
-        lambda text: notify_owners(text),
+        lambda text: _OWNER_MESSAGES.notify(text),
         lambda: time.strftime("%Y-%m-%d"),
     )
     _DISCORD = DiscordCalls(
@@ -1280,7 +1240,7 @@ def _initialize_services():
         lambda path: api_get(path),
         lambda: rest_backing_off(),
         lambda: list(_DIRECTORY.guilds),
-        lambda gid: owners_absent(gid),
+        lambda gid: _OWNER_PRESENCE.absent(gid),
         lambda: time.time(),
     )
     _COMMANDS = CommandRegistrar(
@@ -1350,7 +1310,9 @@ def main():
         scheduler.begin_tick(now, backing)
         dm_items = []
         _run_phase("Gateway drain", _drain_live_messages, state, inbox)
-        _run_phase("Settings overlay", _SETTINGS.retire_changes, notify_owners, rest_backing_off)
+        _run_phase(
+            "Settings overlay", _SETTINGS.retire_changes, _OWNER_MESSAGES.notify, rest_backing_off
+        )
         _run_phase("/settings upkeep", _settings_upkeep, status)
         _run_phase("Owner DM upkeep", _CAPABILITIES.upkeep, state)
         _run_phase("Reminders and watches", watch_tick, state)

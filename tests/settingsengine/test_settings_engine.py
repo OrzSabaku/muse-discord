@@ -988,8 +988,8 @@ class ReviewMedium(unittest.TestCase):
         self.assertTrue(all(p == "/users/@me/channels" for p, _d in m.api.posts))
         # never_share: still private for the owner's DM only
         st = {"hold_released": {}, "item_meta": {}}
-        self.assertFalse(m.never_share_hit(st, {"channel_id": own_dm}, None, ["the secret"]))
-        self.assertTrue(m.never_share_hit(st, {"channel_id": sam_dm}, None, ["the secret"]))
+        self.assertFalse(m._REVIEW.hit(st, {"channel_id": own_dm}, None, ["the secret"]))
+        self.assertTrue(m._REVIEW.hit(st, {"channel_id": sam_dm}, None, ["the secret"]))
         # the sweep recovers a lost DM from Sam, not one from Ann
         import time as _t
 

@@ -94,7 +94,7 @@ class Announce(unittest.TestCase):
         ents = [f"v1.{i}.0 (2026-11-0{i}): Entry {i}" for i in range(7, 0, -1)]
         write_check(mod, "v1.7.0", ents, action=True, installed=V0)
         state = {}
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         posts = dm_posts(mod)
         self.assertEqual(len(posts), 2)
         opened = [d["recipient_id"] for p, d in mod.api.posts if p == "/users/@me/channels"]
@@ -113,16 +113,16 @@ class Announce(unittest.TestCase):
         self.assertEqual(mod._UPDATE_NOTICES.announced["version"], "v1.7.0")
         # Same version again (and after a state round trip): no new DM.
         n = len(mod.api.posts)
-        mod.announce_update(state)
-        mod.announce_update(json.loads(json.dumps(state)))
+        mod._UPDATE_NOTICES.announce(state)
+        mod._UPDATE_NOTICES.announce(json.loads(json.dumps(state)))
         self.assertEqual(len(mod.api.posts), n)
         # An older version (a retracted tag) is not offered.
         write_check(mod, V2, ["v1.2.0 (2026-11-01): Old"])
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(mod.api.posts), n)
         # A newer version asks again; semver order, not string order.
         write_check(mod, "v1.10.0", ["v1.10.0 (2026-12-01): Newer"], installed="v1.7.0")
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 4)
         last = dm_posts(mod)[-1][1]
         self.assertIn("mdupd:now:v1.10.0", json.dumps(last["components"]))
@@ -131,37 +131,37 @@ class Announce(unittest.TestCase):
         mod = load()
         write_check(mod, "", [])
         state = {}
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(mod.api.posts, [])
         os.unlink(mod.UPDATE_CHECK_FILE)
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(mod.api.posts, [])
         # Not releases: ignored.
         for bad in ("v1.3.0-rc.1", "v2", "1.3.0", "v01.3.0", "a" * 40):
             write_check(mod, bad, ["x"])
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(mod.api.posts, [])
         write_check(mod, V1, [])  # a release, no entries
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
 
     def test_check_off_no_dm(self):
         mod = load("updates:\n  notify: false\n")
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
-        mod.announce_update({})
+        mod._UPDATE_NOTICES.announce({})
         self.assertEqual(mod.api.posts, [])
         # Turned off while running.
         mod = load()
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
         state = {}
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
         cfg = os.environ["MUSE_DISCORD_CONFIG"]
         with open(cfg, "a") as f:
             f.write("updates:\n  notify: false\n")
         os.utime(cfg, (time.time() + 5, time.time() + 5))
         write_check(mod, V2, ["v1.2.0 (2026-11-01): Y"])
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
 
     def test_failed_dm_retried_then_given_up(self):
@@ -170,10 +170,10 @@ class Announce(unittest.TestCase):
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
         state = {}
         with contextlib.redirect_stdout(io.StringIO()):
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
             self.assertEqual(state["update_notice"]["owed"], [H.OWNER])
             del mod.api.errors["/channels/DM1/messages"]
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(state["update_notice"]["owed"], [])
         self.assertEqual(len(dm_posts(mod)), 2)
         mod2 = load()
@@ -182,7 +182,7 @@ class Announce(unittest.TestCase):
         st = {}
         with contextlib.redirect_stdout(io.StringIO()):
             for _ in range(15):
-                mod2.announce_update(st)
+                mod2._UPDATE_NOTICES.announce(st)
         self.assertEqual(len(dm_posts(mod2)), UPDATE_DM_TRIES)
 
     def test_already_installed_version_not_announced(self):
@@ -191,7 +191,7 @@ class Announce(unittest.TestCase):
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
         state = {}
         with contextlib.redirect_stdout(io.StringIO()):
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(mod.api.posts, [])
         self.assertEqual(state["update_notice"]["version"], V1)
 
@@ -288,7 +288,7 @@ class Interactions(unittest.TestCase):
         mod = self.mod
         write_check(mod, V1, ["v1.1.0 (2026-10-25): X"])
         state = {}
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
         r = self.dispatch(ix(f"mdupd:later:{V1}"))
         self.assertEqual(r["type"], 7)
@@ -305,10 +305,10 @@ class Interactions(unittest.TestCase):
         self.assertEqual(state["update_notice"]["choice"]["action"], "later")
         self.assertEqual(state["update_notice"]["choice"]["by"], H.OWNER)
         for _ in range(3):
-            mod.announce_update(state)
+            mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 1)
         write_check(mod, V2, ["v1.2.0 (2026-11-01): Y"])
-        mod.announce_update(state)
+        mod._UPDATE_NOTICES.announce(state)
         self.assertEqual(len(dm_posts(mod)), 2)
         self.assertNotIn("choice", state["update_notice"])
         # The old prompt's buttons are now stale; the new ones work.

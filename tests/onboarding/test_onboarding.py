@@ -413,7 +413,7 @@ class OwnerlessServer(unittest.TestCase):
             mod.on_guild_event(st, {"op": "create", "id": G2})
         self.assertIsNone(mod._admission().trigger_verdict(stranger, G2)[0])
         with quiet():
-            mod.sync_guilds(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)
+            mod._GUILD_LIFECYCLE.sync(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)
         kind, why = mod._admission().trigger_verdict(stranger, G2)
         self.assertIsNone(kind)
         self.assertEqual(ledger_code("skipped", f"settings: {why}"), "ownerless")
@@ -427,7 +427,7 @@ class OwnerlessServer(unittest.TestCase):
         again = load_monitor(base, tmp=mod.tmp)
         with quiet():
             st_again = again.load_state()
-            again.sync_guilds(st_again, {}, {})
+            again._GUILD_LIFECYCLE.sync(st_again, {}, {})
         self.assertIsNone(again._admission().trigger_verdict(stranger, G2)[0])
         # The owners are told of the join; answering in G1 is untouched.
         self.assertTrue(mod.api.dm_posts())
@@ -439,7 +439,7 @@ class OwnerlessServer(unittest.TestCase):
         st2 = state(mod2)
         st2["known_guilds"] = {G1: "Lounge"}
         with quiet():
-            mod2.sync_guilds(st2, mod2._DIRECTORY.guilds, mod2._DIRECTORY.channels)
+            mod2._GUILD_LIFECYCLE.sync(st2, mod2._DIRECTORY.guilds, mod2._DIRECTORY.channels)
         self.assertEqual(mod2._admission().trigger_verdict(stranger, G2)[0], "mention")
         # An owner is a member there: it answers as everywhere else.
         mod3 = load_monitor(base)
@@ -447,7 +447,7 @@ class OwnerlessServer(unittest.TestCase):
         st3 = state(mod3)
         st3["known_guilds"] = {G1: "Lounge"}
         with quiet():
-            mod3.sync_guilds(st3, mod3._DIRECTORY.guilds, mod3._DIRECTORY.channels)
+            mod3._GUILD_LIFECYCLE.sync(st3, mod3._DIRECTORY.guilds, mod3._DIRECTORY.channels)
         self.assertEqual(mod3._admission().trigger_verdict(stranger, G2)[0], "mention")
 
     def test_lost_state_keeps_the_gate(self):
@@ -459,7 +459,7 @@ class OwnerlessServer(unittest.TestCase):
         mod.api.members[(G1, OWNER)] = []
         st = mod.load_state()
         with quiet():
-            mod.sync_guilds(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)
+            mod._GUILD_LIFECYCLE.sync(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
         self.assertIsNone(mod._admission().trigger_verdict(stranger, G2)[0])
         self.assertEqual(mod._admission().trigger_verdict(gmsg(U1, mention=True), G1)[0], "mention")

@@ -34,7 +34,7 @@ class FirstRun(unittest.TestCase):
         mod.api.members[(G1, OWNER)] = []
         with quiet():
             st = mod.load_state()  # no state.json
-            mod.sync_guilds(st, {}, {})  # boot discovery failed
+            mod._GUILD_LIFECYCLE.sync(st, {}, {})  # boot discovery failed
             for gid in (G1, G2):  # READY's GUILD_CREATEs
                 mod.on_guild_event(st, {"op": "create", "id": gid})
         stranger = gmsg(U1, mention=True, channel=CH_G2, guild=G2)
@@ -59,7 +59,7 @@ class FirstRun(unittest.TestCase):
         mod.api_get = get
         with quiet():
             st = mod.load_state()
-            mod.sync_guilds(st, guilds, {})
+            mod._GUILD_LIFECYCLE.sync(st, guilds, {})
         self.assertLessEqual(len(asked), 1, f"{len(asked)} member GETs after a 429")
 
 

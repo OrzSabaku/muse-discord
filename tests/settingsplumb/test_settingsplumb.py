@@ -147,7 +147,7 @@ class Registration(unittest.TestCase):
 
     def run_reg(self, status=None):
         with quiet() as out:
-            r = self.mod.register_commands(status)
+            r = self.mod._COMMANDS.register(status)
         return r, out.getvalue()
 
     def test_command_definitions_within_discord_limits(self):
@@ -380,7 +380,7 @@ class Ctx(unittest.TestCase):
                     st = self.mod.settings()
                     st.resolve(sc)
                     self.mod._SETTINGS.retire_changes(
-                        self.mod.notify_owners, self.mod.rest_backing_off
+                        self.mod._OWNER_MESSAGES.notify, self.mod.rest_backing_off
                     )
             except Exception as e:  # pragma: no cover
                 errors.append(e)
@@ -442,7 +442,7 @@ class Ctx(unittest.TestCase):
         self.assertTrue(stale.retire)
         with quiet():
             mod.settings_context().write("everywhere.style.length", "detailed", OWNER)
-            n = mod._SETTINGS.retire_changes(mod.notify_owners, mod.rest_backing_off)
+            n = mod._SETTINGS.retire_changes(mod._OWNER_MESSAGES.notify, mod.rest_backing_off)
         self.assertEqual(n, 0)
         e = overlay(mod)["values"]["everywhere.style.length"]
         self.assertEqual((e["value"], e["base"]), ("detailed", "brief"))
@@ -609,26 +609,26 @@ class AdminDigest(unittest.TestCase):
         c.notify_owners_admin_change(G1, "222000000000000009", "who.ignore", [], [U1])
         c.notify_owners_admin_change(G2, U1, "media.enabled", True, False)
         with quiet():
-            self.assertEqual(self.mod.flush_admin_digests(), 0)
+            self.assertEqual(self.mod._ADMIN_DIGESTS.flush(), 0)
         self.assertEqual(self.mod.api.dm_posts(), [])
         self.age(61)
         with quiet():
-            self.assertEqual(self.mod.flush_admin_digests(), 2)
+            self.assertEqual(self.mod._ADMIN_DIGESTS.flush(), 2)
         dms = self.mod.api.dm_posts()
         self.assertEqual(len(dms), 2)
         for d in dms:
             self.assertEqual(d["allowed_mentions"], {"parse": []})
         with quiet():
-            self.assertEqual(self.mod.flush_admin_digests(force=True), 0)
+            self.assertEqual(self.mod._ADMIN_DIGESTS.flush(force=True), 0)
         # A change during a window joins it.
         c.notify_owners_admin_change(G1, U1, "who.replies", "a", "off")
         self.age(30)
         c.notify_owners_admin_change(G1, U1, "who.replies", "off", "a")
         with quiet():
-            self.assertEqual(self.mod.flush_admin_digests(), 0)
+            self.assertEqual(self.mod._ADMIN_DIGESTS.flush(), 0)
         self.age(31)
         with quiet():
-            self.assertEqual(self.mod.flush_admin_digests(), 1)
+            self.assertEqual(self.mod._ADMIN_DIGESTS.flush(), 1)
         self.assertEqual(len(self.mod.api.dm_posts()), 3)
 
     def test_undelivered_kept_and_retried(self):
@@ -637,11 +637,11 @@ class AdminDigest(unittest.TestCase):
         original_post = self.mod.api_post
         self.mod.api_post = lambda *_: (_ for _ in ()).throw(OSError("offline"))
         with quiet():
-            self.assertEqual(self.mod.flush_admin_digests(), 0)
+            self.assertEqual(self.mod._ADMIN_DIGESTS.flush(), 0)
         self.assertIn(G1, self.mod._ADMIN_DIGESTS.changes)
         self.mod.api_post = original_post
         with quiet():
-            self.assertEqual(self.mod.flush_admin_digests(), 1)
+            self.assertEqual(self.mod._ADMIN_DIGESTS.flush(), 1)
         self.assertEqual(self.mod._ADMIN_DIGESTS.changes, {})
 
     def test_long_digest_capped(self):
@@ -658,7 +658,7 @@ class JoinNotice(unittest.TestCase):
         st = state(mod)
         st["known_guilds"] = {G1: "Lounge"}
         with quiet():
-            mod.sync_guilds(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)
+            mod._GUILD_LIFECYCLE.sync(st, mod._DIRECTORY.guilds, mod._DIRECTORY.channels)
         dms = mod.api.dm_posts()
         self.assertEqual(len(dms), 1)
         btn = dms[0]["components"][0]["components"][0]
