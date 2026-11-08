@@ -52,7 +52,7 @@ class Doctor:
             try:
                 with open(self.path(name)) as f:
                     cands.append(f.read().split()[0])
-            except OSError, IndexError:
+            except (OSError, IndexError):
                 pass
         try:
             out = subprocess.run(
@@ -62,7 +62,7 @@ class Doctor:
                 timeout=10,
             ).stdout
             cands += out.split()
-        except OSError, subprocess.SubprocessError:
+        except (OSError, subprocess.SubprocessError):
             pass
         real = os.path.realpath(self.pkg)
         for pid in cands:
@@ -94,5 +94,5 @@ def read_ledger(d):
             data = json.load(f)
         ents = data.get("entries") if isinstance(data, dict) else None
         return ents if isinstance(ents, dict) else {}
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return {}

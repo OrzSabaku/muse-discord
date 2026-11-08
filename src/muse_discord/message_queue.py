@@ -62,7 +62,7 @@ class QueueFiles:
         reply_aliases are bounded, and lost with state.json)."""
         try:
             queue = self.load()
-        except OSError, ValueError:
+        except (OSError, ValueError):
             queue = []
         frags, owners, channels = {}, {}, {}
         for q in queue:

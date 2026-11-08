@@ -101,7 +101,7 @@ class CapabilityIssuer:
         self.upkeep_clock["next"] = now + OWNER_DM_UPKEEP_SECS
         try:
             queue = self.load_queue()
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return
         n = state.setdefault("nl_nonces", {})
         for q in queue:

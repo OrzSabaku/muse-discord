@@ -12,7 +12,7 @@ def iso(ts):
 def snowflake_ts(mid):
     try:
         return ((int(mid) >> 22) + 1420070400000) / 1000.0
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return 0.0
 
 

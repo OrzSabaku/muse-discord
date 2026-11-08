@@ -66,7 +66,7 @@ def load_json(path, default):
     try:
         with open(path) as f:
             return json.load(f)
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return default
 
 

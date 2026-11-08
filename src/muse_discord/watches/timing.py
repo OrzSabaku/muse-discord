@@ -20,7 +20,7 @@ def parse_utc(value):
         if dt.tzinfo is None or dt.utcoffset() != timedelta(0):
             return None
         ts = dt.timestamp()
-    except ValueError, OverflowError, OSError, TypeError:
+    except (ValueError, OverflowError, OSError, TypeError):
         return None
     # Only times the protocol could ever take (decide checks the range).
     return ts if 0 < ts < UTC_YEAR_2100 else None  # before 2100

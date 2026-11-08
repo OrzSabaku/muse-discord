@@ -5,6 +5,8 @@ failure retains known channels; new threads start at their own creation id so
 messages written before discovery are still ingested.
 """
 
+from __future__ import annotations
+
 import time
 from collections.abc import Callable, Container
 from dataclasses import dataclass
@@ -152,7 +154,7 @@ class Discovery:
         for role in roles:
             try:
                 role_values[str(role["id"])] = int(role.get("permissions") or 0)
-            except KeyError, TypeError, ValueError:
+            except (KeyError, TypeError, ValueError):
                 continue
         member_roles.intersection_update(role_values)
         try:
@@ -161,7 +163,7 @@ class Discovery:
             perms = PermissionSnapshot(gid, role_values, gobj.get("owner_id")).guild_permissions(
                 self.bot_id, member_roles
             )
-        except KeyError, TypeError, ValueError:
+        except (KeyError, TypeError, ValueError):
             return None, [], joined_at
         return perms, member_roles, joined_at
 
@@ -174,7 +176,7 @@ class Discovery:
             return PermissionSnapshot(gid, roles, None).channel_permissions(
                 member_id or self.bot_id, member_role_ids, overwrites
             )
-        except KeyError, TypeError, ValueError:
+        except (KeyError, TypeError, ValueError):
             return None
 
     def channels(self, previous=None):

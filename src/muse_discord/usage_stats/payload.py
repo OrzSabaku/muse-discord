@@ -20,7 +20,7 @@ def members_bucket(total):
     """Total members rounded down to a power of 2 (0 stays 0)."""
     try:
         n = int(total)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return 0
     if n <= 0:
         return 0

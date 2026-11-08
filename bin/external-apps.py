@@ -57,7 +57,7 @@ def main(argv=None):
         return 0
     except Refused as error:
         code = error.code
-    except ValueError, TypeError, OSError, sqlite3.Error:
+    except (ValueError, TypeError, OSError, sqlite3.Error):
         code = "INVALID_INPUT_OR_STATE"
     print(json.dumps({"error": {"code": code}}))
     return 1

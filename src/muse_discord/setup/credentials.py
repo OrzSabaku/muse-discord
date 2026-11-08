@@ -66,7 +66,7 @@ def classify(s):
         head = s.split(".", 1)[0]
         try:
             uid = base64.urlsafe_b64decode(head + "=" * (-len(head) % 4))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             return "unknown"
         if re.fullmatch(rb"\d{15,21}", uid):
             return "token"

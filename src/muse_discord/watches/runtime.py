@@ -160,7 +160,7 @@ class WatchRuntime:
             return
         try:
             queued = self.queue.queued_ids()
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return
         entries = self.entries()
         drop, lost, stale = [], [], set()

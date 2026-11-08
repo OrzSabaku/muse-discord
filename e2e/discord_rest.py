@@ -248,6 +248,6 @@ def _retry_after(err, raw):
     if secs is None:
         try:
             secs = float(err.headers.get("Retry-After"))
-        except TypeError, ValueError, AttributeError:
+        except (TypeError, ValueError, AttributeError):
             secs = 2.0
     return min(max(secs, 0.1), 60.0) + 0.1

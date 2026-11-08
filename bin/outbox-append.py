@@ -59,7 +59,7 @@ def _live(name):
     try:
         with open(os.path.join(PACKAGE_DIR, name)) as f:
             data = json.load(f)
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
 

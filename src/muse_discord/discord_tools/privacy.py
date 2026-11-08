@@ -19,7 +19,7 @@ def live_nonces(owner_dm_file, owner_items_file):
         try:
             with open(path) as f:
                 return json.load(f)
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return None
 
     here = os.path.dirname(owner_items_file)

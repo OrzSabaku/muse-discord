@@ -141,7 +141,7 @@ def read_json(path, default):
     try:
         with open(path) as f:
             return json.load(f)
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return default
 
 
@@ -722,7 +722,7 @@ class Worker:
                 run_ending(res.get("result")),
                 str(res.get("result") or "")[:200],
             )
-        except ValueError, AttributeError:
+        except (ValueError, AttributeError):
             if out.strip():
                 summary = f" stdout={out.strip()[:200]!r}"
         if status not in (0, "timeout") and err.strip():

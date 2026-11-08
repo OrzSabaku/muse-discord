@@ -171,7 +171,7 @@ class Rest:
         )
         try:
             return future.result(timeout=timeout + 1)
-        except FutureTimeoutError, TimeoutError:
+        except (FutureTimeoutError, TimeoutError):
             future.cancel()
             raise TimeoutError("Discord request timed out") from None
 

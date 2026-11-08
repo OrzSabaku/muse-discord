@@ -60,7 +60,7 @@ def load_policy(path):
                 _validate_tool(tool, rule)
         canonical(data)
         return data
-    except OSError, ValueError, TypeError, yaml.YAMLError:
+    except (OSError, ValueError, TypeError, yaml.YAMLError):
         raise Refused("INVALID_POLICY") from None
 
 
@@ -80,7 +80,7 @@ def evaluate(policy, global_level, app_id, tool, arguments):
     try:
         if len(canonical(arguments).encode()) > MAX_ARGUMENT_BYTES:
             raise Refused("INVALID_ARGUMENTS")
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         raise Refused("INVALID_ARGUMENTS") from None
     for parameter, values in rule.get("constraints", {}).items():
         if parameter not in arguments or not any(

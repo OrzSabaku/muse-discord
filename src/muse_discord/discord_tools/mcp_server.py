@@ -38,7 +38,7 @@ async def invoke(command, for_id, nonce, *args):
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=360)
-    except TimeoutError, asyncio.CancelledError:
+    except (TimeoutError, asyncio.CancelledError):
         if process.returncode is None:
             process.terminate()
             await process.wait()
@@ -47,7 +47,7 @@ async def invoke(command, for_id, nonce, *args):
         ) from None
     try:
         result = json.loads(stdout)
-    except ValueError, UnicodeError:
+    except (ValueError, UnicodeError):
         raise ToolError(
             "CLI unavailable or invalid response. Check configuration and token source."
         ) from None
@@ -62,7 +62,7 @@ async def invoke_external(command, for_id, nonce, *args, body=None):
         data = json.dumps(body, allow_nan=False).encode() if body is not None else None
         if data is not None and len(data) > MAX_ARGUMENT_BYTES:
             raise ValueError("Request too large")
-    except ValueError, TypeError, RecursionError:
+    except (ValueError, TypeError, RecursionError):
         raise ToolError("Invalid external app arguments or approval receipt.") from None
     process = await asyncio.create_subprocess_exec(
         sys.executable,
@@ -80,7 +80,7 @@ async def invoke_external(command, for_id, nonce, *args, body=None):
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(data), timeout=90)
-    except TimeoutError, asyncio.CancelledError:
+    except (TimeoutError, asyncio.CancelledError):
         if process.returncode is None:
             process.terminate()
             await process.wait()
@@ -89,7 +89,7 @@ async def invoke_external(command, for_id, nonce, *args, body=None):
         ) from None
     try:
         result = json.loads(stdout)
-    except ValueError, UnicodeError:
+    except (ValueError, UnicodeError):
         raise ToolError("External app broker unavailable.") from None
     if process.returncode or "error" in result:
         raise ToolError(json.dumps(result.get("error", {"code": "REQUEST_FAILED"})))

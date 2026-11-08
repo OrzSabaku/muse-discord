@@ -17,7 +17,7 @@ from muse_discord.conversation import Conversation, _snowflake_ts, _who
 def _iso_ts(iso):
     try:
         return datetime.fromisoformat(str(iso)).timestamp()
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return None
 
 

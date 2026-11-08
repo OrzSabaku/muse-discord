@@ -32,7 +32,7 @@ def installed_version(pkg_dir, timeout=5):
             text=True,
             timeout=timeout,
         )
-    except OSError, subprocess.SubprocessError:
+    except (OSError, subprocess.SubprocessError):
         return "unknown"
     if out.returncode != 0:
         return "unknown"
@@ -63,7 +63,7 @@ def build_info(pkg_dir, version, timeout=5):
             text=True,
             timeout=timeout,
         )
-    except OSError, subprocess.SubprocessError:
+    except (OSError, subprocess.SubprocessError):
         return 0, False
     ahead = int(n.stdout.strip()) if n.returncode == 0 and n.stdout.strip().isdigit() else 0
     return min(ahead, 100_000), st.returncode == 0 and bool(st.stdout.strip())

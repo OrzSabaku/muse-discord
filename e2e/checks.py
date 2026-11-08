@@ -63,7 +63,7 @@ def _label_id(tr, label):
 def _snowflake_secs(mid):
     try:
         return ((int(mid) >> 22) + DISCORD_EPOCH_MS) / 1000.0
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return None
 
 
@@ -186,7 +186,7 @@ def check_no_sut_before(label, tr):
         # Snowflakes order messages exactly; ts is the fallback.
         try:
             return int(m["id"]) < int(mid)
-        except KeyError, TypeError, ValueError:
+        except (KeyError, TypeError, ValueError):
             return _msg_time(tr, m) < t0
 
     bad = [m for m in _sut(tr) if before(m)]

@@ -7,7 +7,7 @@ name = "muse-discord"
 version = "0.1.0"
 description = "Discord connector for Muse"
 readme = "README.md"
-requires-python = ">=3.15,<3.16"
+requires-python = ">=3.12,<3.16"
 dependencies = [
   "aiohttp>=3.9,<4",
   "discord.py>=2.7.1,<2.8",

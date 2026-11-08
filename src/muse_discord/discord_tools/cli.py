@@ -270,12 +270,15 @@ class OwnerCommandCLI:
         _json_tool(lambda: self.media_tools().avatar(cid, uid))
 
     def message_tools(self):
+        state_file = os.environ.get("MUSE_DISCORD_READ_STATE") or os.path.join(
+            self.session.package_dir, "read-state.sqlite"
+        )
         return MessageTools(
             self.session.api,
             self.auth.guard_target,
             self.session.scrub,
             self.session.bot_id,
-            os.path.join(self.session.package_dir, "read-state.sqlite"),
+            state_file,
             ALLOWED_MENTIONS,
         )
 
@@ -293,7 +296,7 @@ class OwnerCommandCLI:
                 "message": str(error),
                 "message_ids": error.message_ids,
             }
-        except SystemExit, ValueError, OSError, sqlite3.Error:
+        except (SystemExit, ValueError, OSError, sqlite3.Error):
             failure = {
                 "code": "REQUEST_FAILED",
                 "message": (
@@ -309,14 +312,29 @@ class OwnerCommandCLI:
         # (an owner DM's owner_dm_nonce)>: required by every subcommand but
         # resolve-channel and list-threads (require_owner_command), and in
         # an owner's DM checked as that DM's nonce too (guard_channel).
-        self.auth.binding.update({"for": None, "nonce": None, "entry": None, "cmd": None})
-        while len(args) >= BINDING_OPTION_ARGUMENTS and args[0] in ("--for", "--nonce"):
-            self.auth.binding[args[0][2:]] = args[1]
-            args = args[2:]
+        self.auth.binding.update(
+            {"for": None, "nonce": None, "entry": None, "cmd": None, "standalone": False}
+        )
+        while args:
+            if len(args) >= BINDING_OPTION_ARGUMENTS and args[0] in ("--for", "--nonce"):
+                self.auth.binding[args[0][2:]] = args[1]
+                args = args[2:]
+            elif args[0] in ("--standalone", "--patrol"):
+                self.auth.binding["standalone"] = True
+                args = args[1:]
+            else:
+                break
+        if self.auth.binding["standalone"] and (
+            self.auth.binding["for"] or self.auth.binding["nonce"]
+        ):
+            print("Refusing: cannot combine --standalone with --for or --nonce.", file=sys.stderr)
+            return 2
         if not args or args[0] not in self.commands:
             print(
                 "usage: discord-api.py [--for <message_id> --nonce "
-                "<owner_command_nonce>] <" + "|".join(sorted(self.commands)) + "> ...",
+                "<owner_command_nonce> | --standalone] <"
+                + "|".join(sorted(self.commands))
+                + "> ...",
                 file=sys.stderr,
             )
             return 2

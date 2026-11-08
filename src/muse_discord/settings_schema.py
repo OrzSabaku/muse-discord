@@ -39,7 +39,7 @@ def _quiet_hours(value):
 def _timezone(value):
     try:
         ZoneInfo(value)
-    except KeyError, ValueError:
+    except (KeyError, ValueError):
         raise ValueError("expected an IANA time zone such as Europe/Paris") from None
     return value
 
@@ -96,7 +96,7 @@ class EngineModel(SettingsModel):
         cast_number = field.annotation
         try:
             number = cast_number(value)
-        except TypeError, ValueError, OverflowError:
+        except (TypeError, ValueError, OverflowError):
             cls.warn(info, f"{value!r} is not a number; using the default {field.default}.")
             return field.default
         bounds = _engine_bounds(cls, info.field_name)

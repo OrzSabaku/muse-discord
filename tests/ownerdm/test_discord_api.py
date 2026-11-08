@@ -356,5 +356,33 @@ class OwnerCommandsOnly(_Tool):
         self.assertEqual(CALLS[-1][2]["content"], "leak " + "ab" * 16)
 
 
+class StandaloneMode(_Tool):
+    def test_standalone_server_channel_allowed(self):
+        rc = self.run_tool("--standalone", "post", GEN_CH, "patrol test")
+        self.assertEqual(rc, 0)
+        self.assertEqual(CALLS[-1][0], "POST")
+        self.assertEqual(CALLS[-1][1], f"/channels/{GEN_CH}/messages")
+        self.assertEqual(CALLS[-1][2]["content"], "patrol test")
+
+        rc = self.run_tool("--standalone", "read", GEN_CH, "5")
+        self.assertEqual(rc, 0)
+
+    def test_standalone_dm_refused(self):
+        for dm in (OWNER_DM, OTHER_DM):
+            rc = self.run_tool("--standalone", "post", dm, "hello")
+            self.assertNotEqual(rc, 0)
+            self.assertIn("is a DM", str(rc))
+
+            rc = self.run_tool("--standalone", "read", dm, "5")
+            self.assertNotEqual(rc, 0)
+            self.assertIn("is a DM", str(rc))
+
+    def test_standalone_cannot_combine_with_for_or_nonce(self):
+        rc = self.run_tool("--standalone", "--for", ITEM, "post", GEN_CH, "hello")
+        self.assertEqual(rc, 2)
+        rc = self.run_tool("--standalone", "--nonce", NONCE, "post", GEN_CH, "hello")
+        self.assertEqual(rc, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

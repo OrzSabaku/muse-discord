@@ -63,7 +63,7 @@ def _fetch_addrs(url):
         return None
     try:
         infos = socket.getaddrinfo(p.hostname, port, proto=socket.IPPROTO_TCP)
-    except OSError, UnicodeError:
+    except (OSError, UnicodeError):
         return None
     addrs = []
     for info in infos:

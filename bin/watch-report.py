@@ -51,7 +51,7 @@ def live(rep):
     try:
         with open(DUE) as f:
             due = json.load(f)
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return False
     return any(
         isinstance(e, dict)
@@ -100,7 +100,7 @@ def main(argv=None):
                 reps = json.load(f)
             if not isinstance(reps, list):
                 reps = []
-        except OSError, ValueError:
+        except (OSError, ValueError):
             reps = []
         reps = ([*reps, rep])[-200:]
         tfd, tmp = tempfile.mkstemp(

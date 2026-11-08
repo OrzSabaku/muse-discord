@@ -51,7 +51,7 @@ def token_shaped(text: str) -> bool:
         seg = m.group(1)
         try:
             dec = base64.urlsafe_b64decode(seg + "=" * (-len(seg) % 4))
-        except ValueError, TypeError:
+        except (ValueError, TypeError):
             continue
         if re.fullmatch(rb"[1-9][0-9]{16,19}", dec):
             return True

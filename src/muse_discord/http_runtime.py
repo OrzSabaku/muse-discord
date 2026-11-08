@@ -43,7 +43,7 @@ class RestBackoff:
         if hdrs is not None:
             try:
                 delay = float(hdrs.get("Retry-After"))
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 delay = None
         if delay is None:
             try:
