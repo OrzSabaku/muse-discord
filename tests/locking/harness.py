@@ -93,8 +93,8 @@ def fresh_pkg():
     monitor.MEDIA_DIR = os.path.join(d, "media")
     monitor.GENERATED_DIR = os.path.join(d, "generated")
     CALLS.clear()
-    getattr(monitor, "_typing_sources", {}).clear()
-    getattr(monitor, "_typing_last", {}).clear()
+    monitor._TYPING.sources.clear()
+    monitor._TYPING.last.clear()
     monitor._ACTIVITY.clear()
     monitor._BACKOFF.until = 0.0
     monitor.BOT_ID = monitor.BOT_USER_ID = "999"

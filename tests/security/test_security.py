@@ -164,20 +164,11 @@ def fake_send_files(channel_id, text, files, reply_to=None, delivery=None):
     return {"id": "999999999999999998"}
 
 
-ORIG_SEND_FILES = M._message_sender().files
+ORIG_SEND_FILES = M._SENDER.files
 M.api_post = fake_api_post
 M.api_get = fake_api_get
-M.send_typing = lambda cid: None
-_ORIG_PART_DELIVERY = M._part_delivery
-
-
-def _test_part_delivery():
-    delivery = _ORIG_PART_DELIVERY()
-    delivery.sender.files = fake_send_files
-    return delivery
-
-
-M._part_delivery = _test_part_delivery
+M._TYPING.send = lambda cid: None
+M._PARTS.sender.files = fake_send_files
 ORIG_COLLECT = M.collect_media
 _ORIG_ENQ = M.enqueue_message
 _ST = [None]  # the current test's state (reset)
@@ -635,7 +626,7 @@ def f4_monitor_reaction_slash_encoded():
 
     M._DISCORD.request = cap
     try:
-        M._message_sender().reaction(GEN_CH, "123456789012345678", "../../x")
+        M._SENDER.reaction(GEN_CH, "123456789012345678", "../../x")
     finally:
         M._DISCORD.request = orig
     assert seen and "%2F" in seen[0] and "/../" not in seen[0], seen

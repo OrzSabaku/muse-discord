@@ -444,7 +444,7 @@ def test_typing_thread_lifecycle():
     st = new_state()
     clock = _SteppedClock()
     m.time = clock
-    clock.thread = threading.Thread(target=m._typing_thread_main, daemon=True)
+    clock.thread = threading.Thread(target=m._TYPING.run, daemon=True)
     clock.thread.start()
 
     def pings(cid=None):
@@ -461,7 +461,7 @@ def test_typing_thread_lifecycle():
         st["pending"]["103:U3"]["next_try"] = clock.now + 300
         write(m.QUEUE_FILE, [])
         with capture():
-            m.typing_refresh(st)
+            m._TYPING.refresh(st)
         clock.step()
         chans = {c[2].split("/")[2] for c in typing_calls()}
         assert chans == {"101"}, chans
@@ -470,7 +470,7 @@ def test_typing_thread_lifecycle():
         del st["pending"]
         a = snowflake()
         write(m.QUEUE_FILE, [qitem(a, cid="101", queued_at=clock.now)])
-        m.typing_refresh(st)
+        m._TYPING.refresh(st)
         n0 = pings("101")
         clock.step(2 * TYPING_EVERY_SECS)
         assert pings("101") - n0 >= 2, typing_calls()
@@ -480,7 +480,7 @@ def test_typing_thread_lifecycle():
         )
         with capture():
             m.process_outbox(st)
-        m.typing_refresh(st)
+        m._TYPING.refresh(st)
         n0 = pings()
         clock.step(3 * TYPING_EVERY_SECS)
         assert pings() == n0, typing_calls()[n0:]
@@ -489,7 +489,7 @@ def test_typing_thread_lifecycle():
         b = snowflake()
         it = qitem(b, cid="105", queued_at=clock.now - TYPING_MAX_SECS + TYPING_EVERY_SECS)
         write(m.QUEUE_FILE, [it])
-        m.typing_refresh(st)
+        m._TYPING.refresh(st)
         clock.step()
         assert pings("105") == 1, typing_calls()
         clock.step(3 * TYPING_EVERY_SECS)
@@ -497,16 +497,16 @@ def test_typing_thread_lifecycle():
         # 5. REST back-off: no typing at all
         it["queued_at"] = clock.now
         write(m.QUEUE_FILE, [it])
-        m.typing_refresh(st)
+        m._TYPING.refresh(st)
         m._BACKOFF.until = clock.now + 100
         n0 = pings()
         clock.step(2 * TYPING_EVERY_SECS)
-        m.send_typing("109")
+        m._TYPING.send("109")
         assert pings() == n0, typing_calls()[n0:]
     finally:
         m.time = time
         m._BACKOFF.until = 0.0
-        m._typing_sources.clear()
+        m._TYPING.sources.clear()
 
 
 def _drain(st, inbox_items):

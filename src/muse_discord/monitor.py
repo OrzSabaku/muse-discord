@@ -98,7 +98,7 @@ from muse_discord.message_queue import QueueFiles
 from muse_discord.messaging import formatting as reply_formatting
 from muse_discord.messaging.parts import PartDelivery
 from muse_discord.messaging.sending import MessageSender
-from muse_discord.messaging.typing import TypingIndicators, TypingState
+from muse_discord.messaging.typing import TypingIndicators
 from muse_discord.monitor_health import MonitorHealth, token_rejected_exit
 from muse_discord.monitor_process import MonitorLock
 from muse_discord.outbox_store import OutboxFiles, OutboxProcessor
@@ -274,8 +274,8 @@ def _proactive_context():
         queued_item_meta=lambda *args, **kwargs: queued_item_meta(*args, **kwargs),
         rest_backing_off=lambda *args, **kwargs: rest_backing_off(*args, **kwargs),
         scope_for=lambda *args, **kwargs: scope_for(*args, **kwargs),
-        send_fragmented=lambda *args, **kwargs: send_fragmented(*args, **kwargs),
-        send_reply=lambda *args, **kwargs: send_reply(*args, **kwargs),
+        send_fragmented=lambda *args, **kwargs: _PARTS.send(*args, **kwargs),
+        send_reply=lambda *args, **kwargs: _SENDER.reply(*args, **kwargs),
         settings=lambda *args, **kwargs: settings(*args, **kwargs),
         settings_card=lambda *args, **kwargs: _worker_context().settings_card(*args, **kwargs),
         started_item_id=lambda *args, **kwargs: started_item_id(*args, **kwargs),
@@ -516,9 +516,9 @@ def _deliver_outbox_item(batch, item):
         schedules=_watch_requests(),
         watches=policy.watches,
         conversation=_conversation(),
-        typing=_typing_service(),
-        parts=_part_delivery(),
-        sender=_message_sender(),
+        typing=_TYPING,
+        parts=_PARTS,
+        sender=_SENDER,
         response=_response_policy(),
         directory=_DIRECTORY.scopes,
         opt_action=PRO.opt_action,
@@ -1021,71 +1021,13 @@ def flush_pending(state, queue, force=False):
 # sanitize_reply is a second layer, not the only one.
 
 
-def _upload_message(path, payload, blobs):
-    return _DISCORD.upload(path, payload, blobs)
-
-
-def _put_reaction(path):
-    return _DISCORD.put(path)
-
-
-def _message_sender():
-    return MessageSender(guard_outgoing, api_post, _upload_message, _put_reaction)
-
-
-def _part_delivery():
-    return PartDelivery(_message_sender(), send_typing, time.sleep)
-
-
-def _typing_service():
-    return TypingIndicators(
-        api_post,
-        rest_backing_off,
-        _queue_files(),
-        time,
-        TypingState(_typing_sources, _typing_last, _typing_lock),
-    )
-
-
-def send_reply(channel_id, text, reply_to=None, components=None, delivery=None):
-    return _message_sender().reply(channel_id, text, reply_to, components, delivery)
-
-
-def send_typing(channel_id):
-    return _typing_service().send(channel_id)
-
-
-# ---------------------------------------------------------------------------
-# Typing indicator. Discord shows one typing ping for ~10s, and one main
-# loop iteration can take longer (media downloads, a multi-part send),
-# so a daemon thread pings every active channel on its own clock and
-# the indicator never lapses. The main loop only says which
-# channels are active (typing_refresh): a channel types while it has a
-# pending burst (not in enqueue back-off) or a queue item, for at most
-# TYPING_MAX_SECS per burst or item so a dead worker does not type
-# forever. process_outbox stops an item's typing right before its reply
-# goes out (sending a message ends the indicator; the beats in
-# send_fragmented cover multi-part replies).
-# ---------------------------------------------------------------------------
-_typing_lock = threading.Lock()
-_typing_sources = {}  # "burst:<key>" / "item:<id>" -> (channel_id, start)
-_typing_last = {}  # channel_id -> time of the last typing ping
-
-
-def typing_refresh(state, queue=None):
-    return _typing_service().refresh(state, queue)
-
-
-def _typing_thread_main():
-    return _typing_service().run()
+_SENDER: MessageSender
+_PARTS: PartDelivery
+_TYPING: TypingIndicators
 
 
 def normalize_parts(item):
     return reply_formatting.normalize_parts(item, _SETTINGS.engine.max_reply_chars)
-
-
-def send_fragmented(channel_id, parts, reply_to=None, attachments=(), delivery=None):
-    return _part_delivery().send(channel_id, parts, reply_to, attachments, delivery)
 
 
 def _generated_replies():
@@ -1565,8 +1507,8 @@ def _send_outbox(state):
 def _start_monitor_threads(state):
     _gateway_inbox, _gateway_status = _GATEWAY.start()
     _ix_inbox = _GATEWAY.interactions
-    # Typing indicator on its own clock (see typing_refresh).
-    threading.Thread(target=_typing_thread_main, daemon=True, name="typing").start()
+    # Typing indicator on its own clock (see _TYPING.refresh).
+    threading.Thread(target=_TYPING.run, daemon=True, name="typing").start()
     # Interactions (button clicks) on their own thread, fed straight by
     # the gateway thread: the 3s acknowledgement deadline never waits on
     # the main loop. What they change in state comes back through the
@@ -1660,6 +1602,7 @@ def _start_monitor():
 
 def _initialize_services():
     """Build process-owned services after configuration and token validation."""
+    global _SENDER, _PARTS, _TYPING
     global _CAPABILITIES, _OWNER_AUTH
     global _OWNER_MESSAGES, _OWNER_PRESENCE, _REVIEW, _UPDATE_NOTICES
     global _ADMIN_DIGESTS, _JOIN_NOTICES, _GUILD_LIFECYCLE
@@ -1693,6 +1636,20 @@ def _initialize_services():
     _DISCORD = DiscordCalls(
         lambda: TOKEN, _BACKOFF, _HEALTH, lambda data, where: guard_outgoing(data, where)
     )
+    _SENDER = MessageSender(
+        lambda data, where: guard_outgoing(data, where),
+        lambda path, body: api_post(path, body),
+        lambda path, payload, blobs: _DISCORD.upload(path, payload, blobs),
+        lambda path: _DISCORD.put(path),
+    )
+    _TYPING = TypingIndicators(
+        lambda path, body: api_post(path, body),
+        lambda: rest_backing_off(),
+        lambda: load_queue(),
+        lambda: time.time(),
+        lambda seconds: time.sleep(seconds),
+    )
+    _PARTS = PartDelivery(_SENDER, lambda cid: _TYPING.send(cid), lambda secs: time.sleep(secs))
     _DIRECTORY_VIEW = DirectorySnapshot(lambda: DIRECTORY_FILE)
     _DIRECT_MESSAGES = DirectChannels()
     _OWNER_MESSAGES = OwnerMessenger(
@@ -1842,7 +1799,7 @@ def main():
         _run_phase("Proactive", PRO.tick, state)
         poll_turn, rest_spent = scheduler.poll_slice(state, now, backing, dm_items)
         queue = _run_phase("Queue/staging", _stage_polled_messages, state, dm_items)
-        _run_phase("Typing", typing_refresh, state, queue)
+        _run_phase("Typing", _TYPING.refresh, state, queue)
         outbox_pass_at = time.time()
         _run_phase("Outbox", _send_outbox, state)
         recovery = scheduler.recovery_cycle()

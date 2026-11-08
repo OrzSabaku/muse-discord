@@ -134,7 +134,7 @@ def load_monitor(cfg_text, tmp=None, channels=True):
     mod.real_api_post = mod.api_post  # for tests of the helper itself
     mod.api_get = api.get
     mod.api_post = api.post
-    mod.send_typing = lambda cid: None
+    mod._TYPING.send = lambda cid: None
     mod.collect_media = lambda m: ([], [], [])
     mod.BOT_ID = mod.BOT_USER_ID = BOT
     mod.BOT_NAME = "muse"

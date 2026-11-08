@@ -296,7 +296,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
             return {"id": "1"}
 
         with mock.patch.object(mod._DISCORD, "request", send):
-            mod._message_sender().files(
+            mod._SENDER.files(
                 "123456789012345678",
                 "hi",
                 [(path, "a.png")],
@@ -307,7 +307,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
 
     def test_reply_reference_tolerates_missing_target(self):
         mod = H.load_monitor()
-        mod.send_reply(
+        mod._SENDER.reply(
             "123456789012345678",
             "hi",
             "223456789012345678",
@@ -319,7 +319,7 @@ class SendDeletedReplyTarget(unittest.TestCase):
             {"message_id": "223456789012345678", "fail_if_not_exists": False},
         )
         self.assertEqual((data["nonce"], data["enforce_nonce"]), ("n1", True))
-        mod.send_reply("123456789012345678", "plain")
+        mod._SENDER.reply("123456789012345678", "plain")
         self.assertNotIn("message_reference", mod.api.posts[-1][1])
         payload = self._multipart_payload(mod, "223456789012345678")
         self.assertEqual(

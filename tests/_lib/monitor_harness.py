@@ -127,7 +127,7 @@ def load_monitor(tmp=None, cfg_extra=""):
     mod.api = FakeAPI(mod)
     mod.api_get = mod.api.get
     mod.api_post = mod.api.post
-    mod.send_typing = lambda cid: None
+    mod._TYPING.send = lambda cid: None
     mod.collect_media = lambda m: ([], [], [])
     mod.BOT_ID = mod.BOT_USER_ID = BOT
     mod.BOT_NAME = "musebot"

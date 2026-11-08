@@ -84,8 +84,8 @@ class Outbox(tb.Base):
         calls = [
             lambda: m.real_api_post(f"/channels/{CH}/messages", {"content": "x " + TOKEN}),
             lambda: m.api_patch(f"/channels/{CH}/messages/1", {"content": TOKEN}),
-            lambda: m._message_sender().files(CH, TOKEN, []),
-            lambda: m._message_sender().files(
+            lambda: m._SENDER.files(CH, TOKEN, []),
+            lambda: m._SENDER.files(
                 CH,
                 "ok",  # file name
                 [("/x", TOKEN + ".png")],
@@ -111,7 +111,7 @@ class Outbox(tb.Base):
             quiet(),
             self.assertRaises(SecretBlocked),
         ):
-            m._message_sender().files(CH, "ok", [(leak, "cat.png")])
+            m._SENDER.files(CH, "ok", [(leak, "cat.png")])
         self.assertEqual(opened, [])
 
 
