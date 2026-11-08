@@ -44,6 +44,7 @@ from fake import (
 )
 
 from muse_discord.settings_assessment import assess
+from muse_discord.settings_presets import matching_preset, preset_changes
 
 P = MS.Place
 C = MS.Change
@@ -564,7 +565,7 @@ class Admin(unittest.TestCase):
         self.refused([C(S1, "who.replies", "off", path=("servers", G2))])
         # a preset is an owner's tool
         st = load(self.cfg)
-        self.refused(MS.preset_changes(st, "work", S1, INFO))
+        self.refused(preset_changes(st, "work", S1, INFO))
         # a mixed batch is refused whole
         self.refused([C(S1, "media.enabled", False), C(S1, "who.replies", "conversational")])
 
@@ -675,30 +676,30 @@ class Presets(unittest.TestCase):
     def test_presets(self):
         st = load(config(self))
         with self.assertRaises(MS.SettingsError):  # 1,240 members
-            MS.preset_changes(st, "friends", S1, INFO)
-        ch = MS.preset_changes(st, "friends", S3, INFO)
+            preset_changes(st, "friends", S1, INFO)
+        ch = preset_changes(st, "friends", S3, INFO)
         self.assertIn(C(S3, "privacy.memory", "everything"), ch)
         self.assertTrue(assess(st, ch, INFO).risky)  # confirm first
         for pl in (DEF, DMS, GEN):
             with self.assertRaises(MS.SettingsError):
-                MS.preset_changes(st, "work", pl)
+                preset_changes(st, "work", pl)
         with self.assertRaises(MS.SettingsError):
-            MS.preset_changes(st, "party", S1)
+            preset_changes(st, "party", S1)
         # A preset is one group: one Undo reverts it.
         cfg = config(self)
         st = load(cfg)
-        self.assertIsNone(MS.matching_preset(st, S1))
-        r = apply(cfg, MS.preset_changes(st, "community", S1, INFO))
-        self.assertEqual(MS.matching_preset(load(cfg), S1), "Community")
-        self.assertEqual(MS.preset_changes(load(cfg), "community", S1), [])
+        self.assertIsNone(matching_preset(st, S1))
+        r = apply(cfg, preset_changes(st, "community", S1, INFO))
+        self.assertEqual(matching_preset(load(cfg), S1), "Community")
+        self.assertEqual(preset_changes(load(cfg), "community", S1), [])
         self.assertEqual(len({h["group"] for h in doc(cfg)["history"]}), 1)
         MS.undo(cfg, S1, actor=MS.WriteActor(by=OWNER))
-        self.assertIsNone(MS.matching_preset(load(cfg), S1))
+        self.assertIsNone(matching_preset(load(cfg), S1))
         self.assertFalse(MS.group_current(load(cfg), r.group))
-        apply(cfg, MS.preset_changes(load(cfg), "work", S1))
-        self.assertEqual(MS.matching_preset(load(cfg), S1), "Work")
-        apply(cfg, MS.preset_changes(load(cfg), "friends", S3, INFO))
-        self.assertEqual(MS.matching_preset(load(cfg), S3), "Friends")
+        apply(cfg, preset_changes(load(cfg), "work", S1))
+        self.assertEqual(matching_preset(load(cfg), S1), "Work")
+        apply(cfg, preset_changes(load(cfg), "friends", S3, INFO))
+        self.assertEqual(matching_preset(load(cfg), S3), "Friends")
 
 
 # ---------------------------------------------------------------------------

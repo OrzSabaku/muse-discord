@@ -235,12 +235,14 @@ def _import_telemetry():
     """A telemetry.Recorder; a stand-in that does nothing when
     telemetry.py cannot be loaded (it never stops the bot)."""
     try:
+        from muse_discord.settings_presets import PRESETS
         from muse_discord.telemetry import Recorder
 
         return Recorder(
             lambda: (TELEMETRY_FILE, TELEMETRY_ID_FILE, TELEMETRY_WAKES_FILE),
             ms=MS,
             pkg_dir=BASE_DIR,
+            preset_values=PRESETS,
         )
     except Exception as e:
         print(f"Telemetry not loaded ({type(e).__name__}); usage counts are off.", flush=True)

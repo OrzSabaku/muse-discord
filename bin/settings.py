@@ -67,6 +67,7 @@ import setup_common  # noqa: E402,F401  (re-runs under .venv if needed)
 
 from muse_discord import muse_settings as MS  # noqa: E402
 from muse_discord.settings_assessment import assess  # noqa: E402
+from muse_discord.settings_presets import matching_preset, preset_changes  # noqa: E402 (source path bootstrap)
 
 
 def _cfg_path(args):
@@ -313,7 +314,7 @@ def cmd_preset(args):
     st = MS.load(cfg)
     info = _info(cfg)
     place = _place(args, info)
-    changes = MS.preset_changes(st, args.name, place, info)
+    changes = preset_changes(st, args.name, place, info)
     if not changes:
         print(
             f"No change: {MS.place_name(place, MS.names_from(info, st))} "
@@ -378,7 +379,7 @@ def cmd_explain(args):
     if MS.is_paused(st, place):
         print("  Paused here.")
     if place.kind == "server" and not keys:
-        print(f"  Matches: {MS.matching_preset(st, place) or 'Custom'}")
+        print(f"  Matches: {matching_preset(st, place) or 'Custom'}")
     for line in MS.explain_lines(st, place, keys, names):
         print(f"  {line}")
     return 0

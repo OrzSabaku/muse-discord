@@ -382,7 +382,7 @@ def _matches_preset(picks, values, st, ms):
     return ok
 
 
-def preset_of(lines, st, ms):
+def preset_of(lines, st, ms, preset_values):
     """The preset (friends | community | work) one history group applied,
     else None: at least two changes, all at one server, each the value
     that preset gives that key."""
@@ -401,8 +401,7 @@ def preset_of(lines, st, ms):
             return None
         server = parts[1]
         picks.append((".".join(parts[2:]), h.get("to")))
-    presets = getattr(ms, "PRESETS", {}) or {}
-    for name, (_title, values) in presets.items():
+    for name, (_title, values) in (preset_values or {}).items():
         if name not in PRESETS:
             continue
         ok = _matches_preset(picks, values, st, ms)
@@ -411,7 +410,7 @@ def preset_of(lines, st, ms):
     return None
 
 
-def count_history(rec, lines, st, ms):
+def count_history(rec, lines, st, ms, preset_values):
     """Add settings changes (by source) and presets applied to rec."""
     groups = {}
     for h in lines:
@@ -421,7 +420,7 @@ def count_history(rec, lines, st, ms):
         if h.get("group") and not h.get("undo"):
             groups.setdefault(h["group"], []).append(h)
     for g in groups.values():
-        name = preset_of(g, st, ms)
+        name = preset_of(g, st, ms, preset_values)
         if name:
             _bump(rec.setdefault("presets", {}), name)
 
@@ -621,6 +620,7 @@ class Recorder:
     clock: Callable[[], float] = time.time
     post: Callable[[str, dict[str, Any]], int] = post_json
     environ: Mapping[str, str] | None = None
+    preset_values: Mapping[str, tuple[str, Mapping[str, Any]]] | None = None
 
     def __post_init__(self):
         self.lock = threading.Lock()
@@ -799,7 +799,7 @@ class Recorder:
                 lines, d["history_mark"] = self.ms.history_since(
                     getattr(st, "overlay_doc", None), d.get("history_mark")
                 )
-                count_history(rec, lines, st, self.ms)
+                count_history(rec, lines, st, self.ms, self.preset_values)
             counts = [v for v in (member_counts or {}).values() if isinstance(v, int) and v > 0]
             rec["gauges"] = {
                 "servers": len(guilds or ()),

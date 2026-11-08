@@ -21,6 +21,7 @@ from discord import ui
 from muse_discord import muse_settings as ms
 from muse_discord.settings_assessment import assess
 from muse_discord.settings_display import clip
+from muse_discord.settings_presets import preset_changes
 
 MAX_CONFIRMATION_WARNINGS = 5
 
@@ -351,7 +352,7 @@ class Screen:
             if role != "owner" or place.kind != "server":
                 raise ms.SettingsError("プリセットは所有者がサーバー全体に設定できます。")
             staged = ms.simulate(ctx.settings, self.changes(ctx))
-            for change in ms.preset_changes(staged, values[0], place, ctx):
+            for change in preset_changes(staged, values[0], place, ctx):
                 self.stage(ctx, role, change.key, change.value)
             return "プリセットを下書きに追加しました。保存前に変更内容を確認してください。"
         elif action == "set":

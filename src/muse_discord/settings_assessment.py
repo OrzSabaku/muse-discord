@@ -9,7 +9,6 @@ present the result and obtain approval.
 from dataclasses import dataclass, field
 
 from muse_discord.muse_settings import (
-    BIG_FOR_MEMORY,
     PAIR_LENGTH,
     Place,
     Scope,
@@ -26,6 +25,7 @@ from muse_discord.settings_display import (
     place_name,
 )
 
+BIG_FOR_MEMORY = 50
 BIG_FOR_CONVERSATIONAL = 500
 BIG_FOR_CAPS = 500
 MEDIA_PER_DAY_RISKY = 20

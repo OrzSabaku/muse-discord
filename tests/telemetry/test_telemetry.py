@@ -51,6 +51,7 @@ from settings_harness import (  # noqa: E402 (local import path bootstrap)
 
 sys.path.insert(0, MUT_DIR)
 from muse_discord import telemetry as T  # noqa: E402
+from muse_discord.settings_presets import preset_changes  # noqa: E402 (source path bootstrap)
 
 DAY = 86400
 BASE = f"""version: 1
@@ -269,7 +270,7 @@ class NeverIdentifying(Base):
         place = MS.parse_place(f"server:{G1}")
         with quiet():
             ctx.write(f"servers.{G1}.style.notes", "talk about PINEAPPLE", OWNER)
-            ctx.apply(MS.preset_changes(m.settings(), "community", place), OWNER, "owner")
+            ctx.apply(preset_changes(m.settings(), "community", place), OWNER, "owner")
             MS.apply(
                 m.cfg_path,
                 [MS.Change(place, "style.length", "brief")],

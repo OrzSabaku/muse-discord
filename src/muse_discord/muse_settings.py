@@ -1804,10 +1804,9 @@ def _del_path(d, parts):
 
 # ---------------------------------------------------------------------------
 # Settings v2: places, words, grouped changes, risk by outcome, the
-# server-admin revert rule, presets, pause. Pure (no network): callers
+# server-admin revert rule and pause. Pure (no network): callers
 # pass what they know about servers and names (info, names).
 # ---------------------------------------------------------------------------
-BIG_FOR_MEMORY = 50  # members: memory "everything" warns harder
 ADMIN_REPLIES = ("off", "when-addressed")
 ADMIN_QUIETER = (
     "Server admins can make the bot quieter, or undo their own "
@@ -2907,125 +2906,6 @@ def resume_changes(st, place):
         if st.layer(path, "who.replies")[:2] == (True, "off"):
             out.append(Change(pl, "who.replies", resume_value(st, path)))
     return out
-
-
-# -- presets ------------------------------------------------------------------
-_IF_MEDIA, _IF_EMPTY = "if-media-on", "if-empty"
-WORK_NOTES = "Keep a professional tone. Keep replies brief."
-PRESETS = {
-    "friends": (
-        "Friends",
-        {
-            "who.replies": "conversational",
-            "privacy.memory": "everything",
-            "limits.per_person_per_day": None,
-            "limits.per_day": None,
-            "who.bots": "when-addressed",
-            "who.bot_exchange_limit": None,
-            "media.per_day": None,
-            "proactive.enabled": True,
-        },
-    ),
-    "community": (
-        "Community",
-        {
-            "who.replies": "when-addressed",
-            "privacy.memory": "public-only",
-            "limits.per_person_per_day": 20,
-            "limits.per_day": 300,
-            "who.bots": "when-addressed",
-            "who.bot_exchange_limit": 4,
-            "media.per_day": (_IF_MEDIA, 10),
-            "proactive.enabled": False,
-        },
-    ),
-    "work": (
-        "Work",
-        {
-            "who.replies": "when-addressed",
-            "privacy.memory": "nothing",
-            "limits.per_person_per_day": None,
-            "limits.per_day": None,
-            "who.bots": "ignore",
-            "media.per_day": None,
-            "proactive.enabled": False,
-            "style.notes": (_IF_EMPTY, WORK_NOTES),
-        },
-    ),
-}
-
-
-def _preset(name):
-    n = str(name or "").strip().lower()
-    if n not in PRESETS:
-        raise SettingsError(f"{name!r} is not a preset: Friends, Community or Work")
-    return PRESETS[n]
-
-
-def preset_changes(st, name, place, info=None, big="refuse"):
-    """[Change] that apply preset name (friends | community | work) to a
-    server place: one undo group when applied together. Keys a preset
-    leaves unchanged are absent; Community's media cap only when media is
-    on there; Work's instructions only when the server has none; changes
-    that would change nothing are left out. Friends (anything it
-    remembers) is refused for a server known to have more than 50
-    members; with big="skip" it is applied without that one key
-    instead (/settings' preview says so). Presets are an owner's tool
-    (admin_changes refuses them)."""
-    title, values = _preset(name)
-    if place.kind != "server":
-        raise SettingsError("Presets apply to a whole server.")
-    members = ServerInfo(info).members(place.guild_id)
-    skip = set()
-    if title == "Friends" and members is not None and members > BIG_FOR_MEMORY:
-        if big != "skip":
-            raise SettingsError(
-                f"The Friends preset lets replies use anything it "
-                f"remembers about you, so it is only for servers of up to "
-                f"{BIG_FOR_MEMORY} members; this one has {members:,}."
-            )
-        skip.add("privacy.memory")
-    out = []
-    sc = Scope.server(place.guild_id)
-    for key, value in values.items():
-        if st.spec(key) is None or key in skip:
-            continue  # a setting omitted by this preset
-        if isinstance(value, tuple):
-            cond, value = value
-            if cond == _IF_MEDIA and not st.get("media.enabled", sc):
-                continue
-            if cond == _IF_EMPTY and st.get(key, sc):
-                continue
-        path = place_path(st, place, key)
-        _ok, norm = normalize(st.spec(key), value)
-        if not _place_noop(st, Change(place, key, norm, path=path), path, norm):
-            out.append(Change(place, key, value))
-    return out
-
-
-def matching_preset(st, place):
-    """ "Friends" / "Community" / "Work" when a server's values in force
-    match that preset, else None ("Custom"). Instructions and reaching
-    out on its own (a server may keep Friends with it off) are not
-    compared; the media cap only when media is on there."""
-    if place.kind != "server":
-        return None
-    sc = Scope.server(place.guild_id)
-    for title, values in PRESETS.values():
-        ok = True
-        for key, value in values.items():
-            if key in ("style.notes", "proactive.enabled") or st.spec(key) is None:
-                continue
-            if isinstance(value, tuple):
-                cond, value = value
-                if cond == _IF_MEDIA and not st.get("media.enabled", sc):
-                    continue
-            if st.get(key, sc) != value:
-                ok = False
-                break
-        if ok:
-            return title
-    return None
 
 
 # ---------------------------------------------------------------------------

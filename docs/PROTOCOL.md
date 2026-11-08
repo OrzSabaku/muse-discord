@@ -39,6 +39,7 @@
 | Discord HTTP通信 | `src/muse_discord/discord_rest.py`（discord.py） |
 | Discord接続・UI操作受付 | `src/muse_discord/discord_connection.py`（discord.py） |
 | 設定変更による応答対象・公開範囲・費用の評価 | `src/muse_discord/settings_assessment.py` |
+| プリセットの定義・変更案への変換・一致判定 | `src/muse_discord/settings_presets.py` |
 | 設定の継承・変更・保存 | `src/muse_discord/muse_settings.py` |
 | 設定の表示文言・名前解決 | `src/muse_discord/settings_display.py` |
 | Discordの設定画面 | `src/muse_discord/settings_ui.py` |
@@ -123,6 +124,7 @@ HTTPの長い制限待ちと認証失敗は `http_runtime`、稼働記録は `mo
 送信前の検査は `outgoing_guard.OutgoingGuard` が持つ。値の書き換えは行わず、各文字列と結合した内容を検査する。所有者への通知回数はスレッド間で共有し、ロックを解放してから送ることで再帰した検査でも待ち合わない。
 状態ファイルの保存は `durable_state.StateFile`、未反映の依頼を共有キューへ反映する順序は `QueuePublication` が持つ。キュー更新前に復旧可能な状態を保存し、ロック待ちや書き込みの失敗では未反映の依頼を残す。保存済み内容のキャッシュは保存先と組にする。
 依頼のメタデータ・時刻・連投全体の完了記録は `reply_state.ReplyState` が持つ。完了対象はその依頼のトリガーと断片だけに限り、別の連投への参照で処理済みにしない。保存ロックと権限の消費は呼び出し元のoutbox確定処理が担う。
+プリセットは `settings_presets` が通常の変更案へ変換する。UIとCLIはその変更案を共通の評価・権限確認・保存処理へ渡し、プリセット自体は設定を書き込まない。利用統計へは定義を値として渡し、設定エンジンの内部属性から探さない。
 `engine` の初期値・型・範囲・補正は `settings_schema.EngineSettings` に集約する。
 
 ## 型と静的検査

@@ -50,6 +50,8 @@ from settings_harness import (
     state,
 )
 
+from muse_discord.settings_presets import preset_changes
+
 DM_U1 = "400000000000000079"
 DM_U2 = "400000000000000080"
 OWNER_DM = "4" + OWNER[1:]  # what the fake API opens for OWNER
@@ -273,14 +275,14 @@ class OffByDefault(Base):
         self.assertIsNone(self.heartbeat())
         st = MS.load(self.m.cfg_path)
         place = MS.Place.server(G1)
-        self.apply(MS.preset_changes(st, "friends", place))
+        self.apply(preset_changes(st, "friends", place))
         self.now += HOUR
         slot = self.heartbeat()
         self.assertIsNotNone(slot, self.out)
         # That server's channels only: not the other server, not DMs.
         self.assertEqual(self.targets(slot), {CH, CH2})
         # Work turns it off again.
-        self.apply(MS.preset_changes(MS.load(self.m.cfg_path), "work", place))
+        self.apply(preset_changes(MS.load(self.m.cfg_path), "work", place))
         self.assertFalse(self.m.settings().get("proactive.enabled", self.m.scope_for(G1, CH)))
 
 
