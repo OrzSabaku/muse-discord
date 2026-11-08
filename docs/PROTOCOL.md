@@ -26,6 +26,7 @@
 
 - モニターが `reply_queue.json` を書く。ワーカーはwakeで渡された `items` と `persona` だけを処理し、キュー全体を読まない。
 - ロックを取得できなければ書き込みを延期する。未保存の受信項目は `state.json` の `queue_backlog` に保管し、次の周回で再試行する。送信後のキュー削除とnonce消費も、ロック取得後に行う。
+- 送信後の確定を延期するときは、再試行の回数・開始時刻・次回時刻を `state.json` の `outbox_retries` に保存する。自発発言の未登録項目は `proactive.json` のスロットに保存し、期限内に同じIDとnonceで再登録する。
 - キュー項目には `message_id`・`channel_id`・`kind`・発言者・本文・履歴・設定を含む。権限はモニターが付与する。
 - CLIとモニターは `reply_protocol.py` で返信データの型と送信内容を検証する。nonce・依頼との対応・権限は各呼び出し元でも確認する。
 - 1項目につき1返信を、`bin/outbox-append.py` で速やかに追記する。キュー・outboxを直接編集しない。

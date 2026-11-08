@@ -6893,6 +6893,16 @@ class OutboxBatch:
         self.settled = []
         self.index = queue_index(state)
 
+    def defer_retries(self, originals):
+        """Keep retry progress in monitor-owned state while shared files are locked."""
+        remaining = {id(item) for item in self.remaining}
+        self.state["outbox_retries"] = {
+            key: item["_retry"]
+            for item, key in originals
+            if id(item) in remaining and key is not None and item.get("_retry")
+        }
+        save_state(self.state)
+
     def settled_ids(self):
         frags = self.index["frags"]
         # The queue items the settled replies answer. Matched on the outbox
@@ -7101,9 +7111,7 @@ class OutboxDelivery:
                 flush=True,
             )
             return False
-        self.retry = self.item.get("_retry") or {}
-        if self.retry.get("next", 0) > time.time():
-            self.batch.remaining.append(self.item)  # waiting out the gap after a failure
+        if not self.retry_ready():
             return False
         if never_share_hit(self.batch.state, self.item, self.qid, self.parts):
             hold_reply(self.batch.state, self.item, self.qid, self.parts)
@@ -7118,6 +7126,18 @@ class OutboxDelivery:
         # show typing again for ~10s.
         typing_clear(self.typing_keys)
         self.mentions = None
+        return True
+
+    def retry_ready(self):
+        self.retry = self.item.get("_retry") or {}
+        now = time.time()
+        first = self.retry.get("first")
+        if first is not None and now - first >= SEND_RETRY_SECS:
+            self.give_up(TimeoutError("send retry window expired"))
+            return False
+        if self.retry.get("next", 0) > now:
+            self.batch.remaining.append(self.item)
+            return False
         return True
 
     def send_payload(self):
@@ -7232,6 +7252,9 @@ class OutboxDelivery:
         ):
             self.batch.remaining.append(self.item)
             return
+        self.give_up(e)
+
+    def give_up(self, e):
         print(
             f"Giving up on reply to {self.item.get('author')} in "
             f"{self.item.get('channel_name')} after "
@@ -7244,6 +7267,14 @@ class OutboxDelivery:
             outcome=Settlement(status="skipped", reason=f"send failed: {e}"[:200]),
         )
         self.batch.settled.append(self.item)
+
+
+def _restore_outbox_retries(state, items):
+    retries = state.get("outbox_retries") or {}
+    for item in items:
+        retry = retries.get(_outbox_key(item))
+        if retry is not None and isinstance(item, dict):
+            item["_retry"] = retry
 
 
 def process_outbox(state):
@@ -7268,13 +7299,21 @@ def process_outbox(state):
             return  # mid-write; the next pass gets it
         # Held replies an owner chose to send ride along (see hold_reply).
         outbox = (_outbox_load(OUTBOX_PROCESSING_FILE) or []) + fresh + state.pop("released", [])
+        _restore_outbox_retries(state, outbox)
         atomic_write(OUTBOX_PROCESSING_FILE, outbox)
         atomic_write(OUTBOX_FILE, [])
+        if state.pop("outbox_retries", None) is not None:
+            save_state(state)  # restored progress is now in the locked processing file
 
     batch = OutboxBatch(state, picked)
-    for item in outbox:
+    originals = [(item, _outbox_key(item)) for item in outbox]
+    for item, _key in originals:
         OutboxDelivery(batch, item).process()
-    batch.finish()
+    try:
+        batch.finish()
+    except SharedLockTimeout:
+        batch.defer_retries(originals)
+        raise
 
 
 # ---------------------------------------------------------------------------

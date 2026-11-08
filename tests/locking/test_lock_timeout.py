@@ -94,6 +94,46 @@ class LockTimeout(unittest.TestCase):
         self.assertFalse(os.path.exists(m.OUTBOX_PROCESSING_FILE))
         self.assertEqual(m._OUTBOX_POISON, {})
 
+    def test_retry_progress_survives_repeated_settlement_contention_and_reload(self):
+        state, mid = new_state(), snowflake()
+        write(m.QUEUE_FILE, [{"message_id": mid, "channel_id": "101"}])
+        item = signed(m, state, {"item": mid, "reply_to": mid, "channel_id": "101", "text": "hi"})
+        write(m.OUTBOX_FILE, [item])
+        clock = [m.time.time()]
+        first = clock[0]
+        with open(m.LOCK_FILE, "a") as holder, patch.object(m.time, "time", lambda: clock[0]):
+
+            def fail_send(*_args, **_kwargs):
+                fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                raise OSError("ambiguous send failure")
+
+            with patch.object(m, "api_post", side_effect=fail_send) as send, capture():
+                for attempt in (1, 2):
+                    with self.assertRaises(m.SharedLockTimeout):
+                        m.outbox_pass(state)
+                    checkpoint = read(m.STATE_FILE)
+                    retry = next(iter(checkpoint["outbox_retries"].values()))
+                    self.assertEqual(retry["n"], attempt)
+                    self.assertEqual(retry["first"], first)
+                    self.assertGreater(retry["next"], clock[0])
+                    # The monitor's checkpoint is the only updated file while locked.
+                    processing_retry = read(m.OUTBOX_PROCESSING_FILE)[0].get("_retry", {})
+                    self.assertEqual(processing_retry.get("n", 0), attempt - 1)
+                    self.assertEqual(send.call_count, attempt)
+                    state = checkpoint  # restart with progress loaded from state.json
+                    fcntl.flock(holder, fcntl.LOCK_UN)
+                    m.outbox_pass(state)  # still before the saved backoff deadline
+                    self.assertEqual(send.call_count, attempt)
+                    self.assertEqual(read(m.OUTBOX_FILE)[0]["_retry"], retry)
+                    self.assertNotIn("outbox_retries", read(m.STATE_FILE))
+                    clock[0] = retry["next"] + 0.1
+                clock[0] = first + m.SEND_RETRY_SECS + 1
+                m.outbox_pass(state)
+                self.assertEqual(send.call_count, 2)  # expired replies are never sent again
+        self.assertEqual(read(m.OUTBOX_FILE), [])
+        self.assertEqual(read(m.QUEUE_FILE), [])
+        self.assertEqual(read(m.LEDGER_FILE)["entries"][mid]["status"], "skipped")
+
     def test_nonce_publication_runs_after_releasing_queue_lock(self):
         state, mid = new_state(), snowflake()
         write(m.QUEUE_FILE, [{"message_id": mid, "channel_id": "101"}])
