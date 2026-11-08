@@ -9554,7 +9554,10 @@ def _start_monitor():
         queue = load_queue()
         n_before = len(queue)
         if flush_pending(state, queue, force=True):
-            publish_queue_additions(state, queue[n_before:])
+            try:
+                publish_queue_additions(state, queue[n_before:])
+            except SharedLockTimeout as exc:
+                print(f"Startup queue publication deferred: {exc}", flush=True)
     save_state(state)
 
     return state, inbox, status

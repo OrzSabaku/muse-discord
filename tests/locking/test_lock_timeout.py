@@ -143,6 +143,34 @@ class LockTimeout(unittest.TestCase):
             m.outbox_pass(state)
         self.assertEqual(sent_texts(), ["hi"])
 
+    def test_startup_continues_with_pending_burst_when_queue_is_locked(self):
+        state, incoming = new_state(), msg()
+        with capture():
+            m.stage_trigger(state, incoming, "general", "mention", place=m.MessagePlace("G"))
+        inbox, status = object(), {"connected": False}
+        with (
+            patch.object(m, "_acquire_singleton"),
+            patch.object(m.TM, "start"),
+            patch.object(m, "api_get", return_value={"id": "999", "username": "pip"}),
+            patch.object(m, "discover_channels", return_value=({}, {})),
+            patch.object(m, "publish_directory"),
+            patch.object(m, "load_state", return_value=state),
+            patch.object(m, "sync_guilds"),
+            patch.object(m, "CHANNELS", {}),
+            patch.object(m, "GUILDS", {}),
+            patch.object(m, "_start_monitor_threads", return_value=(inbox, status)),
+            held_lock(),
+            capture(),
+        ):
+            restored, actual_inbox, actual_status = m._start_monitor()
+        self.assertIs(restored, state)
+        self.assertIs(actual_inbox, inbox)
+        self.assertIs(actual_status, status)
+        self.assertEqual(read(m.STATE_FILE)["queue_backlog"][0]["message_id"], incoming["id"])
+        with capture():
+            m._stage_polled_messages(restored, [])
+        self.assertEqual([q["message_id"] for q in read(m.QUEUE_FILE)], [incoming["id"]])
+
     def test_replayed_backlog_does_not_resurrect_a_settled_item(self):
         for status in ("replied", "skipped"):
             with self.subTest(status=status):
