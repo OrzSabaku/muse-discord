@@ -240,7 +240,7 @@ TM = _NoTelemetry()
 
 class _NoProactive:
     def __init__(self):
-        self.store = self.consent = self.policy = self
+        self.store = self.consent = self.policy = self.delivery = self.actions = self
 
     def __getattr__(self, name):
         return lambda *a, **kw: None
@@ -505,7 +505,7 @@ def _deliver_outbox_item(batch, item):
         review=_REVIEW,
         generated=_generated_replies(),
         watches=_watch_delivery(),
-        proactive_outbox=PRO.outbox_item,
+        proactive_outbox=PRO.delivery.outbox_item,
         queue=_queue_files(),
         rejected_path=OUTBOX_REJECTED_FILE,
         max_reply_chars=_SETTINGS.engine.max_reply_chars,
@@ -521,7 +521,7 @@ def _deliver_outbox_item(batch, item):
         sender=_SENDER,
         response=_response_policy(),
         directory=_DIRECTORY.scopes,
-        opt_action=PRO.opt_action,
+        opt_action=PRO.actions.opt_action,
         max_reply_chars=_SETTINGS.engine.max_reply_chars,
     )
     OutboxDelivery(batch, item, policy, effects, _OUTBOX_CURRENT).process()
@@ -1161,7 +1161,7 @@ STALE_PROMPT_FILE = os.path.join(BASE_DIR, "prompt_outdated.json")
 def _reply_binding():
     return ReplyBinding(
         _CAPABILITIES.files.replies,
-        lambda item: PRO.names_slot(item),
+        lambda item: PRO.delivery.names_slot(item),
         StalePrompt(STALE_PROMPT_FILE, notify_owners, time.time, lambda: time.strftime("%Y-%m-%d")),
     )
 
@@ -1225,7 +1225,7 @@ def _note_watch_timezone(uid, fresh):
     for op, value in (fresh or {}).get("done") or []:
         if op == "tz":
             try:  # their quiet hours: only their own button moves them
-                PRO.note_tz(uid, value)
+                PRO.actions.note_tz(uid, value)
             except Exception as e:
                 print(f"Proactive: time zone note error: {e}", flush=True)
 

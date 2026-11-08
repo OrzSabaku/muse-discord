@@ -88,7 +88,10 @@
 | 通知の保存・期限・処理済み記録 | `src/muse_discord/watches/store.py` |
 | 通知の文字列照合・公開範囲に応じた表示 | `src/muse_discord/watches/matching.py`・`presentation.py` |
 | Web確認の発行・予算・nonce照合 | `src/muse_discord/watches/web_checks.py` |
-| 自発発言のスロット発行・照合・送信 | `src/muse_discord/proactive/runtime.py` |
+| 自発発言の実行管理・スロットの発行と復旧 | `src/muse_discord/proactive/runtime.py` |
+| 自発枠とワーカー向け文脈の作成 | `src/muse_discord/proactive/prompts.py` |
+| 自発枠の照合・送信・再試行 | `src/muse_discord/proactive/delivery.py` |
+| 元の発言に基づく解除・再開・時刻設定の確認依頼 | `src/muse_discord/proactive/actions.py` |
 | 自発発言の対象・時間帯・上限の判定 | `src/muse_discord/proactive/targets.py` |
 | サーバーとDMごとの実行時刻・対象の交替 | `src/muse_discord/proactive/heartbeat.py` |
 | 自発発言の保存・破損時の復旧・nonce公開 | `src/muse_discord/proactive/store.py` |
@@ -153,6 +156,10 @@ Gatewayの再接続とプレゼンス更新はdiscord.pyに任せ、メッセー
 
 `monitor` のimportでは設定やトークンを読み込まず、サービスを生成しない。`main()` が `initialize()` を呼び、テストも設定とトークンを指定して明示的に初期化する。
 自発発言は `ProactiveContext` に宣言した操作と状態の参照だけを受け取る。モニターの名前空間全体を渡さない。保存状態と破損時の復旧は `ProactiveStore`、承諾ボタンのロックと公開中のトークンは `ConsentRequests` が持つ。保存状態の読み込み時に承諾ボタンの参照を復元し、クリックは本人・期限・一度だけの使用を確認した後、メインスレッドで再確認して記録する。
+
+`Proactive` は各サービスを接続して実行時刻とスロットの寿命を管理する。
+文脈の作成は `SlotPrompts`、照合と送信・再試行は `SlotDelivery`、
+元の発言を検証して同意の変更を受け付ける処理は `ConsentActions` が担当する。
 受信・返信の各段階は、検証済みの入力と処理結果を値として渡す。前のメソッドによる属性の追加を前提にしない。
 受信項目の組み立ては `ingest`、返信の処理順は `reply_delivery`、取得・復旧・確定のトランザクションは `outbox_store` が持つ。これらからモニターをimportしない。機能のテストは担当モジュールを直接使い、モニターにはテスト専用の中継関数を置かない。
 応答ポリシーは設定と所有者の取得関数を受け取り、再読み込み後も同じポリシーの呼び出しに反映する。
