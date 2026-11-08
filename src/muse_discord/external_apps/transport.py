@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from contextlib import AsyncExitStack
 
 from .policy import Refused
 
@@ -31,12 +32,14 @@ async def _call(app, tool, arguments, root):
         command=app["command"][0], args=app["command"][1:], env=env, cwd=root
     )
     # SDK inherits a small OS environment allowlist in addition to env.
-    async with asyncio.timeout(60):
-        with open(os.devnull, "w") as errors:
-            async with stdio_client(params, errlog=errors) as (reader, writer):
-                async with ClientSession(reader, writer, read_timeout_seconds=45) as client:
-                    await client.initialize()
-                    result = await client.call_tool(tool, arguments)
+    async with asyncio.timeout(60), AsyncExitStack() as stack:
+        errors = stack.enter_context(open(os.devnull, "w"))  # noqa: SIM115 (AsyncExitStack closes it)
+        reader, writer = await stack.enter_async_context(stdio_client(params, errlog=errors))
+        client = await stack.enter_async_context(
+            ClientSession(reader, writer, read_timeout_seconds=45)
+        )
+        await client.initialize()
+        result = await client.call_tool(tool, arguments)
     if not isinstance(result, CallToolResult) or result.is_error:
         raise Refused("APP_CALL_FAILED")
     payload = result.model_dump(mode="json", by_alias=True)

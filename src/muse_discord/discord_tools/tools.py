@@ -1,9 +1,14 @@
 """On-demand operations shared by the CLI and future MCP transport."""
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlencode
 
 from .messages import format_message, split_message
 from .state import read_state
+
+MESSAGE_PAGE_SIZE = 100
 
 
 class PartialSendError(Exception):
@@ -12,15 +17,19 @@ class PartialSendError(Exception):
         self.message_ids = message_ids
 
 
+@dataclass
 class MessageTools:
-    def __init__(self, api, guard, scrub, bot_id, state_path, mentions):
-        self.api, self.guard, self.scrub = api, guard, scrub
-        self.bot_id, self.state_path, self.mentions = bot_id, state_path, mentions
+    api: Callable[..., Any]
+    guard: Callable[..., Any]
+    scrub: Callable[..., Any]
+    bot_id: Callable[..., Any]
+    state_path: str
+    mentions: dict[str, Any]
 
     @staticmethod
     def limit(value):
         value = int(value)
-        if not 1 <= value <= 100:
+        if not 1 <= value <= MESSAGE_PAGE_SIZE:
             raise ValueError("Limit must be between 1 and 100.")
         return value
 
@@ -66,7 +75,7 @@ class MessageTools:
                 break
             collected.extend(m for m in batch if (m.get("author") or {}).get("id") != own_id)
             cursor = batch[-1]["id"]
-            if len(collected) > limit or len(batch) < 100:
+            if len(collected) > limit or len(batch) < MESSAGE_PAGE_SIZE:
                 break
         else:
             capped = True

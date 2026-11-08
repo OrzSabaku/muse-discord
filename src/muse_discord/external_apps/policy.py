@@ -8,6 +8,9 @@ from pathlib import Path
 
 import yaml
 
+APPROVAL_KEY_BYTES = 32
+MAX_ARGUMENT_BYTES = 64 * 1024
+
 LEVELS = ("off", "read-only", "confirm", "write", "unconditional")
 EFFECTS = ("read", "write", "dangerous")
 
@@ -45,54 +48,16 @@ def load_policy(path):
             raise Refused("INVALID_POLICY")
         key = data.get("approval_public_key")
         if key is not None and (
-            not isinstance(key, str) or len(base64.b64decode(key, validate=True)) != 32
+            not isinstance(key, str)
+            or len(base64.b64decode(key, validate=True)) != APPROVAL_KEY_BYTES
         ):
             raise Refused("INVALID_POLICY")
         for name, app in data["apps"].items():
             if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name):
                 raise Refused("INVALID_POLICY")
-            _keys(app, ("level", "command", "env", "tools"), ("level", "command", "tools"))
-            command = app["command"]
-            if (
-                app["level"] not in LEVELS
-                or not isinstance(command, list)
-                or not command
-                or not all(isinstance(v, str) and v and "\0" not in v for v in command)
-                or not Path(command[0]).is_absolute()
-                or not isinstance(app["tools"], dict)
-            ):
-                raise Refused("INVALID_POLICY")
-            env = app.get("env", {})
-            if not isinstance(env, dict) or not all(
-                isinstance(k, str)
-                and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k)
-                and isinstance(v, str)
-                and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v)
-                for k, v in env.items()
-            ):
-                raise Refused("INVALID_POLICY")
+            _validate_app(app)
             for tool, rule in app["tools"].items():
-                if not isinstance(tool, str) or not tool:
-                    raise Refused("INVALID_POLICY")
-                _keys(rule, ("effect", "auto_write", "constraints"), ("effect",))
-                constraints = rule.get("constraints", {})
-                if (
-                    rule["effect"] not in EFFECTS
-                    or type(rule.get("auto_write", False)) is not bool
-                    or not isinstance(constraints, dict)
-                ):
-                    raise Refused("INVALID_POLICY")
-                for parameter, values in constraints.items():
-                    if (
-                        not isinstance(parameter, str)
-                        or not parameter
-                        or not isinstance(values, list)
-                        or not values
-                        or not all(isinstance(v, (str, int, bool)) for v in values)
-                    ):
-                        raise Refused("INVALID_POLICY")
-                if rule.get("auto_write") and (rule["effect"] != "write" or not constraints):
-                    raise Refused("INVALID_POLICY")
+                _validate_tool(tool, rule)
         canonical(data)
         return data
     except OSError, ValueError, TypeError, yaml.YAMLError:
@@ -108,12 +73,12 @@ def evaluate(policy, global_level, app_id, tool, arguments):
         raise Refused("TOOL_NOT_REGISTERED")
     level = min(LEVELS.index(global_level), LEVELS.index(app["level"]))
     effect = rule["effect"]
-    if level == 0 or (effect != "read" and level < 2):
+    if level == 0 or (effect != "read" and level < LEVELS.index("confirm")):
         raise Refused("POLICY_DENIED")
     if not isinstance(arguments, dict):
         raise Refused("INVALID_ARGUMENTS")
     try:
-        if len(canonical(arguments).encode()) > 65536:
+        if len(canonical(arguments).encode()) > MAX_ARGUMENT_BYTES:
             raise Refused("INVALID_ARGUMENTS")
     except ValueError, TypeError:
         raise Refused("INVALID_ARGUMENTS") from None
@@ -131,3 +96,50 @@ def evaluate(policy, global_level, app_id, tool, arguments):
         )
     )
     return app, effect, needs_approval
+
+
+def _validate_app(app):
+    _keys(app, ("level", "command", "env", "tools"), ("level", "command", "tools"))
+    command = app["command"]
+    if (
+        app["level"] not in LEVELS
+        or not isinstance(command, list)
+        or not command
+        or not all(isinstance(v, str) and v and "\0" not in v for v in command)
+        or not Path(command[0]).is_absolute()
+        or not isinstance(app["tools"], dict)
+    ):
+        raise Refused("INVALID_POLICY")
+    env = app.get("env", {})
+    if not isinstance(env, dict) or not all(
+        isinstance(k, str)
+        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", k)
+        and isinstance(v, str)
+        and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v)
+        for k, v in env.items()
+    ):
+        raise Refused("INVALID_POLICY")
+
+
+def _validate_tool(tool, rule):
+    if not isinstance(tool, str) or not tool:
+        raise Refused("INVALID_POLICY")
+    _keys(rule, ("effect", "auto_write", "constraints"), ("effect",))
+    constraints = rule.get("constraints", {})
+    if (
+        rule["effect"] not in EFFECTS
+        or type(rule.get("auto_write", False)) is not bool
+        or not isinstance(constraints, dict)
+    ):
+        raise Refused("INVALID_POLICY")
+    for parameter, values in constraints.items():
+        if (
+            not isinstance(parameter, str)
+            or not parameter
+            or not isinstance(values, list)
+            or not values
+            or not all(isinstance(v, (str, int, bool)) for v in values)
+        ):
+            raise Refused("INVALID_POLICY")
+    if rule.get("auto_write") and (rule["effect"] != "write" or not constraints):
+        raise Refused("INVALID_POLICY")

@@ -3,6 +3,9 @@
 import re
 from datetime import UTC, datetime
 
+BMP_MAX_CODEPOINT = 0xFFFF
+MAX_FENCE_LANGUAGE_LENGTH = 80
+
 
 def readable_content(text, mentions):
     users = {
@@ -68,21 +71,7 @@ def split_message(text, limit=2000, max_chunks=10):
     while remaining:
         # Reserve a newline and closing fence even when this slice opens one.
         budget = limit - len(prefix.encode("utf-16-le")) // 2 - 4
-        used, end = 0, 0
-        for i, char in enumerate(remaining):
-            width = 2 if ord(char) > 0xFFFF else 1
-            if used + width > budget:
-                break
-            used += width
-            end = i + 1
-        if not end:
-            raise ValueError("Code fence leaves no room for content.")
-        if end < len(remaining):
-            boundary = remaining.rfind("\n", 0, end + 1)
-            if boundary < end // 2:
-                boundary = remaining.rfind(" ", 0, end + 1)
-            if boundary >= end // 2:
-                end = boundary + 1
+        end = _split_boundary(remaining, budget)
         part, remaining = remaining[:end], remaining[end:]
         for line in part.splitlines():
             if line.startswith("```"):
@@ -91,7 +80,7 @@ def split_message(text, limit=2000, max_chunks=10):
         if fence is not None:
             chunk += "\n```"
             # Limit a user-supplied language tag so reopening always fits.
-            if len(fence) > 80:
+            if len(fence) > MAX_FENCE_LANGUAGE_LENGTH:
                 raise ValueError("Code fence language tag is too long.")
             prefix = "```" + fence + "\n"
         else:
@@ -100,3 +89,22 @@ def split_message(text, limit=2000, max_chunks=10):
         if len(chunks) > max_chunks:
             raise ValueError(f"Message requires more than {max_chunks} parts.")
     return chunks
+
+
+def _split_boundary(remaining, budget):
+    used, end = 0, 0
+    for i, char in enumerate(remaining):
+        width = 2 if ord(char) > BMP_MAX_CODEPOINT else 1
+        if used + width > budget:
+            break
+        used += width
+        end = i + 1
+    if not end:
+        raise ValueError("Code fence leaves no room for content.")
+    if end < len(remaining):
+        boundary = remaining.rfind("\n", 0, end + 1)
+        if boundary < end // 2:
+            boundary = remaining.rfind(" ", 0, end + 1)
+        if boundary >= end // 2:
+            end = boundary + 1
+    return end

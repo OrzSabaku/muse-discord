@@ -17,12 +17,16 @@ import threading
 import urllib.request
 from collections.abc import Iterable
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from http import HTTPStatus
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 import aiohttp
 import discord
 from discord.http import HTTPClient, Route, handle_message_parameters
+
+TOKEN_PARENT_OFFSET = 2  # /webhooks/<id>/<token> and /interactions/<id>/<token>
+
 
 # SDK HTTP traces include interaction tokens in URLs and arbitrary response
 # data. Callers log the sanitized errors below instead.
@@ -60,7 +64,11 @@ async def _no_ambiguous_retry(session, context, params):
     # A failed create may already have succeeded on Discord. SDK retries are
     # safe only for reads/idempotent operations or nonce-protected messages.
     safe = (context.trace_request_ctx or {}).get("retry_safe", False)
-    if params.method == "POST" and params.response.status >= 500 and not safe:
+    if (
+        params.method == "POST"
+        and params.response.status >= HTTPStatus.INTERNAL_SERVER_ERROR
+        and not safe
+    ):
         params.response.release()
         raise DiscordError(params.response.status)
 
@@ -108,13 +116,16 @@ def route_for(method: str, path: str, base: str = API) -> tuple[Route, dict[str,
         if (
             piece.isdecimal()
             or major
-            or (previous in ("interactions", "reactions")
-            and piece != "@me")
-            or (i > 2
-            and pieces[i - 2] in ("webhooks", "interactions"))
+            or (previous in ("interactions", "reactions") and piece != "@me")
+            or (
+                i > TOKEN_PARENT_OFFSET
+                and pieces[i - TOKEN_PARENT_OFFSET] in ("webhooks", "interactions")
+            )
         ):
             key = major or (
-                "webhook_token" if i > 2 and pieces[i - 2] == "webhooks" else f"part_{i}"
+                "webhook_token"
+                if i > TOKEN_PARENT_OFFSET and pieces[i - TOKEN_PARENT_OFFSET] == "webhooks"
+                else f"part_{i}"
             )
             params[key] = unquote(piece)
             template.append("{" + key + "}")
@@ -160,7 +171,7 @@ class Rest:
         )
         try:
             return future.result(timeout=timeout + 1)
-        except (FutureTimeoutError, TimeoutError):
+        except FutureTimeoutError, TimeoutError:
             future.cancel()
             raise TimeoutError("Discord request timed out") from None
 
@@ -194,46 +205,19 @@ class Rest:
                 )
                 await http.open(self.token)
 
-            async def send() -> Any:
-                kwargs: dict[str, Any] = {"params": query} if query else {}
-                kwargs["trace_request_ctx"] = {"retry_safe": retry_safe}
-                handles = [discord.File(io.BytesIO(blob), filename=name) for name, blob in files]
-                try:
-                    if handles:
-                        with handle_message_parameters(
-                            content=discord.utils.MISSING, files=handles
-                        ) as multipart:
-                            # Preserve nested forum payloads, nonces, references
-                            # and Components V2 JSON exactly as the caller gave it.
-                            payload = dict(data)
-                            if "message" in payload:
-                                payload["message"] = dict(payload["message"])
-                            target = payload.get("message", payload)
-                            target.setdefault(
-                                "attachments",
-                                [handle.to_dict(i) for i, handle in enumerate(handles)],
-                            )
-                            assert (
-                                multipart.multipart is not None
-                            )  # files always produce a multipart form
-                            multipart.multipart[0]["value"] = discord.utils._to_json(payload)
-                            return await http.request(
-                                route, files=handles, form=multipart.multipart, **kwargs
-                            )
-                    return (
-                        await http.request(route, json=data, **kwargs)
-                        if data is not None
-                        else await http.request(route, **kwargs)
-                    )
-                finally:
-                    for handle in handles:
-                        handle.close()
-
-            return await asyncio.wait_for(send(), timeout=timeout)
+            kwargs: dict[str, Any] = {"params": query} if query else {}
+            kwargs["trace_request_ctx"] = {"retry_safe": retry_safe}
+            return await asyncio.wait_for(
+                _send_payload(http, route, data, files, kwargs), timeout=timeout
+            )
         except discord.RateLimited as exc:
             raise DiscordError(429, retry_after=exc.retry_after) from None
         except discord.HTTPException as exc:
-            retry = exc.response.headers.get("Retry-After") if exc.status == 429 else None
+            retry = (
+                exc.response.headers.get("Retry-After")
+                if exc.status == HTTPStatus.TOO_MANY_REQUESTS
+                else None
+            )
             raise DiscordError(exc.status, exc.code, retry) from None
         except TimeoutError:
             # Cancellation during an SDK global-limit sleep can leave its gate
@@ -283,3 +267,33 @@ def transport(token, base=API):
 def _close_all():
     for client in tuple(_clients.values()):
         client.close()
+
+
+async def _send_payload(http, route, data, files, kwargs) -> Any:
+    handles = [discord.File(io.BytesIO(blob), filename=name) for name, blob in files]
+    try:
+        if handles:
+            with handle_message_parameters(
+                content=discord.utils.MISSING, files=handles
+            ) as multipart:
+                # Preserve nested forum payloads, nonces, references
+                # and Components V2 JSON exactly as the caller gave it.
+                payload = dict(data)
+                if "message" in payload:
+                    payload["message"] = dict(payload["message"])
+                target = payload.get("message", payload)
+                target.setdefault(
+                    "attachments",
+                    [handle.to_dict(i) for i, handle in enumerate(handles)],
+                )
+                assert multipart.multipart is not None  # files always produce a multipart form
+                multipart.multipart[0]["value"] = discord.utils._to_json(payload)
+                return await http.request(route, files=handles, form=multipart.multipart, **kwargs)
+        return (
+            await http.request(route, json=data, **kwargs)
+            if data is not None
+            else await http.request(route, **kwargs)
+        )
+    finally:
+        for handle in handles:
+            handle.close()

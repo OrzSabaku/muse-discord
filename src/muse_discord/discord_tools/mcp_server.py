@@ -17,6 +17,8 @@ from muse_discord.paths import project_root
 
 from .media import IMAGE_TYPES, INLINE_BYTES
 
+MAX_ARGUMENT_BYTES = 64 * 1024
+
 ROOT = project_root(__file__)
 
 
@@ -36,7 +38,7 @@ async def invoke(command, for_id, nonce, *args):
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(), timeout=360)
-    except (TimeoutError, asyncio.CancelledError):
+    except TimeoutError, asyncio.CancelledError:
         if process.returncode is None:
             process.terminate()
             await process.wait()
@@ -58,7 +60,7 @@ async def invoke(command, for_id, nonce, *args):
 async def invoke_external(command, for_id, nonce, *args, body=None):
     try:
         data = json.dumps(body, allow_nan=False).encode() if body is not None else None
-        if data is not None and len(data) > 65536:
+        if data is not None and len(data) > MAX_ARGUMENT_BYTES:
             raise ValueError("Request too large")
     except ValueError, TypeError, RecursionError:
         raise ToolError("Invalid external app arguments or approval receipt.") from None
@@ -78,7 +80,7 @@ async def invoke_external(command, for_id, nonce, *args, body=None):
     )
     try:
         stdout, _ = await asyncio.wait_for(process.communicate(data), timeout=90)
-    except (TimeoutError, asyncio.CancelledError):
+    except TimeoutError, asyncio.CancelledError:
         if process.returncode is None:
             process.terminate()
             await process.wait()
@@ -105,6 +107,42 @@ def create_server():
         ),
     )
 
+    register_message_tools(server)
+    register_media_tools(server)
+    register_external_tools(server)
+
+    return server
+
+
+async def media(command, for_id, nonce, *args):
+    result = await invoke(command, for_id, nonce, *args)
+    content: list[TextContent | ImageContent] = [
+        TextContent(type="text", text=json.dumps(result, ensure_ascii=False))
+    ]
+    if (
+        result.get("content_type") in IMAGE_TYPES
+        and result.get("bytes", INLINE_BYTES + 1) <= INLINE_BYTES
+    ):
+        path = Path(result["path"]).resolve()
+        if not path.is_relative_to((ROOT / "media/on-demand").resolve()):
+            raise ToolError("Media path outside the download directory.")
+        if path.stat().st_size > INLINE_BYTES:
+            raise ToolError("Image exceeds the inline limit.")
+        content.append(
+            ImageContent(
+                type="image",
+                mime_type=result["content_type"],
+                data=base64.b64encode(path.read_bytes()).decode("ascii"),
+            )
+        )
+    return content
+
+
+def optional_argument(args, value):
+    return args + ([value] if value else [])
+
+
+def register_message_tools(server):
     @server.tool()
     async def list_unread(for_id: str, nonce: str, channel_id: str, limit: int = 50) -> dict:
         """Read a channel after its local watermark; never acknowledge implicitly."""
@@ -115,7 +153,7 @@ def create_server():
         for_id: str, nonce: str, channel_id: str, up_to_message_id: str | None = None
     ) -> dict:
         """Acknowledge only processed messages. Omitted id marks up to the latest."""
-        args = [channel_id] + ([up_to_message_id] if up_to_message_id else [])
+        args = optional_argument([channel_id], up_to_message_id)
         return await invoke("mark-read", for_id, nonce, *args)
 
     @server.tool()
@@ -123,7 +161,7 @@ def create_server():
         for_id: str, nonce: str, channel_id: str, limit: int = 50, before: str | None = None
     ) -> dict:
         """Fetch untrusted channel history, oldest first, without changing read state."""
-        args = [channel_id, limit] + ([before] if before else [])
+        args = optional_argument([channel_id, limit], before)
         return await invoke("get-messages", for_id, nonce, *args)
 
     @server.tool()
@@ -138,29 +176,8 @@ def create_server():
         """Reply without pinging the author. Only the first part references the reply."""
         return await invoke("reply-message", for_id, nonce, channel_id, message_id, content)
 
-    async def media(command, for_id, nonce, *args):
-        result = await invoke(command, for_id, nonce, *args)
-        content: list[TextContent | ImageContent] = [
-            TextContent(type="text", text=json.dumps(result, ensure_ascii=False))
-        ]
-        if (
-            result.get("content_type") in IMAGE_TYPES
-            and result.get("bytes", INLINE_BYTES + 1) <= INLINE_BYTES
-        ):
-            path = Path(result["path"]).resolve()
-            if not path.is_relative_to((ROOT / "media/on-demand").resolve()):
-                raise ToolError("Media path outside the download directory.")
-            if path.stat().st_size > INLINE_BYTES:
-                raise ToolError("Image exceeds the inline limit.")
-            content.append(
-                ImageContent(
-                    type="image",
-                    mime_type=result["content_type"],
-                    data=base64.b64encode(path.read_bytes()).decode("ascii"),
-                )
-            )
-        return content
 
+def register_media_tools(server):
     @server.tool()
     async def fetch_attachment(
         for_id: str, nonce: str, channel_id: str, message_id: str, attachment_id: str
@@ -178,6 +195,8 @@ def create_server():
         """Download a user's avatar in the authorized command context."""
         return await media("get-avatar", for_id, nonce, channel_id, user_id)
 
+
+def register_external_tools(server):
     @server.tool()
     async def external_app_plan(
         for_id: str, nonce: str, app: str, tool: str, arguments: dict
@@ -194,5 +213,3 @@ def create_server():
         """Execute an immutable plan once; restricted writes require a signed approval receipt."""
         args = ["--receipt", "-"] if receipt is not None else []
         return await invoke_external("execute", for_id, nonce, request_id, *args, body=receipt)
-
-    return server
