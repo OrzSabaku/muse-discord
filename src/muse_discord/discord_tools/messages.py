@@ -19,7 +19,7 @@ def readable_content(text, mentions):
     def timestamp(match):
         try:
             return datetime.fromtimestamp(int(match[1]), UTC).isoformat()
-        except ValueError, OverflowError, OSError:
+        except (ValueError, OverflowError, OSError):
             return match[0]
 
     return re.sub(r"<t:(-?\d+)(?::[tTdDfFR])?>", timestamp, text)

@@ -430,7 +430,7 @@ class SUT:
         try:
             with open(os.path.join(self.pkg_dir, name)) as f:
                 return json.load(f)
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return None
 
     def read_yaml(self, name):
@@ -439,7 +439,7 @@ class SUT:
         try:
             with open(os.path.join(self.pkg_dir, name)) as f:
                 return yaml.safe_load(f)
-        except OSError, yaml.YAMLError:
+        except (OSError, yaml.YAMLError):
             return None
 
     def log_tail(self, n=200):

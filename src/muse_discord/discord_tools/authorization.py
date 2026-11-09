@@ -27,13 +27,19 @@ def _for_id(mid):
 class CommandAuthorization:
     def __init__(self, session: ToolSession):
         self.session = session
-        self.binding: dict[str, Any] = {"for": None, "nonce": None, "entry": None, "cmd": None}
+        self.binding: dict[str, Any] = {
+            "for": None,
+            "nonce": None,
+            "entry": None,
+            "cmd": None,
+            "standalone": False,
+        }
 
     def _live_nonce(self, message_id, path=None):
         try:
             with open(path or self.session.owner_dm_nonces_file) as f:
                 data = json.load(f)
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return None
         want = data.get(message_id) if isinstance(data, dict) else None
         if isinstance(want, dict):  # owner_items.json: {nonce, channels, ...}
@@ -44,7 +50,7 @@ class CommandAuthorization:
         try:
             with open(self.session.owner_items_file) as f:
                 data = json.load(f)
-        except OSError, ValueError:
+        except (OSError, ValueError):
             return {}
         e = data.get(message_id) if isinstance(data, dict) else None
         return e if isinstance(e, dict) else {}
@@ -54,7 +60,16 @@ class CommandAuthorization:
         --nonce is its owner_command_nonce (see the module docstring); for a
         lookup, an open owner DM's owner_dm_nonce does too. Keeps the item's
         record (its channel and the places the owner's own words name) in
-        binding["entry"] for guard_target."""
+        binding["entry"] for guard_target.
+
+        When standalone mode is active, authorization is granted locally for
+        server channels without requiring an active queue item or nonce.
+        Standalone is a trusted-launch mode: the CLI sets binding["standalone"]
+        only when the launching process opted in through its environment
+        (MUSE_DISCORD_STANDALONE), never from a worker's argv flag alone."""
+        if self.binding.get("standalone"):
+            self.binding["entry"] = {}
+            return
         mid, got = self.binding["for"], self.binding["nonce"]
         if not mid or not got:
             raise SystemExit(
@@ -81,8 +96,12 @@ class CommandAuthorization:
         <#id> mention or a #name in the command's server; `post_channels`,
         a channel named bare after "in"/"to"/"into", for `post` only); and
         never in a DM other than its own. Places named only in history or
-        in `read` output never count. Ids are compared, nothing else."""
+        in `read` output never count. Ids are compared, nothing else.
+
+        In standalone mode, server channels pass without an owner queue item."""
         ch = self.guard_channel(cid)
+        if self.binding.get("standalone"):
+            return
         e = self.binding.get("entry") or {}
         if cid == str(e.get("channel_id") or ""):
             return
@@ -103,10 +122,15 @@ class CommandAuthorization:
 
     def guard_channel(self, cid):
         """Refuse to act in an owner's DM channel unless this run holds that
-        DM (see the module docstring). Server channels pass untouched."""
+        DM (see the module docstring). Server channels pass untouched.
+        In standalone mode, all DMs are refused."""
         ch = self.session.api("GET", f"/channels/{cid}")
         if not isinstance(ch, dict) or ch.get("type") not in DM_TYPES:
             return ch
+        if self.binding.get("standalone"):
+            raise SystemExit(
+                f"Refusing: {cid} is a DM. Standalone mode operates in server channels only."
+            )
         owners = self.session.owners()
         recips = {str((r or {}).get("id")) for r in ch.get("recipients") or []}
         # A DM with someone else is not an owner's; one with no recipients

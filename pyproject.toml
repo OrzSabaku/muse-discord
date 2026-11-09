@@ -7,7 +7,7 @@ name = "muse-discord"
 version = "0.1.0"
 description = "Discord connector for Muse"
 readme = "README.md"
-requires-python = ">=3.15,<3.16"
+requires-python = ">=3.12,<3.16"
 dependencies = [
   "aiohttp>=3.9,<4",
   "discord.py>=2.7.1,<2.8",
@@ -31,7 +31,7 @@ apps = [{ include-group = "mcp" }, "cryptography>=45,<51"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py315"
+target-version = "py312"
 
 [tool.ruff.lint]
 # Japanese UI punctuation and prose use these characters intentionally.
@@ -52,7 +52,7 @@ exclude = ["**/__pycache__", ".venv", "build", "dist"]
 typeCheckingMode = "basic"
 venvPath = "."
 venv = ".venv"
-pythonVersion = "3.15"
+pythonVersion = "3.12"
 extraPaths = ["src"]
 
 [tool.uv]

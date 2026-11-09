@@ -36,7 +36,7 @@ else
 fi
 
 # ---- Python packages ----
-have_pkgs() { "$1" -c 'import sys; assert (3,15) <= sys.version_info[:2] < (3,16); import yaml; from pydantic import TypeAdapter; from discord.ui import LayoutView; import discord; assert (2,7,1) <= discord.version_info[:3] < (2,8,0)' >/dev/null 2>&1; }
+have_pkgs() { "$1" -c 'import sys; assert (3,12) <= sys.version_info[:2] < (3,16); import yaml; from pydantic import TypeAdapter; from discord.ui import LayoutView; import discord; assert (2,7,1) <= discord.version_info[:3] < (2,8,0)' >/dev/null 2>&1; }
 if ! (cd "$DIR" && uv sync --locked --no-dev --quiet); then
   fail "uv could not install the project into $VENV; check the network, then run this again."
 fi

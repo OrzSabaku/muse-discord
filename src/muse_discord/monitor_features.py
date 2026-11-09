@@ -4,6 +4,8 @@ Imports and construction stay inside the loaders. Failure logs contain only the
 exception class; configuration, credentials and exception messages stay private.
 """
 
+from __future__ import annotations
+
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 

@@ -157,7 +157,7 @@ def check_directory(d, log):
             if isinstance(c, dict) and c.get("readable")
         ]
         servers = len(dirs.get("guilds") or [])
-    except OSError, ValueError, AttributeError:
+    except (OSError, ValueError, AttributeError):
         chans, servers = None, 0
     if chans:
         post = sum(1 for c in chans if c.get("can_send"))

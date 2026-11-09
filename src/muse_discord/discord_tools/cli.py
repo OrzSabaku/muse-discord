@@ -23,6 +23,8 @@ HISTORY_REQUIRED_ARGUMENTS = 2  # channel, limit; optional before-id follows
 
 BINDING_OPTION_ARGUMENTS = 2  # --for/--nonce and its value
 
+STANDALONE_ENV = "MUSE_DISCORD_STANDALONE"  # launcher-only opt-in for --standalone
+
 ALLOWED_MENTIONS = {"parse": ["users"]}
 
 LOOKUPS = {"resolve-channel", "list-threads"}
@@ -270,12 +272,15 @@ class OwnerCommandCLI:
         _json_tool(lambda: self.media_tools().avatar(cid, uid))
 
     def message_tools(self):
+        state_file = os.environ.get("MUSE_DISCORD_READ_STATE") or os.path.join(
+            self.session.package_dir, "read-state.sqlite"
+        )
         return MessageTools(
             self.session.api,
             self.auth.guard_target,
             self.session.scrub,
             self.session.bot_id,
-            os.path.join(self.session.package_dir, "read-state.sqlite"),
+            state_file,
             ALLOWED_MENTIONS,
         )
 
@@ -293,7 +298,7 @@ class OwnerCommandCLI:
                 "message": str(error),
                 "message_ids": error.message_ids,
             }
-        except SystemExit, ValueError, OSError, sqlite3.Error:
+        except (SystemExit, ValueError, OSError, sqlite3.Error):
             failure = {
                 "code": "REQUEST_FAILED",
                 "message": (
@@ -309,14 +314,44 @@ class OwnerCommandCLI:
         # (an owner DM's owner_dm_nonce)>: required by every subcommand but
         # resolve-channel and list-threads (require_owner_command), and in
         # an owner's DM checked as that DM's nonce too (guard_channel).
-        self.auth.binding.update({"for": None, "nonce": None, "entry": None, "cmd": None})
-        while len(args) >= BINDING_OPTION_ARGUMENTS and args[0] in ("--for", "--nonce"):
-            self.auth.binding[args[0][2:]] = args[1]
-            args = args[2:]
+        # Standalone (patrol) mode is a trusted-launch mode, not a worker
+        # option: --standalone/--patrol takes effect only when the launching
+        # process also set MUSE_DISCORD_STANDALONE. A reply worker's argv is
+        # chosen by the (untrusted) worker side, while its environment comes
+        # from the launcher, so the flag alone can never widen its authority.
+        self.auth.binding.update(
+            {"for": None, "nonce": None, "entry": None, "cmd": None, "standalone": False}
+        )
+        seen = set()
+        while args:
+            if len(args) >= BINDING_OPTION_ARGUMENTS and args[0] in ("--for", "--nonce"):
+                self.auth.binding[args[0][2:]] = args[1]
+                seen.add(args[0][2:])
+                args = args[2:]
+            elif args[0] in ("--standalone", "--patrol"):
+                seen.add("standalone")
+                args = args[1:]
+            else:
+                break
+        if "standalone" in seen and seen & {"for", "nonce"}:
+            print("Refusing: cannot combine --standalone with --for or --nonce.", file=sys.stderr)
+            return 2
+        if "standalone" in seen:
+            if os.environ.get(STANDALONE_ENV):
+                self.auth.binding["standalone"] = True
+            else:
+                print(
+                    "Refusing: --standalone is a trusted-launch mode; the launching "
+                    f"process must also set {STANDALONE_ENV}=1. An argv flag alone "
+                    "does not enable it.",
+                    file=sys.stderr,
+                )
+                return 2
         if not args or args[0] not in self.commands:
             print(
                 "usage: discord-api.py [--for <message_id> --nonce "
-                "<owner_command_nonce>] <" + "|".join(sorted(self.commands)) + "> ...",
+                "<owner_command_nonce> | --standalone (launcher sets "
+                "MUSE_DISCORD_STANDALONE=1)] <" + "|".join(sorted(self.commands)) + "> ...",
                 file=sys.stderr,
             )
             return 2

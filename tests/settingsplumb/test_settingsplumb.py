@@ -269,7 +269,7 @@ class MainLoop(unittest.TestCase):
         )
         try:
             r = json.loads(p.stdout.strip().splitlines()[-1])
-        except ValueError, IndexError:
+        except (ValueError, IndexError):
             raise AssertionError(p.stdout + p.stderr) from None
         acks = {a["id"]: a for a in r["acks"]}
         self.assertEqual(sorted(acks), ["900", "901", "902"], r["out"])

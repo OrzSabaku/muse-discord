@@ -35,7 +35,7 @@ class ChannelAccess:
         for r in roles:
             try:
                 perms[str(r.get("id"))] = int(r.get("permissions") or 0)
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 perms[str(r.get("id"))] = 0
         self.guilds[gid] = {"roles": perms, "owner_id": str(gobj.get("owner_id") or "")}
 
@@ -126,7 +126,7 @@ class ChannelAccess:
             return PermissionSnapshot(gid, g["roles"], g["owner_id"]).channel_permissions(
                 str(uid), roles, self.overwrites[chan]
             )
-        except KeyError, TypeError, ValueError:
+        except (KeyError, TypeError, ValueError):
             return None
 
     def can_view(self, gid, uid, cid):
@@ -147,7 +147,7 @@ class ChannelAccess:
         for ow in ows or []:
             try:
                 denies = int(ow.get("deny") or 0) & PERM_VIEW_CHANNEL
-            except TypeError, ValueError:
+            except (TypeError, ValueError):
                 return False
             if denies and ow.get("id") != gid:
                 return False
@@ -157,6 +157,6 @@ class ChannelAccess:
             p = PermissionSnapshot(gid, g["roles"], g["owner_id"]).channel_permissions(
                 None, (), ows
             )
-        except KeyError, TypeError, ValueError:
+        except (KeyError, TypeError, ValueError):
             return False
         return bool(p & PERM_VIEW_CHANNEL)

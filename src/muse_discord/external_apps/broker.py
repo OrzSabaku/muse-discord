@@ -35,7 +35,7 @@ APPROVAL_FIELDS = (
 def _read(path):
     try:
         return json.loads(Path(path).read_text())
-    except OSError, ValueError:
+    except (OSError, ValueError):
         raise Refused("SOURCE_UNAVAILABLE") from None
 
 
@@ -123,7 +123,7 @@ def verify_receipt(policy, expected, receipt, now):
         key.verify(
             base64.b64decode(receipt["signature"], validate=True), canonical(payload).encode()
         )
-    except ValueError, TypeError, InvalidSignature:
+    except (ValueError, TypeError, InvalidSignature):
         raise Refused("INVALID_APPROVAL") from None
 
 
@@ -137,7 +137,7 @@ class Broker:
         try:
             settings = MS.load(str(self.config))
             level = settings.resolve(MS.Scope.everywhere())["abilities.external_apps"]
-        except MS.SettingsError, OSError, ValueError:
+        except (MS.SettingsError, OSError, ValueError):
             raise Refused("INVALID_SETTINGS") from None
         if level == "off":
             raise Refused("POLICY_DENIED")

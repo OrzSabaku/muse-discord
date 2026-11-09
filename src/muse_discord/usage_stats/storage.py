@@ -19,7 +19,7 @@ def load_file(path):
         with open(path) as f:
             d = json.load(f)
         return d if isinstance(d, dict) else {}
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return {}
 
 

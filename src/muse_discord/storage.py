@@ -80,7 +80,7 @@ def read_json(path, kind: type = dict) -> Any:
             data = json.load(f)
     except FileNotFoundError:
         return kind()
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return None
     return data if isinstance(data, kind) else None
 

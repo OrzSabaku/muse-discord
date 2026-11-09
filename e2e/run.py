@@ -863,7 +863,7 @@ def run_tag(tree):
             text=True,
             timeout=10,
         ).stdout.strip()
-    except OSError, subprocess.SubprocessError:
+    except (OSError, subprocess.SubprocessError):
         sha = ""
     return sha or time.strftime("%m%d%H%M%S")
 
@@ -909,7 +909,7 @@ def stop_worker(proc):
     try:
         os.killpg(proc.pid, signal.SIGTERM)
         proc.wait(timeout=20)
-    except ProcessLookupError, subprocess.TimeoutExpired:
+    except (ProcessLookupError, subprocess.TimeoutExpired):
         with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
 

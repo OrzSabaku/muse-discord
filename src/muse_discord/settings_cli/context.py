@@ -24,7 +24,7 @@ def _state(cfg):
         with open(os.path.join(os.path.dirname(os.path.abspath(cfg)), "state.json")) as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
-    except OSError, ValueError:
+    except (OSError, ValueError):
         return {}
 
 
@@ -40,7 +40,7 @@ def _directory(cfg):
         try:
             with open(os.path.join(d, "directory.json")) as f:
                 data = json.load(f)
-        except OSError, ValueError:
+        except (OSError, ValueError):
             continue
         if isinstance(data, dict) and isinstance(data.get("guilds"), list):
             return data
