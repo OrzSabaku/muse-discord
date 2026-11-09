@@ -357,6 +357,28 @@ class OwnerCommandsOnly(_Tool):
 
 
 class StandaloneMode(_Tool):
+    """Standalone is a trusted-launch mode: the --standalone flag counts
+    only when the launching process set MUSE_DISCORD_STANDALONE, so the
+    tests that expect it to work set that variable, and one test pins
+    that the flag alone (what a reply worker could choose) is refused."""
+
+    def setUp(self):
+        super().setUp()
+        self._standalone_env = os.environ.get("MUSE_DISCORD_STANDALONE")
+        os.environ["MUSE_DISCORD_STANDALONE"] = "1"
+
+    def tearDown(self):
+        if self._standalone_env is None:
+            os.environ.pop("MUSE_DISCORD_STANDALONE", None)
+        else:
+            os.environ["MUSE_DISCORD_STANDALONE"] = self._standalone_env
+
+    def test_standalone_flag_without_launcher_env_is_refused(self):
+        os.environ.pop("MUSE_DISCORD_STANDALONE", None)
+        rc = self.run_tool("--standalone", "post", GEN_CH, "patrol test")
+        self.assertEqual(rc, 2)
+        self.assertEqual(writes(), [])
+
     def test_standalone_server_channel_allowed(self):
         rc = self.run_tool("--standalone", "post", GEN_CH, "patrol test")
         self.assertEqual(rc, 0)
@@ -381,6 +403,11 @@ class StandaloneMode(_Tool):
         rc = self.run_tool("--standalone", "--for", ITEM, "post", GEN_CH, "hello")
         self.assertEqual(rc, 2)
         rc = self.run_tool("--standalone", "--nonce", NONCE, "post", GEN_CH, "hello")
+        self.assertEqual(rc, 2)
+        # Presence, not value: an empty --for/--nonce still counts as given.
+        rc = self.run_tool("--standalone", "--for", "", "post", GEN_CH, "hello")
+        self.assertEqual(rc, 2)
+        rc = self.run_tool("--standalone", "--nonce", "", "post", GEN_CH, "hello")
         self.assertEqual(rc, 2)
 
 

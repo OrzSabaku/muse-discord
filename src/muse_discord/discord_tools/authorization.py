@@ -62,8 +62,11 @@ class CommandAuthorization:
         record (its channel and the places the owner's own words name) in
         binding["entry"] for guard_target.
 
-        When --standalone is set, authorization is granted locally for server
-        channels without requiring an active queue item or nonce."""
+        When standalone mode is active, authorization is granted locally for
+        server channels without requiring an active queue item or nonce.
+        Standalone is a trusted-launch mode: the CLI sets binding["standalone"]
+        only when the launching process opted in through its environment
+        (MUSE_DISCORD_STANDALONE), never from a worker's argv flag alone."""
         if self.binding.get("standalone"):
             self.binding["entry"] = {}
             return

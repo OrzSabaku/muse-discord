@@ -31,7 +31,7 @@ apps = [{ include-group = "mcp" }, "cryptography>=45,<51"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py315"
+target-version = "py312"
 
 [tool.ruff.lint]
 # Japanese UI punctuation and prose use these characters intentionally.
@@ -52,7 +52,7 @@ exclude = ["**/__pycache__", ".venv", "build", "dist"]
 typeCheckingMode = "basic"
 venvPath = "."
 venv = ".venv"
-pythonVersion = "3.15"
+pythonVersion = "3.12"
 extraPaths = ["src"]
 
 [tool.uv]
