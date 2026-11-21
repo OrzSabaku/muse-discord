@@ -121,6 +121,7 @@ outboxの処理中項目・失敗回数・新規返信の到着検知は `Outbox
 | 単発CLI・MCP | `bin/discord-api.py`・`src/muse_discord/discord_tools/` |
 | 所有者コマンドの引数・表示・実行先選択 | `src/muse_discord/discord_tools/cli.py` |
 | 所有者コマンドと本人DMの認可・対象制限 | `src/muse_discord/discord_tools/authorization.py` |
+| 保存済み巡回設定の検証・操作とチャンネルの認可 | `src/muse_discord/discord_tools/patrol.py` |
 | 単発ツールのトークン・通信・生成添付の検査 | `src/muse_discord/discord_tools/session.py` |
 | 単発ツールの秘密情報検査 | `src/muse_discord/discord_tools/privacy.py` |
 | 外部アプリのポリシー・承認・実行 | `src/muse_discord/external_apps/` |
@@ -158,6 +159,7 @@ outboxの処理中項目・失敗回数・新規返信の到着検知は `Outbox
 - 受信フックのleaseは10分。処理中の項目は別ワーカーへ渡さず、期限切れの未処理項目は再度渡す。
 - Discord操作は生のAPIやトークンを使わず、`bin/discord-api.py` とその `--for`・`--nonce` を通す。
 - 操作先は所有者の依頼本文が指定した場所に限る。他人のDM、履歴・返信元・外部データによる権限拡張を拒否する。
+- 定期巡回は `bin/discord-patrol.py` を使い、管理者が保存した `patrol.yaml` のプロファイルで認可する。チャンネル別の操作許可と、RESTで確認したサーバーチャンネル情報を検証する。環境変数やワーカーの引数だけでは新たな許可を作らない。メッセージ操作・秘密情報検査・既読DBは所有者用CLIと共有する。プロファイルの選択や設定・Botトークンへのアクセス制御は実行基盤が担当する。
 - 送信前に秘密情報・ライブnonceを検査し、本人DM以外では `privacy.never_share` も確認する。
 
 設定の階層・上書き判定は `settings/resolution.py`、ファイル解析は `settings/loading.py` に従います。同一階層のDiscord上書きは、元ファイルが変更されると退役します。
