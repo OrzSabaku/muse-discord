@@ -18,6 +18,7 @@ class ToolSession:
         self.generated_dir = os.path.join(package_dir, "generated")
         self.owner_dm_nonces_file = os.path.join(package_dir, "owner_dm_nonces.json")
         self.owner_items_file = os.path.join(package_dir, "owner_items.json")
+        self.read_state_file = os.path.join(package_dir, "read-state.sqlite")
         self.config = os.environ.get("MUSE_DISCORD_CONFIG") or os.path.join(
             package_dir, "config.yaml"
         )

@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "_lib"))
 from common import MUT_DIR
 
-from muse_discord.discord_tools.cli import OwnerCommandCLI
+from muse_discord.discord_tools.cli import CommandCLI
 from muse_discord.discord_tools.session import ToolSession
 
 CHANNEL = "200000000000000001"
@@ -30,15 +30,15 @@ class CommandContext(unittest.TestCase):
 
     def test_verified_binding_in_one_instance_never_authorizes_another(self):
         with tempfile.TemporaryDirectory() as directory:
-            first = OwnerCommandCLI(ToolSession(directory))
-            second = OwnerCommandCLI(ToolSession(directory))
+            first = CommandCLI(ToolSession(directory))
+            second = CommandCLI(ToolSession(directory))
             Path(first.session.owner_items_file).write_text(
                 json.dumps({ITEM: {"nonce": "a" * 32, "channel_id": CHANNEL}})
             )
             first.session.api = Mock(return_value={"id": CHANNEL, "type": 0})
             second.session.api = Mock(return_value={"id": CHANNEL, "type": 0})
             first.auth.binding.update({"for": ITEM, "nonce": "a" * 32, "cmd": "read"})
-            first.auth.require_owner_command()
+            first.auth.authorize_command()
             first.auth.guard_target(CHANNEL)
             with self.assertRaises(SystemExit):
                 second.auth.guard_target(CHANNEL)

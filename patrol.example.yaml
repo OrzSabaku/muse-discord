@@ -1,0 +1,8 @@
+# Copy to patrol.yaml and replace the channel IDs. No patrol is enabled by default.
+version: 1
+profiles:
+  morning:
+    read_state: patrol-morning.sqlite
+    channels:
+      "200000000000000001": [list-unread, get-messages, reply-message, mark-read]
+      "200000000000000002": [list-unread, get-messages, mark-read]

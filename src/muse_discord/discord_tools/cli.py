@@ -1,11 +1,10 @@
-"""Allowlisted owner-command CLI and its text/JSON presentation.
+"""Allowlisted command dispatch and its text/JSON presentation.
 
 Every command is authorized before dispatch. Transport and binding are instance
 services shared with the message/media tools; importing this module does no I/O.
 """
 
 import json
-import os
 import re
 import sqlite3
 import sys
@@ -64,10 +63,10 @@ def _json_tool(action):
         raise SystemExit("Invalid arguments or unavailable local read state.") from error
 
 
-class OwnerCommandCLI:
-    def __init__(self, session: ToolSession):
+class CommandCLI:
+    def __init__(self, session: ToolSession, authorization=None):
         self.session = session
-        self.auth = CommandAuthorization(session)
+        self.auth = authorization if authorization is not None else CommandAuthorization(session)
         self.commands = {
             "fetch-attachment": (self.cmd_fetch_attachment, 3),
             "get-emoji": (self.cmd_get_emoji, 2),
@@ -275,7 +274,7 @@ class OwnerCommandCLI:
             self.auth.guard_target,
             self.session.scrub,
             self.session.bot_id,
-            os.path.join(self.session.package_dir, "read-state.sqlite"),
+            self.session.read_state_file,
             ALLOWED_MENTIONS,
         )
 
@@ -284,7 +283,7 @@ class OwnerCommandCLI:
 
     def run_json_command(self, fn, args):
         try:
-            self.auth.require_owner_command()
+            self.auth.authorize_command()
             fn(args)
             return 0
         except PartialSendError as error:
@@ -307,7 +306,7 @@ class OwnerCommandCLI:
         args = argv[1:]
         # Leading --for <message_id> and --nonce <its owner_command_nonce
         # (an owner DM's owner_dm_nonce)>: required by every subcommand but
-        # resolve-channel and list-threads (require_owner_command), and in
+        # resolve-channel and list-threads (authorize_command), and in
         # an owner's DM checked as that DM's nonce too (guard_channel).
         self.auth.binding.update({"for": None, "nonce": None, "entry": None, "cmd": None})
         while len(args) >= BINDING_OPTION_ARGUMENTS and args[0] in ("--for", "--nonce"):
@@ -327,12 +326,12 @@ class OwnerCommandCLI:
         self.auth.binding["cmd"] = args[0]
         if args[0] in JSON_COMMANDS:
             return self.run_json_command(fn, args[1:])
-        self.auth.require_owner_command(lookup=args[0] in LOOKUPS)
+        self.auth.authorize_command(lookup=args[0] in LOOKUPS)
         fn(args[1:])
         return 0
 
 
-def create_cli(package_dir: str) -> OwnerCommandCLI:
+def create_cli(package_dir: str) -> CommandCLI:
     session = ToolSession(package_dir)
     session.token = session.load_token()
-    return OwnerCommandCLI(session)
+    return CommandCLI(session)

@@ -49,7 +49,7 @@ class CommandAuthorization:
         e = data.get(message_id) if isinstance(data, dict) else None
         return e if isinstance(e, dict) else {}
 
-    def require_owner_command(self, lookup=False):
+    def authorize_command(self, lookup=False):
         """Refuse unless --for names an open owner-command queue item and
         --nonce is its owner_command_nonce (see the module docstring); for a
         lookup, an open owner DM's owner_dm_nonce does too. Keeps the item's
